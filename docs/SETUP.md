@@ -1,65 +1,72 @@
-# Setup guide
+# Setup guide (Supabase)
 
-You need a Google account that will own the Sheet, and admin rights on this GitHub repo.
-The site will be at **https://adhamazaki.github.io/acsprojectmanager/**.
+The site is at **https://adhamazaki.github.io/acsprojectmanager/**. The data lives in a free **Supabase** project.
 
 ---
 
-## 1. Google Sheet
+## 1. Create the database (one time, about 2 minutes)
 
-Create a Google Sheet. A test one with dummy data already exists: **ACS Project Tracker → ACS Project Tracker - Data (TEST)** in Google Drive.
-It needs these tabs, each with headers in row 1. The `setup()` function in step 2 creates any that are missing.
+1. In Supabase, open your project → **SQL Editor** → **New query**.
+2. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/supabase/setup.sql>, select all (Ctrl+A) and copy (Ctrl+C).
+3. Paste it into the SQL Editor and click **Run**. You should see `ACS Project Tracker setup complete`.
 
-| Tab | Columns |
-|---|---|
-| **Projects** | ProjectID, Name, Type (PLC / AVEVA / Other), Client, Manager, Status (Active / On Hold / Completed / Closed), StartDate, EndDate, Notes |
-| **Team** | Username, Password, Name, Role (Admin / Member), Active (checkbox) |
-| **Assignments** | ProjectID, Username, with one row per person per project |
-| **WeeklyUpdates** | Written by the app. Don't edit by hand. |
-| **Meetings** | Written by the app. Don't edit by hand. |
+It is safe to run again: it creates what is missing and never deletes data.
 
-### Users and passwords
+## 2. Turn off public sign-up (important)
 
-- Add a row to **Team** for each person, with a username and a starting password, and tick **Active**.
-- On a person's **first login**, the app replaces their password with a scrambled version (a salted hash, starting with `$h1$`) that can't be turned back into the password. After that, nobody can read it from the Sheet.
-- **To reset a password,** type a new plain password into the cell. People can also change their own password in the app with **Change password**.
-- **To block someone,** untick **Active**.
-- An account locks for 15 minutes after 5 wrong passwords.
-- **Keep the Sheet shared with admins only.** Team members don't need access to it; they only use the website.
+**Authentication → Sign In / Providers → "Allow new users to sign up" → OFF.**
+Only admins should create accounts. They do it from the app's **Team** page, or in **Authentication → Users → Add user**.
 
-## 2. Backend (Apps Script)
+## 3. Connect the website
 
-1. In the Sheet, open **Extensions → Apps Script**.
-2. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/backend/ALL-IN-ONE.gs>, select all (Ctrl+A) and copy (Ctrl+C).
-   In Apps Script, click `Code.gs`, select all, delete, paste (Ctrl+V), then save (Ctrl+S).
-   (`ALL-IN-ONE.gs` is all of `backend/*.gs` combined. Regenerate it with `tools/bundle-backend.sh` after editing those files.)
-3. Choose the `setup` function in the toolbar and press **Run**. Approve the permission prompt (Advanced → Go to project). This adds dropdowns and checkboxes and creates the session secret. It never deletes data.
-4. Click **Deploy → New deployment → Web app**:
-   - **Execute as:** Me
-   - **Who has access:** Anyone
-   - Click **Deploy**, then copy the **Web app URL** (it ends in `/exec`).
+`frontend/js/config.js` holds the **Project URL** and the **Publishable key**. Both are designed to be public; the data is protected by the database's security rules.
 
-> "Anyone" only means the URL is reachable. Every request apart from sign-in needs a valid session, which is only issued to an Active Team member with the right password.
+## Test logins (created by the setup script)
 
-> When you change backend code later, use **Deploy → Manage deployments → Edit → Version: New version** so the URL stays the same.
+| Username | Password | Role |
+|---|---|---|
+| `admin.test` | `Admin@2026` | Admin |
+| `ahmed.test`, `mona.test`, `omar.test` | `Test@2026` | Member |
 
-## 3. Frontend + GitHub Pages
+The setup script also adds 5 dummy projects, assignments, 3 sample updates (week 42) and 1 sample meeting.
 
-1. Put the `/exec` URL into `frontend/js/config.js` as `APPS_SCRIPT_URL`, then commit and push to `main`.
-2. On GitHub, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. Go to **Actions → Deploy frontend to GitHub Pages → Run workflow** (or just push). The site goes live at the URL above.
+## Going live with real data
 
-## 4. Weekly use
+1. Logged in as `admin.test`, go to **Team → Add member** and create **your own admin account**: set Role = Admin.
+2. Sign in with your new account. Add the real engineers on **Team**, and the real projects (with assigned engineers) on **Projects**.
+3. Remove the dummy data in **Supabase → Table Editor**:
+   - **weekly_updates** and **meetings**: delete the dummy rows.
+   - **projects**: delete the dummy projects. Their assignments and updates are removed with them.
+   - **Authentication → Users**: delete the `*.test@advcontrolsys.com` users.
 
-- **Engineers** sign in, open **My week**, and fill in each assigned project. They can save each project separately or use **Save all**.
-- **Admins** open **Weekly report** in the meeting. It shows every update grouped by project and who is missing. From there you can **Copy as text**, **Print / PDF**, or **Record meeting** to save decisions and action items under **Meetings**.
-- **Projects**, **team members** and **assignments** can be managed in the app (Projects / Team tabs) or straight in the Sheet.
+### How usernames work
+A username like `ahmed` signs in as `ahmed@advcontrolsys.com`. The domain is set by `EMAIL_DOMAIN` in `config.js`. When adding a member you can also type a full email address, for someone outside the company domain.
+
+## Viewing and editing the data
+- **Supabase → Table Editor** shows every table like a spreadsheet: you can filter, sort and edit cells, and export to CSV from the **⋯** menu.
+- `weekly_updates` and `assignments` store people by id. To see names, use the app's **Weekly report**, or run this in the SQL Editor:
+  ```sql
+  select w.week, p.name, pr.name as project, w.done, w.next, w.blockers, w.status, w.progress
+  from weekly_updates w join profiles p on p.id = w.user_id join projects pr on pr.id = w.project_id
+  order by w.week desc, pr.name;
+  ```
+
+## Security model
+Every rule is enforced inside the database, not just in the website:
+- **Members** see only their own projects and updates. They can only write updates for projects assigned to them.
+- **Admins** see everything, and manage projects, assignments, the team and meetings.
+- **Signed-out visitors** can't read anything.
+- **Deactivated members** (Active unticked) are refused at sign-in, and all their access stops.
+- The last active admin can't be demoted or deactivated.
+
+## Keeping the free project awake
+Free Supabase projects pause after 7 days without activity. The **Keep Supabase awake** GitHub Action pings the database every day. If the project ever does pause, click **Restore project** in the Supabase dashboard.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| "Cannot reach the server" | Check `APPS_SCRIPT_URL` and that the deployment access is **Anyone**. |
-| "Wrong username or password" | Check the Team row: username spelling, password, and that **Active** is ticked. |
-| "Too many failed attempts" | Wait 15 minutes, or reset the password in the Sheet. |
-| Backend change has no effect | Deploy a **new version** of the existing deployment. |
+| "Wrong username or password" | Check the user exists (Team page or Authentication → Users), the username spelling, and the password. |
+| "Your account is disabled" | An admin must tick **Active** for that member on the Team page. |
+| "Cannot reach the server" | Check `SUPABASE_URL` in `config.js`, and that the project isn't paused. |
+| "You are not allowed to do that" | The action needs admin rights, or the project isn't assigned to you. |

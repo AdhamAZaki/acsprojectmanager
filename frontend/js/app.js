@@ -1,6 +1,6 @@
 // ACS Project Tracker — UI. Plain JS, no build step.
 (function () {
-  const { call, Session, Auth } = window.Api;
+  const { call, Auth } = window.Api;
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
@@ -494,7 +494,7 @@
       title: values.username ? 'Edit member' : 'Add member',
       values,
       fields: [
-        { name: 'username', label: 'Username', required: true, readonly: !!values.username },
+        { name: 'username', label: 'Username (or full email)', required: true, readonly: !!values.username },
         { name: 'name', label: 'Full name', required: true },
         { name: 'password', type: 'password', required: !values.username,
           label: values.username ? 'New password (leave blank to keep)' : 'Password (min. 8 characters)' },
@@ -603,9 +603,7 @@
       render();
     });
 
-    const session = Session.get();
-    if (!session || !session.token) return showLogin();
-    enterApp();
+    Auth.hasSession().then(ok => (ok ? enterApp() : showLogin()), () => showLogin());
   }
 
   start();

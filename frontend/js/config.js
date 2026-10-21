@@ -1,7 +1,14 @@
-// Fill this in after following docs/SETUP.md. It is not secret.
+// Supabase project settings. Both values are designed to be public: data is
+// protected by the database's Row Level Security rules, not by hiding these.
 window.APP_CONFIG = {
-  // Apps Script → Deploy → Web app URL (ends with /exec)
-  APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbwBrvrQOaD3Of9J3HCbtvWf1cBmL-GwaJqYnDBv_oXZj8y6rSt7pAkoFMDSf3tGzc3P/exec',
+  // Supabase → Project Settings → General / Connect → Project URL
+  SUPABASE_URL: 'https://REPLACE_ME.supabase.co',
+
+  // Supabase → Project Settings → API Keys → Publishable key
+  SUPABASE_KEY: 'sb_publishable_mVmc3EpOBrQwm9nStE58pg_5lr2k-xX',
+
+  // People sign in with a short username; this domain is added to make their login email.
+  EMAIL_DOMAIN: 'advcontrolsys.com',
 
   APP_NAME: 'ACS Project Tracker',
 };
