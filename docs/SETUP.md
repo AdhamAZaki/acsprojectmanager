@@ -30,10 +30,9 @@ It needs these tabs, each with headers in row 1. The `setup()` function in step 
 ## 2. Backend (Apps Script)
 
 1. In the Sheet, open **Extensions → Apps Script**.
-2. Recreate the files from `backend/` in this repo:
-   - Replace the contents of `Code.gs` with `backend/Code.gs`.
-   - Add the script files `Auth`, `Sheets`, `Actions` and `Setup` (with **+ → Script**) and paste in the matching files.
-   - Under **Project Settings**, tick **Show "appsscript.json" manifest file in editor**, then replace its contents with `backend/appsscript.json`.
+2. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/backend/ALL-IN-ONE.gs>, select all (Ctrl+A) and copy (Ctrl+C).
+   In Apps Script, click `Code.gs`, select all, delete, paste (Ctrl+V), then save (Ctrl+S).
+   (`ALL-IN-ONE.gs` is all of `backend/*.gs` combined. Regenerate it with `tools/bundle-backend.sh` after editing those files.)
 3. Choose the `setup` function in the toolbar and press **Run**. Approve the permission prompt (Advanced → Go to project). This adds dropdowns and checkboxes and creates the session secret. It never deletes data.
 4. Click **Deploy → New deployment → Web app**:
    - **Execute as:** Me
