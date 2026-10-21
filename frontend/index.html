@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACS Project Tracker</title>
+  <meta name="description" content="Weekly project updates and minutes of meeting for the ACS PLC / AVEVA team.">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <header class="topbar" id="topbar" hidden>
+    <div class="brand">ACS <span>Project Tracker</span></div>
+    <nav class="tabs" id="tabs"></nav>
+    <div class="user">
+      <span id="userName"></span>
+      <button class="link" id="logoutBtn" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main id="app">
+    <section class="login" id="loginView" hidden>
+      <div class="login-card">
+        <h1>ACS Project Tracker</h1>
+        <p>Weekly updates and minutes of meeting for the PLC &amp; AVEVA team.</p>
+        <button class="primary big" id="loginBtn" type="button">Sign in with Zoho</button>
+        <p class="hint">Use your ACS Zoho account (@advcontrolsys.com).</p>
+        <p class="error" id="loginError" hidden></p>
+      </div>
+    </section>
+    <section id="view"></section>
+  </main>
+
+  <dialog id="dialog"></dialog>
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
