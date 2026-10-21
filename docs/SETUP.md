@@ -1,75 +1,66 @@
 # Setup guide
 
-You need: a Google account that will own the Sheet, a Zoho admin (or any ACS Zoho user) to register the app, and admin rights on this GitHub repo.
-
-Your Pages URL will be `https://adhamazaki.github.io/acsprojectmanager/`. It's written below as **PAGES_URL**.
+You need a Google account that will own the Sheet, and admin rights on this GitHub repo.
+The site will be at **https://adhamazaki.github.io/acsprojectmanager/**.
 
 ---
 
-## 1. Google Sheet + backend
+## 1. Google Sheet
 
-1. In Google Drive, create a new **Google Sheet** called `ACS Project Tracker`.
-   (If you have an existing .xlsx, open it, choose **File → Save as Google Sheets**, and use the copy.)
-2. In the Sheet, open **Extensions → Apps Script**.
-3. Recreate the files from `backend/` in this repo:
+Create a Google Sheet. A test one with dummy data already exists: **ACS Project Tracker → ACS Project Tracker - Data (TEST)** in Google Drive.
+It needs these tabs, each with headers in row 1. The `setup()` function in step 2 creates any that are missing.
+
+| Tab | Columns |
+|---|---|
+| **Projects** | ProjectID, Name, Type (PLC / AVEVA / Other), Client, Manager, Status (Active / On Hold / Completed / Closed), StartDate, EndDate, Notes |
+| **Team** | Username, Password, Name, Role (Admin / Member), Active (checkbox) |
+| **Assignments** | ProjectID, Username, with one row per person per project |
+| **WeeklyUpdates** | Written by the app. Don't edit by hand. |
+| **Meetings** | Written by the app. Don't edit by hand. |
+
+### Users and passwords
+
+- Add a row to **Team** for each person, with a username and a starting password, and tick **Active**.
+- On a person's **first login**, the app replaces their password with a scrambled version (a salted hash, starting with `$h1$`) that can't be turned back into the password. After that, nobody can read it from the Sheet.
+- **To reset a password,** type a new plain password into the cell. People can also change their own password in the app with **Change password**.
+- **To block someone,** untick **Active**.
+- An account locks for 15 minutes after 5 wrong passwords.
+- **Keep the Sheet shared with admins only.** Team members don't need access to it; they only use the website.
+
+## 2. Backend (Apps Script)
+
+1. In the Sheet, open **Extensions → Apps Script**.
+2. Recreate the files from `backend/` in this repo:
    - Replace the contents of `Code.gs` with `backend/Code.gs`.
    - Add the script files `Auth`, `Sheets`, `Actions` and `Setup` (with **+ → Script**) and paste in the matching files.
-   - Under **Project Settings**, tick **Show "appsscript.json" manifest file in editor**, then replace its contents with `backend/appsscript.json`. Change `timeZone` if you're not in Cairo time.
-4. In `Setup.gs`, set `FIRST_ADMIN_EMAIL` to **your Zoho email**.
-5. Choose the `setup` function in the toolbar and press **Run**. Approve the permission prompt. The Sheet now has these tabs: Projects, Team, Assignments, WeeklyUpdates, Meetings.
-6. **Optional**: under **Project Settings → Script Properties**, add:
-   | Property | Value | When |
-   |---|---|---|
-   | `ZOHO_ACCOUNTS_URL` | e.g. `https://accounts.zoho.eu` | Only if your Zoho account isn't on `accounts.zoho.com` (check the address bar when you log in to Zoho) |
-   | `ALLOWED_DOMAIN` | `advcontrolsys.com` | This is the default; change it only if needed |
-   `SESSION_SECRET` is created automatically. Never share it.
-7. Click **Deploy → New deployment → Web app**:
+   - Under **Project Settings**, tick **Show "appsscript.json" manifest file in editor**, then replace its contents with `backend/appsscript.json`.
+3. Choose the `setup` function in the toolbar and press **Run**. Approve the permission prompt (Advanced → Go to project). This adds dropdowns and checkboxes and creates the session secret. It never deletes data.
+4. Click **Deploy → New deployment → Web app**:
    - **Execute as:** Me
    - **Who has access:** Anyone
    - Click **Deploy**, then copy the **Web app URL** (it ends in `/exec`).
 
-> "Anyone" only means the URL is reachable. Every request apart from sign-in needs a valid session, which is only issued to Active team members.
+> "Anyone" only means the URL is reachable. Every request apart from sign-in needs a valid session, which is only issued to an Active Team member with the right password.
 
 > When you change backend code later, use **Deploy → Manage deployments → Edit → Version: New version** so the URL stays the same.
 
-## 2. Zoho sign-in
+## 3. Frontend + GitHub Pages
 
-1. Go to <https://api-console.zoho.com> (use the `.eu`, `.in` etc. version if that's your data centre) and sign in with your ACS account.
-2. Click **Add Client → Client-based Applications**.
-3. Fill in:
-   - **Client Name:** ACS Project Tracker
-   - **Homepage URL:** PAGES_URL
-   - **Authorized Redirect URIs:** PAGES_URL, exactly, including the trailing `/`
-   - **JavaScript Domain:** `https://<github-user>.github.io`
-4. Click **Create** and copy the **Client ID**.
-
-## 3. Frontend config + GitHub Pages
-
-1. Edit `frontend/js/config.js`:
-   ```js
-   APPS_SCRIPT_URL: 'https://script.google.com/macros/s/AKfy.../exec',
-   ZOHO_CLIENT_ID: '1000.XXXXXXXX',
-   ZOHO_ACCOUNTS_URL: 'https://accounts.zoho.com',   // same data centre as above
-   ```
-   Commit and push to `main`.
+1. Put the `/exec` URL into `frontend/js/config.js` as `APPS_SCRIPT_URL`, then commit and push to `main`.
 2. On GitHub, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. Go to the **Actions** tab, open **Deploy frontend to GitHub Pages**, and click **Run workflow** (or just push). The site goes live at PAGES_URL.
+3. Go to **Actions → Deploy frontend to GitHub Pages → Run workflow** (or just push). The site goes live at the URL above.
 
-## 4. First use
+## 4. Weekly use
 
-1. Open PAGES_URL and click **Sign in with Zoho** using the admin email you set in step 1.4.
-2. Under **Team**, add each engineer with their Zoho email.
-3. Under **Projects**, add the PLC / AVEVA projects and tick the engineers assigned to each one.
-   (You can also paste rows straight into the Projects / Team / Assignments tabs of the Sheet.)
-4. Share PAGES_URL with the team. Each person signs in and fills in **My week**.
-5. In the weekly meeting, an admin opens **Weekly report**. Use **Record meeting** to save decisions and action items under **Meetings**.
+- **Engineers** sign in, open **My week**, and fill in each assigned project. They can save each project separately or use **Save all**.
+- **Admins** open **Weekly report** in the meeting. It shows every update grouped by project and who is missing. From there you can **Copy as text**, **Print / PDF**, or **Record meeting** to save decisions and action items under **Meetings**.
+- **Projects**, **team members** and **assignments** can be managed in the app (Projects / Team tabs) or straight in the Sheet.
 
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| Zoho says "Invalid Redirect Uri" | The redirect URI in the Zoho console must match the page URL exactly, including the trailing `/`. Or set `REDIRECT_URI` in `config.js`. |
-| "Zoho sign-in could not be verified" | `ZOHO_ACCOUNTS_URL` in Script Properties and in `config.js` must both use your data centre. |
-| "not on the team list" | Add the email to the **Team** tab with **Active** ticked. |
-| "Cannot reach the server" | Check `APPS_SCRIPT_URL`, and confirm the deployment's access is **Anyone**. |
+| "Cannot reach the server" | Check `APPS_SCRIPT_URL` and that the deployment access is **Anyone**. |
+| "Wrong username or password" | Check the Team row: username spelling, password, and that **Active** is ticked. |
+| "Too many failed attempts" | Wait 15 minutes, or reset the password in the Sheet. |
 | Backend change has no effect | Deploy a **new version** of the existing deployment. |
