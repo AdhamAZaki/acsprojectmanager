@@ -2,7 +2,7 @@
 // protected by the database's Row Level Security rules, not by hiding these.
 window.APP_CONFIG = {
   // Supabase → Project Settings → General / Connect → Project URL
-  SUPABASE_URL: 'https://REPLACE_ME.supabase.co',
+  SUPABASE_URL: 'https://bhjqtygkegqhggpdtrlm.supabase.co',
 
   // Supabase → Project Settings → API Keys → Publishable key
   SUPABASE_KEY: 'sb_publishable_mVmc3EpOBrQwm9nStE58pg_5lr2k-xX',
