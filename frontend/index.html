@@ -13,6 +13,7 @@
     <nav class="tabs" id="tabs"></nav>
     <div class="user">
       <span id="userName"></span>
+      <button class="link" id="passwordBtn" type="button">Change password</button>
       <button class="link" id="logoutBtn" type="button">Sign out</button>
     </div>
   </header>
@@ -22,9 +23,13 @@
       <div class="login-card">
         <h1>ACS Project Tracker</h1>
         <p>Weekly updates and minutes of meeting for the PLC &amp; AVEVA team.</p>
-        <button class="primary big" id="loginBtn" type="button">Sign in with Zoho</button>
-        <p class="hint">Use your ACS Zoho account (@advcontrolsys.com).</p>
-        <p class="error" id="loginError" hidden></p>
+        <form id="loginForm" class="login-form">
+          <label>Username<input name="username" autocomplete="username" required autofocus></label>
+          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <p class="error" id="loginError" hidden></p>
+          <button class="primary big" type="submit">Sign in</button>
+        </form>
+        <p class="hint">Forgot your password? Ask an admin to reset it.</p>
       </div>
     </section>
     <section id="view"></section>

@@ -5,9 +5,9 @@
 
 const SHEETS = {
   Projects:      ['ProjectID', 'Name', 'Type', 'Client', 'Manager', 'Status', 'StartDate', 'EndDate', 'Notes'],
-  Team:          ['Email', 'Name', 'Role', 'Active'],
-  Assignments:   ['ProjectID', 'Email'],
-  WeeklyUpdates: ['UpdateID', 'Week', 'Email', 'Name', 'ProjectID', 'ProjectName', 'DoneThisWeek',
+  Team:          ['Username', 'Password', 'Name', 'Role', 'Active'],
+  Assignments:   ['ProjectID', 'Username'],
+  WeeklyUpdates: ['UpdateID', 'Week', 'Username', 'Name', 'ProjectID', 'ProjectName', 'DoneThisWeek',
                   'PlanNextWeek', 'Blockers', 'Status', 'Progress', 'SubmittedAt', 'UpdatedAt'],
   Meetings:      ['MeetingID', 'Date', 'Week', 'Title', 'Attendees', 'Notes', 'Decisions',
                   'ActionItems', 'CreatedBy', 'CreatedAt'],
@@ -123,16 +123,17 @@ function mapProject_(r) {
   };
 }
 
+/** Never includes the Password column. */
 function mapMember_(r) {
   return {
-    email: String(r.Email).trim().toLowerCase(), name: r.Name || r.Email,
+    username: normUser_(r.Username), name: r.Name || r.Username,
     role: oneOf_(r.Role, ROLES, 'Member'), active: isActive_(r.Active),
   };
 }
 
 function mapUpdate_(r) {
   return {
-    id: r.UpdateID, week: String(r.Week), email: r.Email, name: r.Name,
+    id: r.UpdateID, week: String(r.Week), username: normUser_(r.Username), name: r.Name,
     projectId: String(r.ProjectID), projectName: r.ProjectName,
     done: r.DoneThisWeek, next: r.PlanNextWeek, blockers: r.Blockers,
     status: r.Status, progress: r.Progress === '' ? null : Number(r.Progress),
@@ -160,14 +161,14 @@ function listTeam_() {
 
 function listAssignments_() {
   return readTable_('Assignments').map(r => ({
-    projectId: String(r.ProjectID), email: String(r.Email).trim().toLowerCase(),
+    projectId: String(r.ProjectID), username: normUser_(r.Username),
   }));
 }
 
-/** Active team member by email, or null. */
-function findMember_(email) {
-  const row = readTable_('Team').find(r => same_(r.Email, email));
+/** Active team member by username, or null. */
+function findMember_(username) {
+  const row = readTable_('Team').find(r => same_(r.Username, username));
   if (!row || !isActive_(row.Active)) return null;
   const m = mapMember_(row);
-  return { email: m.email, name: m.name, role: m.role };
+  return { username: m.username, name: m.name, role: m.role };
 }

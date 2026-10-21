@@ -82,6 +82,8 @@ main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 60px; }
 .login-card h1 { color: var(--brand); margin-bottom: 8px; }
 .login-card p { color: var(--muted); }
 .hint { font-size: .85rem; }
+.login-form { display: flex; flex-direction: column; gap: 14px; text-align: left; margin: 24px 0 8px; }
+.login-form button { margin-top: 4px; }
 .error { color: var(--bad); font-weight: 600; }
 
 /* Layout pieces */

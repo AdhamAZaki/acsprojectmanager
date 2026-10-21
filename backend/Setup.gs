@@ -1,10 +1,8 @@
 /**
- * One-time setup. Open the Sheet → Extensions → Apps Script, set
- * FIRST_ADMIN_EMAIL below, then run setup() once (or use the
- * "ACS Tracker → Set up / repair sheets" menu afterwards).
+ * One-time setup. Open the Sheet → Extensions → Apps Script and run setup()
+ * once (or use the "ACS Tracker → Set up / repair sheets" menu afterwards).
+ * It creates any missing tabs/columns and never deletes data.
  */
-
-const FIRST_ADMIN_EMAIL = 'your.name@advcontrolsys.com'; // <-- change before running setup()
 
 function onOpen() {
   SpreadsheetApp.getUi()
@@ -33,7 +31,7 @@ function setup() {
 
   // Keep IDs and week codes as plain text so Sheets never converts them.
   [['Projects', 'ProjectID'], ['Assignments', 'ProjectID'], ['WeeklyUpdates', 'ProjectID'],
-   ['WeeklyUpdates', 'Week'], ['Meetings', 'Week']].forEach(([name, col]) => {
+   ['WeeklyUpdates', 'Week'], ['Meetings', 'Week'], ['Team', 'Password']].forEach(([name, col]) => {
     const sh = ss.getSheetByName(name);
     const idx = headers_(sh).indexOf(col) + 1;
     if (idx > 0) sh.getRange(2, idx, sh.getMaxRows() - 1, 1).setNumberFormat('@');
@@ -51,11 +49,8 @@ function setup() {
 
   getSessionSecret_();
 
-  if (!readTable_('Team').length) {
-    if (/^your\.name@/.test(FIRST_ADMIN_EMAIL)) {
-      throw new Error('Edit FIRST_ADMIN_EMAIL in Setup.gs to your Zoho email, then run setup() again.');
-    }
-    writeRecord_('Team', { Email: FIRST_ADMIN_EMAIL.toLowerCase(), Name: 'Admin', Role: 'Admin', Active: true });
+  if (!readTable_('Team').some(r => isActive_(r.Active) && same_(r.Role, 'Admin'))) {
+    console.warn('No active Admin yet: add a row to the Team tab (Username, Password, Name, Role = Admin, Active ticked).');
   }
 
   const blank = ss.getSheetByName('Sheet1');

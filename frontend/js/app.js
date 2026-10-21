@@ -100,7 +100,7 @@
   // ---------- Generic form dialog ----------
 
   /**
-   * fields: [{ name, label, type: text|email|date|select|textarea|checkbox|checklist, options, required }]
+   * fields: [{ name, label, type: text|email|password|date|select|textarea|checkbox|checklist, options, required }]
    * onSubmit(values) may throw; the dialog stays open on error.
    */
   function openForm({ title, fields, values, onSubmit, submitLabel }) {
@@ -298,7 +298,7 @@
         ${updatesTable(byProject[p.id], true)}
       </section>`).join('');
 
-    const submitted = new Set(r.updates.map(u => u.email)).size;
+    const submitted = new Set(r.updates.map(u => u.username)).size;
     const missingHtml = r.missing.length ? `
       <section class="card warn">
         <h3>Missing updates (${r.missing.length})</h3>
@@ -415,7 +415,7 @@
     if (!S.projects) root.innerHTML = '<p class="muted">Loading…</p>';
     await guard(() => loadAdminData());
     if (!S.projects) return;
-    const nameOf = email => (S.team.find(m => m.email === email) || { name: email }).name;
+    const nameOf = username => (S.team.find(m => m.username === username) || { name: username }).name;
     const filter = S.projectFilter || '';
     const rows = S.projects.filter(p => !filter || p.type === filter);
     root.innerHTML = `
@@ -429,7 +429,7 @@
           <td>${esc(p.id)}</td><td>${esc(p.name)}</td>
           <td><span class="badge type-${slug(p.type)}">${esc(p.type)}</span></td>
           <td>${esc(p.client)}</td><td>${esc(p.manager)}</td><td>${esc(p.status)}</td>
-          <td>${S.assignments.filter(a => a.projectId === p.id).map(a => esc(nameOf(a.email))).join(', ')}</td>
+          <td>${S.assignments.filter(a => a.projectId === p.id).map(a => esc(nameOf(a.username))).join(', ')}</td>
           <td><button type="button" class="link" data-edit="${esc(p.id)}">Edit</button></td></tr>`).join('')
           || '<tr><td colspan="8" class="muted">No projects yet.</td></tr>'}</tbody>
       </table></div></div>`;
@@ -437,7 +437,7 @@
     $('#addProject', root).addEventListener('click', () => projectForm({ type: 'PLC', status: 'Active' }));
     $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => {
       const p = S.projects.find(x => x.id === b.dataset.edit);
-      projectForm(Object.assign({}, p, { assigned: S.assignments.filter(a => a.projectId === p.id).map(a => a.email) }));
+      projectForm(Object.assign({}, p, { assigned: S.assignments.filter(a => a.projectId === p.id).map(a => a.username) }));
     }));
   }
 
@@ -456,11 +456,11 @@
         { name: 'endDate', label: 'End date', type: 'date' },
         { name: 'notes', label: 'Notes', type: 'textarea' },
         { name: 'assigned', label: 'Assigned engineers', type: 'checklist',
-          options: S.team.filter(m => m.active).map(m => ({ value: m.email, label: m.name })) },
+          options: S.team.filter(m => m.active).map(m => ({ value: m.username, label: m.name })) },
       ],
       onSubmit: async v => {
         const saved = await call('saveProject', v);
-        await call('setAssignments', { projectId: saved.id, emails: v.assigned });
+        await call('setAssignments', { projectId: saved.id, usernames: v.assigned });
         await loadAdminData(true);
         toast('Project saved');
         render();
@@ -478,29 +478,31 @@
       <div class="toolbar"><h2>Team</h2><span class="spacer"></span>
         <button type="button" class="primary" id="addMember">Add member</button></div>
       <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Projects</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Active</th><th>Projects</th><th></th></tr></thead>
         <tbody>${S.team.map(m => `<tr class="${m.active ? '' : 'inactive'}">
-          <td>${esc(m.name)}</td><td>${esc(m.email)}</td><td>${esc(m.role)}</td><td>${m.active ? 'Yes' : 'No'}</td>
-          <td>${S.assignments.filter(a => a.email === m.email).length}</td>
-          <td><button type="button" class="link" data-edit="${esc(m.email)}">Edit</button></td></tr>`).join('')}</tbody>
+          <td>${esc(m.name)}</td><td>${esc(m.username)}</td><td>${esc(m.role)}</td><td>${m.active ? 'Yes' : 'No'}</td>
+          <td>${S.assignments.filter(a => a.username === m.username).length}</td>
+          <td><button type="button" class="link" data-edit="${esc(m.username)}">Edit</button></td></tr>`).join('')}</tbody>
       </table></div></div>`;
     $('#addMember', root).addEventListener('click', () => memberForm({ role: 'Member', active: true }));
     $$('[data-edit]', root).forEach(b => b.addEventListener('click', () =>
-      memberForm(S.team.find(m => m.email === b.dataset.edit))));
+      memberForm(S.team.find(m => m.username === b.dataset.edit))));
   }
 
   function memberForm(values) {
     openForm({
-      title: values.email ? 'Edit member' : 'Add member',
+      title: values.username ? 'Edit member' : 'Add member',
       values,
       fields: [
-        { name: 'email', label: 'Zoho email', type: 'email', required: true, readonly: !!values.email },
+        { name: 'username', label: 'Username', required: true, readonly: !!values.username },
         { name: 'name', label: 'Full name', required: true },
+        { name: 'password', type: 'password', required: !values.username,
+          label: values.username ? 'New password (leave blank to keep)' : 'Password (min. 8 characters)' },
         { name: 'role', label: 'Role', type: 'select', options: ['Member', 'Admin'] },
         { name: 'active', label: 'Active (can sign in)', type: 'checkbox' },
       ],
       onSubmit: async v => {
-        await call('saveMember', v);
+        await call('saveMember', Object.assign({ isNew: !values.username }, v));
         await loadAdminData(true);
         toast('Member saved');
         render();
@@ -541,28 +543,24 @@
     err.hidden = !message;
   }
 
-  async function start() {
-    $('#loginBtn').addEventListener('click', () => Auth.startLogin());
-    $('#logoutBtn').addEventListener('click', () => { if (confirmDiscard()) Auth.logout(); });
-    window.addEventListener('session-expired', e => showLogin(e.detail));
-    window.addEventListener('beforeunload', e => { if (dirtyCards().length) { e.preventDefault(); e.returnValue = ''; } });
-    let lastHash = location.hash;
-    window.addEventListener('hashchange', () => {
-      if (!S.user) return;
-      if (!confirmDiscard()) { history.replaceState(null, '', lastHash || '#/'); return; }
-      lastHash = location.hash;
-      render();
+  function passwordForm() {
+    openForm({
+      title: 'Change password',
+      submitLabel: 'Change password',
+      fields: [
+        { name: 'current', label: 'Current password', type: 'password', required: true },
+        { name: 'next', label: 'New password (min. 8 characters)', type: 'password', required: true },
+        { name: 'confirm', label: 'Repeat new password', type: 'password', required: true },
+      ],
+      onSubmit: async v => {
+        if (v.next !== v.confirm) throw new Error('The new passwords do not match.');
+        await call('changePassword', { current: v.current, next: v.next });
+        toast('Password changed');
+      },
     });
+  }
 
-    try {
-      await Auth.handleRedirect();
-    } catch (e) {
-      return showLogin(e.message);
-    }
-
-    const session = Session.get();
-    if (!session || !session.token) return showLogin();
-
+  async function enterApp() {
     $('#loginView').hidden = true;
     $('#view').innerHTML = '<p class="muted">Loading your projects…</p>';
     try {
@@ -574,6 +572,40 @@
     $('#userName').textContent = S.user.name + (S.user.role === 'Admin' ? ' · Admin' : '');
     $('#topbar').hidden = false;
     render();
+  }
+
+  function start() {
+    $('#loginForm').addEventListener('submit', async ev => {
+      ev.preventDefault();
+      const form = ev.target;
+      const btn = $('button[type=submit]', form);
+      btn.disabled = true;
+      $('#loginError').hidden = true;
+      try {
+        await Auth.login(form.elements.username.value.trim(), form.elements.password.value);
+        form.reset();
+        await enterApp();
+      } catch (e) {
+        showLogin(e.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    $('#passwordBtn').addEventListener('click', passwordForm);
+    $('#logoutBtn').addEventListener('click', () => { if (confirmDiscard()) Auth.logout(); });
+    window.addEventListener('session-expired', e => showLogin(e.detail));
+    window.addEventListener('beforeunload', e => { if (dirtyCards().length) { e.preventDefault(); e.returnValue = ''; } });
+    let lastHash = location.hash;
+    window.addEventListener('hashchange', () => {
+      if (!S.user) return;
+      if (!confirmDiscard()) { history.replaceState(null, '', lastHash || '#/'); return; }
+      lastHash = location.hash;
+      render();
+    });
+
+    const session = Session.get();
+    if (!session || !session.token) return showLogin();
+    enterApp();
   }
 
   start();

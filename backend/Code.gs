@@ -3,8 +3,8 @@
  *
  * Deploy as a Web App (Execute as: Me, Who has access: Anyone).
  * Anyone can reach the URL, but every action except "login" requires a
- * signed session token, and a session is only issued after the user's Zoho
- * identity has been verified and found in the Team sheet.
+ * signed session token, which is only issued to an Active member of the
+ * Team sheet who gives the right username and password.
  *
  * Request:  POST, body = JSON { action, token, payload }  (sent as text/plain
  *           so the browser does not need a CORS preflight)
@@ -28,6 +28,7 @@ function getRoutes_() {
     myProjects:      { fn: actionMyProjects },
     myUpdates:       { fn: actionMyUpdates },
     saveUpdate:      { fn: actionSaveUpdate },
+    changePassword:  { fn: actionChangePassword },
     listMeetings:    { fn: actionListMeetings },
 
     // Admins only
@@ -81,14 +82,4 @@ function doGet() {
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
-}
-
-/** Script Properties with sensible defaults. */
-function getConfig_(key) {
-  const defaults = {
-    ZOHO_ACCOUNTS_URL: 'https://accounts.zoho.com',
-    ALLOWED_DOMAIN: 'advcontrolsys.com',
-  };
-  const value = PropertiesService.getScriptProperties().getProperty(key);
-  return value !== null && value !== '' ? value : (defaults[key] || '');
 }
