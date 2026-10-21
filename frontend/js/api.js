@@ -123,8 +123,8 @@
       const u = await me();
       let q = sb.from('weekly_updates').select('*, projects(name)').eq('user_id', u.id);
       if (p.week) q = q.eq('week', p.week);
-      const team = await profiles();
-      return check(await q).map(r => mapUpdate(r, team));
+      const [rows, team] = await Promise.all([q.then(check), profiles()]);
+      return rows.map(r => mapUpdate(r, team));
     },
 
     async saveUpdate(p) {
@@ -207,8 +207,8 @@
     },
 
     async listAssignments() {
-      const team = await profiles();
-      return check(await sb.from('assignments').select('project_id,user_id')).map(a => ({
+      const [team, rows] = await Promise.all([profiles(), sb.from('assignments').select('project_id,user_id').then(check)]);
+      return rows.map(a => ({
         projectId: a.project_id, username: (team.find(m => m.id === a.user_id) || {}).username || '',
       }));
     },
@@ -262,7 +262,7 @@
       }
       current = null;
       profileCache = null;
-      await me();
+      await Promise.all([me(), profiles()]);
     },
     async hasSession() {
       const { data } = await sb.auth.getSession();
