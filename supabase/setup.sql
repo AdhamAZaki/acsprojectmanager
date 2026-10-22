@@ -19,10 +19,11 @@ create table if not exists public.profiles (
 create table if not exists public.projects (
   id         text primary key,                 -- e.g. PRJ-0001
   name       text not null,
-  type       text not null default 'PLC' check (type in ('PLC', 'AVEVA', 'Other')),
+  type       text not null default 'PLC',
   client     text not null default '',
   manager    text not null default '',
-  status     text not null default 'Active' check (status in ('Active', 'On Hold', 'Completed', 'Closed')),
+  status     text not null default 'In Progress',
+  priority   text not null default 'Medium',
   start_date date,
   end_date   date,
   notes      text not null default '',
@@ -64,7 +65,25 @@ create table if not exists public.meetings (
   updated_at   timestamptz not null default now()
 );
 
+-- Upgrades for databases created by an earlier version of this script.
+alter table public.projects add column if not exists priority text not null default 'Medium';
+alter table public.projects drop constraint if exists projects_type_check;
+alter table public.projects drop constraint if exists projects_status_check;
+alter table public.projects drop constraint if exists projects_priority_check;
+-- Project statuses follow the Notion "Projects" database.
+update public.projects set status = case status
+  when 'Active' then 'In Progress' when 'On Hold' then 'Paused'
+  when 'Completed' then 'Done' when 'Closed' then 'Canceled' else status end
+where status in ('Active', 'On Hold', 'Completed', 'Closed');
+alter table public.projects alter column status set default 'In Progress';
+alter table public.projects add constraint projects_type_check check (type in ('PLC', 'AVEVA', 'BMS', 'Other'));
+alter table public.projects add constraint projects_status_check
+  check (status in ('Backlog', 'Planning', 'In Progress', 'Paused', 'Done', 'Canceled'));
+alter table public.projects add constraint projects_priority_check check (priority in ('Low', 'Medium', 'High'));
+
 create index if not exists weekly_updates_week_idx on public.weekly_updates (week);
+create index if not exists weekly_updates_project_idx on public.weekly_updates (project_id);
+create index if not exists meetings_created_by_idx on public.meetings (created_by);
 create index if not exists weekly_updates_user_idx on public.weekly_updates (user_id);
 create index if not exists assignments_user_idx on public.assignments (user_id);
 
@@ -81,7 +100,7 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 create or replace function public.touch_updated_at() returns trigger
-language plpgsql as $$
+language plpgsql set search_path = '' as $$
 begin
   new.updated_at := now();
   return new;
@@ -114,6 +133,8 @@ create trigger on_auth_user_created after insert on auth.users
   for each row execute function public.handle_new_user();
 
 -- ---------- Security rules (Row Level Security) ----------
+-- auth.uid() and the helper checks are wrapped in (select ...) so Postgres runs
+-- them once per query instead of once per row.
 
 alter table public.profiles       enable row level security;
 alter table public.projects       enable row level security;
@@ -121,55 +142,75 @@ alter table public.assignments    enable row level security;
 alter table public.weekly_updates enable row level security;
 alter table public.meetings       enable row level security;
 
+-- Remove policies from earlier versions of this script.
+drop policy if exists projects_admin_write on public.projects;
+drop policy if exists assignments_admin_write on public.assignments;
+drop policy if exists meetings_admin_write on public.meetings;
+
 -- profiles: everyone active can see the team list; you can always see your own row; only admins change it
 drop policy if exists profiles_read on public.profiles;
 create policy profiles_read on public.profiles for select to authenticated
-  using (id = auth.uid() or public.is_active_member());
+  using (id = (select auth.uid()) or (select public.is_active_member()));
 drop policy if exists profiles_admin_write on public.profiles;
 create policy profiles_admin_write on public.profiles for update to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using ((select public.is_admin())) with check ((select public.is_admin()));
 
 -- projects: members see the projects assigned to them; admins see and manage all
 drop policy if exists projects_read on public.projects;
 create policy projects_read on public.projects for select to authenticated
-  using (public.is_admin() or (public.is_active_member() and exists (
-    select 1 from public.assignments a where a.project_id = projects.id and a.user_id = auth.uid())));
-drop policy if exists projects_admin_write on public.projects;
-create policy projects_admin_write on public.projects for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using ((select public.is_admin()) or ((select public.is_active_member()) and exists (
+    select 1 from public.assignments a where a.project_id = projects.id and a.user_id = (select auth.uid()))));
+drop policy if exists projects_admin_insert on public.projects;
+create policy projects_admin_insert on public.projects for insert to authenticated
+  with check ((select public.is_admin()));
+drop policy if exists projects_admin_update on public.projects;
+create policy projects_admin_update on public.projects for update to authenticated
+  using ((select public.is_admin())) with check ((select public.is_admin()));
+drop policy if exists projects_admin_delete on public.projects;
+create policy projects_admin_delete on public.projects for delete to authenticated
+  using ((select public.is_admin()));
 
 -- assignments: members see their own; admins manage all
 drop policy if exists assignments_read on public.assignments;
 create policy assignments_read on public.assignments for select to authenticated
-  using (public.is_admin() or (user_id = auth.uid() and public.is_active_member()));
-drop policy if exists assignments_admin_write on public.assignments;
-create policy assignments_admin_write on public.assignments for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using ((select public.is_admin()) or (user_id = (select auth.uid()) and (select public.is_active_member())));
+drop policy if exists assignments_admin_insert on public.assignments;
+create policy assignments_admin_insert on public.assignments for insert to authenticated
+  with check ((select public.is_admin()));
+drop policy if exists assignments_admin_delete on public.assignments;
+create policy assignments_admin_delete on public.assignments for delete to authenticated
+  using ((select public.is_admin()));
 
 -- weekly_updates: members read/write only their own, only on assigned projects; admins read all
 drop policy if exists updates_read on public.weekly_updates;
 create policy updates_read on public.weekly_updates for select to authenticated
-  using (public.is_admin() or (user_id = auth.uid() and public.is_active_member()));
+  using ((select public.is_admin()) or (user_id = (select auth.uid()) and (select public.is_active_member())));
 drop policy if exists updates_insert on public.weekly_updates;
 create policy updates_insert on public.weekly_updates for insert to authenticated
-  with check (user_id = auth.uid() and public.is_active_member() and (public.is_admin() or exists (
-    select 1 from public.assignments a where a.project_id = weekly_updates.project_id and a.user_id = auth.uid())));
+  with check (user_id = (select auth.uid()) and (select public.is_active_member()) and ((select public.is_admin()) or exists (
+    select 1 from public.assignments a where a.project_id = weekly_updates.project_id and a.user_id = (select auth.uid()))));
 drop policy if exists updates_update on public.weekly_updates;
 create policy updates_update on public.weekly_updates for update to authenticated
-  using (user_id = auth.uid() and public.is_active_member())
-  with check (user_id = auth.uid() and public.is_active_member() and (public.is_admin() or exists (
-    select 1 from public.assignments a where a.project_id = weekly_updates.project_id and a.user_id = auth.uid())));
+  using (user_id = (select auth.uid()) and (select public.is_active_member()))
+  with check (user_id = (select auth.uid()) and (select public.is_active_member()) and ((select public.is_admin()) or exists (
+    select 1 from public.assignments a where a.project_id = weekly_updates.project_id and a.user_id = (select auth.uid()))));
 drop policy if exists updates_admin_delete on public.weekly_updates;
 create policy updates_admin_delete on public.weekly_updates for delete to authenticated
-  using (public.is_admin());
+  using ((select public.is_admin()));
 
 -- meetings: every active member can read; admins write
 drop policy if exists meetings_read on public.meetings;
 create policy meetings_read on public.meetings for select to authenticated
-  using (public.is_active_member());
-drop policy if exists meetings_admin_write on public.meetings;
-create policy meetings_admin_write on public.meetings for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using ((select public.is_active_member()));
+drop policy if exists meetings_admin_insert on public.meetings;
+create policy meetings_admin_insert on public.meetings for insert to authenticated
+  with check ((select public.is_admin()));
+drop policy if exists meetings_admin_update on public.meetings;
+create policy meetings_admin_update on public.meetings for update to authenticated
+  using ((select public.is_admin())) with check ((select public.is_admin()));
+drop policy if exists meetings_admin_delete on public.meetings;
+create policy meetings_admin_delete on public.meetings for delete to authenticated
+  using ((select public.is_admin()));
 
 -- Nothing is readable without signing in.
 revoke all on public.profiles, public.projects, public.assignments, public.weekly_updates, public.meetings from anon;
@@ -241,14 +282,67 @@ drop trigger if exists profiles_protect_last_admin on public.profiles;
 create trigger profiles_protect_last_admin before update on public.profiles
   for each row execute function public.protect_last_admin();
 
+-- ---------- Fast loading (one request instead of several) ----------
+-- SECURITY INVOKER: these run as the signed-in user, so every rule above still applies.
+-- Members get only their own data; admins also get every project and assignment.
+
+create or replace function public.app_bootstrap(p_since text default null)
+returns json language sql stable security invoker set search_path = public as $$
+  select json_build_object(
+    'me', (select row_to_json(p) from (select id, email, name, role, active from profiles where id = (select auth.uid())) p),
+    'team', coalesce((select json_agg(t order by t.name) from (select id, email, name, role, active from profiles) t), '[]'::json),
+    'projects', coalesce((select json_agg(pr order by pr.id) from projects pr), '[]'::json),
+    'assignments', coalesce((select json_agg(json_build_object('project_id', a.project_id, 'user_id', a.user_id)) from assignments a), '[]'::json),
+    'updates', coalesce((select json_agg(w order by w.week desc) from (
+        select id, week, user_id, project_id, done, next, blockers, status, progress, created_at, updated_at
+        from weekly_updates where user_id = (select auth.uid()) and (p_since is null or week >= p_since)) w), '[]'::json)
+  );
+$$;
+revoke all on function public.app_bootstrap(text) from public, anon;
+grant execute on function public.app_bootstrap(text) to authenticated;
+
+-- Saves a project and replaces its assigned engineers in one transaction (admins only, via the rules above).
+create or replace function public.admin_save_project(p jsonb, p_user_ids uuid[])
+returns json language plpgsql security invoker set search_path = public as $$
+declare v_id text := nullif(trim(p ->> 'id'), ''); v_row projects;
+begin
+  if not public.is_admin() then raise exception 'Admin access required'; end if;
+  if v_id is null then
+    select 'PRJ-' || lpad((coalesce(max((substring(id from '^PRJ-(\d+)$'))::int), 0) + 1)::text, 4, '0')
+      into v_id from projects;
+  end if;
+  insert into projects (id, name, type, status, priority, client, manager, notes, start_date, end_date)
+  values (v_id, trim(p ->> 'name'), coalesce(p ->> 'type', 'Other'), coalesce(p ->> 'status', 'In Progress'),
+          coalesce(p ->> 'priority', 'Medium'), coalesce(p ->> 'client', ''), coalesce(p ->> 'manager', ''),
+          coalesce(p ->> 'notes', ''), nullif(p ->> 'start_date', '')::date, nullif(p ->> 'end_date', '')::date)
+  on conflict (id) do update set name = excluded.name, type = excluded.type, status = excluded.status,
+    priority = excluded.priority, client = excluded.client, manager = excluded.manager, notes = excluded.notes,
+    start_date = excluded.start_date, end_date = excluded.end_date
+  returning * into v_row;
+  delete from assignments where project_id = v_id;
+  insert into assignments (project_id, user_id) select v_id, unnest(coalesce(p_user_ids, '{}'));
+  return row_to_json(v_row);
+end $$;
+revoke all on function public.admin_save_project(jsonb, uuid[]) from public, anon;
+grant execute on function public.admin_save_project(jsonb, uuid[]) to authenticated;
+
+-- Internal helpers and triggers: not callable from outside.
+revoke all on function public.handle_new_user() from public, anon, authenticated;
+revoke all on function public.protect_last_admin() from public, anon, authenticated;
+revoke all on function public.touch_updated_at() from public, anon, authenticated;
+revoke all on function public.is_admin() from public, anon;
+revoke all on function public.is_active_member() from public, anon;
+grant execute on function public.is_admin() to authenticated;
+grant execute on function public.is_active_member() to authenticated;
+
 -- Tiny public function the daily GitHub Action calls so the free project never pauses.
 create or replace function public.ping() returns text
-language sql stable as $$ select 'ok'::text $$;
+language sql stable set search_path = '' as $$ select 'ok'::text $$;
 grant execute on function public.ping() to anon, authenticated;
 
 -- =====================================================================
 -- TEST DATA: dummy users, projects and updates. Delete this section
--- (or the rows) before real use. Test logins: see docs/SUPABASE.md.
+-- (or the rows) before real use. Test logins: see docs/SETUP.md.
 -- =====================================================================
 do $$
 declare
@@ -269,11 +363,11 @@ begin
   if v_omar is null then v_omar := public._create_login('omar.test@advcontrolsys.com', 'Test@2026', 'Omar (Test Engineer)', 'member'); end if;
 
   insert into public.projects (id, name, type, client, manager, status, start_date, end_date, notes) values
-    ('PRJ-0001', 'Water Treatment Plant SCADA', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'Active', '2026-09-01', '2027-03-31', 'DUMMY DATA - replace'),
-    ('PRJ-0002', 'Packaging Line PLC Upgrade', 'PLC', 'Demo Client B', 'Adham Zaki', 'Active', '2026-08-15', '2026-12-20', 'DUMMY DATA - replace'),
-    ('PRJ-0003', 'Pump Station Control Panels', 'PLC', 'Demo Client C', 'Adham Zaki', 'Active', '2026-10-01', '2027-01-15', 'DUMMY DATA - replace'),
-    ('PRJ-0004', 'AVEVA Historian Integration', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'On Hold', '2026-07-01', '2026-11-30', 'DUMMY DATA - replace'),
-    ('PRJ-0005', 'Boiler Room Automation', 'PLC', 'Demo Client D', 'Adham Zaki', 'Completed', '2026-03-01', '2026-09-30', 'DUMMY DATA - replace');
+    ('PRJ-0001', 'Water Treatment Plant SCADA', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'In Progress', '2026-09-01', '2027-03-31', 'DUMMY DATA - replace'),
+    ('PRJ-0002', 'Packaging Line PLC Upgrade', 'PLC', 'Demo Client B', 'Adham Zaki', 'In Progress', '2026-08-15', '2026-12-20', 'DUMMY DATA - replace'),
+    ('PRJ-0003', 'Pump Station Control Panels', 'PLC', 'Demo Client C', 'Adham Zaki', 'Planning', '2026-10-01', '2027-01-15', 'DUMMY DATA - replace'),
+    ('PRJ-0004', 'AVEVA Historian Integration', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'Paused', '2026-07-01', '2026-11-30', 'DUMMY DATA - replace'),
+    ('PRJ-0005', 'Boiler Room Automation', 'PLC', 'Demo Client D', 'Adham Zaki', 'Done', '2026-03-01', '2026-09-30', 'DUMMY DATA - replace');
 
   insert into public.assignments (project_id, user_id) values
     ('PRJ-0001', v_ahmed), ('PRJ-0001', v_mona), ('PRJ-0002', v_ahmed), ('PRJ-0002', v_omar),
