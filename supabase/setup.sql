@@ -76,7 +76,7 @@ update public.projects set status = case status
   when 'Completed' then 'Done' when 'Closed' then 'Canceled' else status end
 where status in ('Active', 'On Hold', 'Completed', 'Closed');
 alter table public.projects alter column status set default 'In Progress';
-alter table public.projects add constraint projects_type_check check (type in ('PLC', 'AVEVA', 'BMS', 'Other'));
+alter table public.projects add constraint projects_type_check check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'Other'));
 alter table public.projects add constraint projects_status_check
   check (status in ('Backlog', 'Planning', 'In Progress', 'Paused', 'Done', 'Canceled'));
 alter table public.projects add constraint projects_priority_check check (priority in ('Low', 'Medium', 'High'));
@@ -282,6 +282,85 @@ drop trigger if exists profiles_protect_last_admin on public.profiles;
 create trigger profiles_protect_last_admin before update on public.profiles
   for each row execute function public.protect_last_admin();
 
+-- ---------- Tasks, sub-tasks and 3rd parties ----------
+-- A task belongs to a project and a week. Everyone on the project team (and admins)
+-- can see and update it; the creator or an admin can delete it. Assignees can be
+-- team members (assignee_ids) and/or 3rd parties without an account (contact_ids).
+
+create table if not exists public.contacts (
+  id         uuid primary key default gen_random_uuid(),
+  name       text not null check (length(trim(name)) > 0),
+  org        text not null default '',
+  created_by uuid references public.profiles (id) on delete set null default auth.uid(),
+  created_at timestamptz not null default now()
+);
+create unique index if not exists contacts_name_key on public.contacts (lower(trim(name)));
+
+create table if not exists public.tasks (
+  id           uuid primary key default gen_random_uuid(),
+  project_id   text not null references public.projects (id) on delete cascade on update cascade,
+  week         text not null check (week ~ '^\d{4}-W\d{2}$'),
+  title        text not null check (length(trim(title)) > 0),
+  notes        text not null default '',
+  status       text not null default 'To Do' check (status in ('To Do', 'In Progress', 'Blocked', 'Done')),
+  team         text check (team is null or team in ('PLC', 'Dev')),
+  assignee_ids uuid[] not null default '{}',
+  contact_ids  uuid[] not null default '{}',
+  subtasks     jsonb not null default '[]'::jsonb,   -- [{ "t": "text", "done": false }]
+  created_by   uuid references public.profiles (id) on delete set null default auth.uid(),
+  created_at   timestamptz not null default now(),
+  updated_at   timestamptz not null default now()
+);
+create index if not exists tasks_week_idx on public.tasks (week);
+create index if not exists tasks_project_idx on public.tasks (project_id);
+create index if not exists tasks_created_by_idx on public.tasks (created_by);
+create index if not exists contacts_created_by_idx on public.contacts (created_by);
+
+drop trigger if exists tasks_touch on public.tasks;
+create trigger tasks_touch before update on public.tasks
+  for each row execute function public.touch_updated_at();
+
+-- True when the signed-in user is on the project's team (or is an admin).
+create or replace function public.on_project(p_project_id text) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_admin() or (public.is_active_member() and exists (
+    select 1 from assignments where project_id = p_project_id and user_id = auth.uid()));
+$$;
+revoke all on function public.on_project(text) from public, anon;
+grant execute on function public.on_project(text) to authenticated;
+
+alter table public.contacts enable row level security;
+alter table public.tasks    enable row level security;
+
+drop policy if exists contacts_read on public.contacts;
+create policy contacts_read on public.contacts for select to authenticated using ((select public.is_active_member()));
+drop policy if exists contacts_insert on public.contacts;
+create policy contacts_insert on public.contacts for insert to authenticated
+  with check ((select public.is_active_member()) and created_by = (select auth.uid()));
+drop policy if exists contacts_update on public.contacts;
+create policy contacts_update on public.contacts for update to authenticated
+  using ((select public.is_admin()) or created_by = (select auth.uid()))
+  with check ((select public.is_active_member()));
+drop policy if exists contacts_delete on public.contacts;
+create policy contacts_delete on public.contacts for delete to authenticated using ((select public.is_admin()));
+
+drop policy if exists tasks_read on public.tasks;
+create policy tasks_read on public.tasks for select to authenticated
+  using (public.on_project(project_id) or ((select public.is_active_member()) and
+         (created_by = (select auth.uid()) or (select auth.uid()) = any (assignee_ids))));
+drop policy if exists tasks_insert on public.tasks;
+create policy tasks_insert on public.tasks for insert to authenticated
+  with check (created_by = (select auth.uid()) and public.on_project(project_id));
+drop policy if exists tasks_update on public.tasks;
+create policy tasks_update on public.tasks for update to authenticated
+  using (public.on_project(project_id) or ((select public.is_active_member()) and (select auth.uid()) = any (assignee_ids)))
+  with check (public.on_project(project_id) or ((select public.is_active_member()) and (select auth.uid()) = any (assignee_ids)));
+drop policy if exists tasks_delete on public.tasks;
+create policy tasks_delete on public.tasks for delete to authenticated
+  using ((select public.is_admin()) or (created_by = (select auth.uid()) and (select public.is_active_member())));
+
+revoke all on public.contacts, public.tasks from anon;
+
 -- ---------- Fast loading (one request instead of several) ----------
 -- SECURITY INVOKER: these run as the signed-in user, so every rule above still applies.
 -- Members get only their own data; admins also get every project and assignment.
@@ -295,7 +374,9 @@ returns json language sql stable security invoker set search_path = public as $$
     'assignments', coalesce((select json_agg(json_build_object('project_id', a.project_id, 'user_id', a.user_id)) from assignments a), '[]'::json),
     'updates', coalesce((select json_agg(w order by w.week desc) from (
         select id, week, user_id, project_id, done, next, blockers, status, progress, created_at, updated_at
-        from weekly_updates where user_id = (select auth.uid()) and (p_since is null or week >= p_since)) w), '[]'::json)
+        from weekly_updates where user_id = (select auth.uid()) and (p_since is null or week >= p_since)) w), '[]'::json),
+    'tasks', coalesce((select json_agg(k order by k.created_at) from tasks k where p_since is null or k.week >= p_since), '[]'::json),
+    'contacts', coalesce((select json_agg(c order by c.name) from contacts c), '[]'::json)
   );
 $$;
 revoke all on function public.app_bootstrap(text) from public, anon;

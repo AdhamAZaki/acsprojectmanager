@@ -30,9 +30,29 @@ Only admins should create accounts. They do it from the app's **Team** page, or 
 
 The setup script also adds 5 dummy projects, assignments, 3 sample updates (week 42) and 1 sample meeting.
 
+## Importing the real team and projects
+
+`supabase/import-acs-team.sql` creates the 15 projects from the *Projects List* sheet and an account for each of the 14 engineers plus `adham_zaki` (Admin). Each engineer is assigned to their projects exactly as in the sheet.
+
+1. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/supabase/import-acs-team.sql> and copy it.
+2. In the SQL Editor, paste it, then change `v_password := 'CHANGE-ME'` to a temporary password. Leave `v_remove_dummy := true` to delete the test data.
+3. Click **Run**. A table of every project and its team is shown at the end.
+4. Tell each engineer their username (e.g. `ahmed_hamdy`) and the temporary password. They should change it right away: **avatar → Change password**.
+
+Usernames follow the company email format (`firstname_lastname@advcontrolsys.com`). If someone's address differs, edit their line in the script, or change it later in **Authentication → Users**.
+
+## Tasks and 3rd parties
+
+- **Tasks tab:** add a task to one of your projects for any week. Each task has notes, sub-tasks, a status, and a **PLC / Dev** team tag. Unfinished tasks can be moved to the next week in one tap.
+- **Who sees a task:** everyone on the project's team (and admins), so the whole team stays in sync.
+- **3rd parties** are people without an account (e.g. "Eng. Moataz", "Megz"). Anyone can add one while assigning a task, and they then appear for everyone. Admins can rename or delete them under **Manage → 3rd parties**.
+- **Report → Copy as email** builds the *Weekly Progress Check & Action Plan* table (Project · PLC Team Action Plan · Dev Team Action Plan · Overall Status) from the week's tasks, ready to paste into Zoho Mail.
+
 ## Going live with real data
 
-1. Logged in as `admin.test`, go to **Team → Add member** and create **your own admin account**: set Role = Admin.
+The quickest way is the import above. To set things up by hand instead:
+
+1. Logged in as `admin.test`, go to **Manage → Team → Member** and create **your own admin account**: set Role = Admin.
 2. Sign in with your new account. Add the real engineers on **Team**, and the real projects (with assigned engineers) on **Projects**.
 3. Remove the dummy data in **Supabase → Table Editor**:
    - **weekly_updates** and **meetings**: delete the dummy rows.
