@@ -58,6 +58,11 @@ declare
   v_domain text := 'advcontrolsys.com';
   i int; v_email text; v_id uuid; v_pid text; v_name text; v_next int;
 begin
+  if to_regclass('public.tasks') is null
+     or not exists (select 1 from pg_constraint where conname = 'projects_type_check'
+                    and pg_get_constraintdef(oid) like '%AVEVA + PLC%') then
+    raise exception 'Run the latest supabase/setup.sql first (step 1), then run this import again.';
+  end if;
   if v_password = 'CHANGE-ME' or length(v_password) < 8 then
     raise exception 'Set v_password (8+ characters) at the top of this script before running it.';
   end if;
