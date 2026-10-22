@@ -1,0 +1,461 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>ACS Tracker – Prototype</title>
+  <meta name="description" content="Clickable prototype of the simplified ACS weekly task tool. Sample data only, stored on this device.">
+  <meta name="theme-color" content="#ffffff">
+  <link rel="icon" href="../icons/acs-mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600;700&display=swap" media="print" onload="this.media='all'">
+  <link rel="stylesheet" href="../css/styles.css">
+  <style>
+    .proto-banner { background: var(--acs-ink); color: #fff; font-size: .8rem; text-align: center; padding: 6px 12px; }
+    .proto-banner button { background: none; border: 0; color: var(--acs-gold); min-height: 0; padding: 0 6px; font-weight: 700; text-decoration: underline; }
+    @media (prefers-color-scheme: dark) { .proto-banner { background: #000; } }
+    .who { display: grid; gap: 10px; margin-top: 18px; text-align: left; }
+    .who button { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px; }
+    .who button small { display: block; color: var(--muted); }
+    .addbar { display: flex; flex-direction: column; gap: 8px; padding: 12px; }
+    .addbar-row { display: flex; gap: 8px; }
+    .addbar-row select { flex: 1; min-width: 0; }
+    .seg { display: flex; background: var(--surface-2); border: 1px solid var(--border); border-radius: 12px; padding: 4px; }
+    .seg button { flex: 1; background: none; min-height: 40px; border-radius: 9px; font-weight: 700; color: var(--muted); padding: 6px; }
+    .seg button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+    .seg button small { font-weight: 600; color: var(--muted); }
+    .t { border-top: 1px solid var(--border); }
+    .card-title + .t { border-top: 0; }
+    .t-row { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; }
+    .t-check { flex: none; width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 2px solid var(--border); background: var(--surface); display: grid; place-items: center; color: #fff; margin-top: 2px; }
+    .t-check.on { background: var(--ok); border-color: var(--ok); }
+    .t-check .ico { width: 16px; height: 16px; stroke-width: 3; }
+    .t-body { flex: 1; min-width: 0; background: none; border: 0; padding: 2px 0; text-align: left; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+    .t-title { font-weight: 600; line-height: 1.3; }
+    .t.done .t-title { text-decoration: line-through; color: var(--muted); }
+    .t-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: .8rem; color: var(--muted); }
+    .t-meta .avatar.sm { width: 22px; height: 22px; font-size: .6rem; }
+    .tag-carry { background: var(--warn-soft); color: var(--warn); font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+    .tag-block { background: var(--bad-soft); color: var(--bad); font-weight: 700; border-radius: 999px; padding: 1px 8px; }
+    .t-open { padding: 0 0 12px 38px; display: flex; flex-direction: column; gap: 10px; }
+    .subs { display: flex; flex-direction: column; gap: 2px; }
+    .sub { display: flex; align-items: center; gap: 10px; min-height: 40px; }
+    .sub input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--ok); flex: none; }
+    .sub span.done { text-decoration: line-through; color: var(--muted); }
+    .sub button { margin-left: auto; background: none; border: 0; color: var(--muted); min-height: 32px; padding: 0 6px; font-size: 1.1rem; }
+    .inline { display: flex; gap: 8px; }
+    .inline input { flex: 1; min-width: 0; padding: 9px 10px; }
+    .inline button { min-height: 42px; padding: 6px 12px; }
+    .t-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .t-actions button { min-height: 38px; padding: 6px 12px; font-size: .9rem; }
+    .block-note { border-color: var(--bad); }
+    .people { display: flex; flex-wrap: wrap; gap: 6px; }
+    .people label { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 10px 4px 4px; font-size: .85rem; background: var(--surface); min-height: 34px; }
+    .people label.ext { border-style: dashed; border-color: var(--acs-amber); padding-left: 10px; }
+    .people input { width: 18px; height: 18px; accent-color: var(--brand-2); }
+    .pcard2 { display: flex; flex-direction: column; gap: 10px; width: 100%; text-align: left; font-size: inherit; }
+    .pcard2 .row-between strong { font-size: 1.02rem; }
+    .counts { display: flex; gap: 12px; font-size: .85rem; color: var(--muted); font-weight: 600; }
+    .counts b { color: var(--text); }
+    .join { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border); }
+    .join:first-of-type { border-top: 0; }
+    .mtg-col h4 { margin: 10px 0 4px; }
+    .mtg-col ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: .93rem; }
+    .mtg-col li em { font-style: normal; color: var(--muted); }
+    .mtg-col li.blk { color: var(--bad); }
+    .mtg-grid { display: grid; gap: 12px; }
+    .mtg-col { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+    .mtg-col > strong { font-size: .8rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    @media (min-width: 640px) { .mtg-grid { grid-template-columns: 1fr 1fr; } }
+    .back { background: none; border: 0; color: var(--brand-2); padding: 0; min-height: 36px; font-weight: 600; }
+    .toast.live { background: var(--acs-ink); }
+  </style>
+</head>
+<body>
+  <div class="proto-banner">PROTOTYPE · sample data on this device only · <button type="button" id="resetBtn">Reset</button><button type="button" id="switchBtn">Switch person</button></div>
+  <header class="topbar">
+    <div class="brand"><img class="logo-mark" src="../icons/acs-mark.svg" alt="ACS" width="30" height="30"><span class="brand-name">Weekly Tasks<small>Advanced Control Systems</small></span></div>
+    <nav class="nav" id="nav" aria-label="Main"></nav>
+    <span class="sync" id="sync" title="Live"></span>
+    <span class="avatar-btn" id="avatarBtn" style="display:grid;place-items:center"></span>
+  </header>
+  <main id="app"><section id="view"></section></main>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+<script>
+(function () {
+  'use strict';
+  const $ = (s, r) => (r || document).querySelector(s);
+  const $$ = (s, r) => Array.from((r || document).querySelectorAll(s));
+  const KEY = 'acs-proto-v1';
+
+  // ---------- Weeks ----------
+  function isoWeek(d) {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+    const wk = Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+    return t.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
+  }
+  function monday(week) {
+    const [y, w] = week.split('-W').map(Number);
+    const j = new Date(Date.UTC(y, 0, 4));
+    j.setUTCDate(j.getUTCDate() - (j.getUTCDay() || 7) + 1 + (w - 1) * 7);
+    return j;
+  }
+  function shift(week, n) { const m = monday(week); m.setUTCDate(m.getUTCDate() + 7 * n); return isoWeek(new Date(m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate())); }
+  function range(week) {
+    const a = monday(week), b = new Date(a); b.setUTCDate(a.getUTCDate() + 6);
+    const f = d => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
+    return f(a) + ' – ' + f(b);
+  }
+  const THIS = isoWeek(new Date());
+  const NEXT = shift(THIS, 1);
+  const LAST = shift(THIS, -1);
+  const wnum = w => Number(w.split('-W')[1]);
+
+  // ---------- Helpers ----------
+  const esc = v => String(v == null ? '' : v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const initials = n => String(n || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+  const uid = () => Math.random().toString(36).slice(2, 10);
+  const shortName = n => { const w = String(n).trim().split(/\s+/); return w.length > 1 ? w[0] + ' ' + w[1][0] + '.' : w[0]; };
+  const slug = v => String(v || '').toLowerCase().replace(/[^a-z]+/g, '-');
+  const ICON = {
+    tasks: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
+    projects: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+    meeting: '<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
+    check: '<path d="M5 12l5 5 9-10"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  };
+  const icon = n => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICON[n]}</svg>`;
+  function toast(msg, live) {
+    const el = $('#toast'); el.textContent = msg; el.className = 'toast' + (live ? ' live' : ''); el.hidden = false;
+    clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 2600);
+  }
+
+  // ---------- Sample data (real project names from the Projects List sheet; tasks are made up) ----------
+  function seed() {
+    const P = (name, team) => ({ id: uid(), name, team });
+    const people = [
+      P('Adham Zaki', 'Dev'), P('Ahmed Hamdy', 'PLC'), P('Tarek Khaled', 'PLC'), P('Ahmed Shady Mokhtar', 'PLC'),
+      P('Mohamed Ashraf', 'PLC'), P('Galal Ali', 'PLC'), P('Mohamed ElSoudy', 'PLC'), P('Mahmoud Dahawy', 'Dev'),
+      P('Ahmed Yasser', 'Dev'), P('Mohamed Adel', 'Dev'), P('Hazem Shabaan', 'Dev'), P('Hady Alaa', 'Dev'),
+      P('Abdelrahman Ashraf', 'Dev'), P('Marina Talat', 'Dev'),
+    ];
+    people[0].admin = true;
+    const by = n => people.find(p => p.name === n).id;
+    const projects = [
+      ['Golden Gate', 'AVEVA + PLC', ['Hazem Shabaan', 'Abdelrahman Ashraf', 'Mohamed Ashraf', 'Tarek Khaled']],
+      ['Safaga Port', 'AVEVA + PLC', ['Hady Alaa', 'Mahmoud Dahawy', 'Abdelrahman Ashraf', 'Galal Ali', 'Mohamed ElSoudy']],
+      ['PS02', 'PLC', ['Tarek Khaled', 'Ahmed Hamdy', 'Ahmed Shady Mokhtar']],
+      ['PS04', 'PLC', ['Tarek Khaled', 'Ahmed Hamdy', 'Ahmed Shady Mokhtar']],
+      ['SCCT PH3', 'AVEVA + PLC', ['Hazem Shabaan', 'Ahmed Yasser', 'Mohamed Adel', 'Mohamed Ashraf', 'Ahmed Hamdy']],
+      ['Sumitomo', 'AVEVA', ['Marina Talat', 'Ahmed Yasser']],
+      ['Sodic VYE', 'AVEVA + PLC', ['Mohamed Adel', 'Galal Ali', 'Mohamed ElSoudy']],
+      ['Helio Square', 'AVEVA', ['Mahmoud Dahawy']],
+      ['Emaar Dev', 'AVEVA', []],
+    ].map(([name, type, team]) => ({ id: uid(), name, type, members: team.map(by) }));
+    const pr = n => projects.find(p => p.name === n).id;
+    const contacts = [{ id: uid(), name: 'Eng. Moataz' }, { id: uid(), name: 'Megz' }];
+    const T = (proj, week, owner, title, extra) => Object.assign({ id: uid(), projectId: pr(proj), week, ownerId: by(owner), title,
+      done: false, blocked: false, blockNote: '', assignees: [by(owner)], contacts: [], subtasks: [], at: Date.now() }, extra || {});
+    const S = (t, done) => ({ id: uid(), title: t, done: !!done });
+    const tasks = [
+      T('PS02', THIS, 'Ahmed Hamdy', 'Terminate PS04 panels and prepare for testing', { subtasks: [S('Panel 1', true), S('Panel 2', true), S('Panel 3')] }),
+      T('PS02', THIS, 'Ahmed Hamdy', 'Send HMI sample to PCS', { blocked: true, blockNote: 'Waiting for PCS to confirm template' }),
+      T('PS04', LAST, 'Ahmed Hamdy', 'Ethernet cable recommendations for PS04'),
+      T('SCCT PH3', THIS, 'Ahmed Hamdy', 'Check software licenses', { done: true }),
+      T('PS02', NEXT, 'Ahmed Hamdy', 'Progress sheet for the whole project'),
+      T('Golden Gate', THIS, 'Mohamed Ashraf', 'Deliver pending BMXCPS to site', { contacts: [contacts[0].id], subtasks: [S('Confirm quantities with store', true), S('Book transport')] }),
+      T('Golden Gate', THIS, 'Hazem Shabaan', 'Build the ready integrations inside AVEVA SP'),
+      T('Golden Gate', THIS, 'Tarek Khaled', 'PME site tests for ready devices', { done: true }),
+      T('Golden Gate', NEXT, 'Hazem Shabaan', 'PME integration with SP'),
+      T('Safaga Port', THIS, 'Mahmoud Dahawy', 'SLD graphics enhancement – review with Eng. Galal', { subtasks: [S('Fix breaker symbols'), S('Add trends')] }),
+      T('Safaga Port', THIS, 'Hady Alaa', 'Define electrical KPIs', { blocked: true, blockNote: 'Need support defining the KPIs' }),
+      T('Safaga Port', NEXT, 'Mahmoud Dahawy', 'BMS KPIs as a starting point'),
+      T('Sumitomo', THIS, 'Ahmed Yasser', 'Prepare BMS data points and review with Eng. Adham'),
+      T('Sumitomo', THIS, 'Marina Talat', 'Update the integration matrix', { done: true }),
+      T('Helio Square', THIS, 'Mahmoud Dahawy', 'Unlock WSO2 and prepare deployment environment'),
+    ];
+    return { people, projects, contacts, tasks, me: null, live: 0 };
+  }
+
+  let D;
+  try { D = JSON.parse(localStorage.getItem(KEY)); } catch (e) { D = null; }
+  if (!D) D = seed();
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(D)); } catch (e) { /* ignore */ } };
+  const me = () => D.people.find(p => p.id === D.me);
+  const person = id => D.people.find(p => p.id === id) || { name: '?', team: '' };
+  const project = id => D.projects.find(p => p.id === id);
+  const contact = id => D.contacts.find(c => c.id === id) || { name: '?' };
+  const myProjects = () => D.projects.filter(p => p.members.indexOf(D.me) !== -1);
+
+  // A task shows in "this week" when it is for this week, or it is an unfinished task from an earlier week (rolls over).
+  function inView(t, which) {
+    if (which === 'next') return t.week === NEXT;
+    return t.week === THIS || (t.week < THIS && !t.done);
+  }
+  const mine = t => t.ownerId === D.me || t.assignees.indexOf(D.me) !== -1;
+
+  const UI = { tab: 'tasks', which: 'this', open: {}, project: null, mtgWeek: THIS };
+
+  // ---------- Task list (shared by My tasks and Project page) ----------
+  function taskHtml(t) {
+    const open = !!UI.open[t.id];
+    const subDone = t.subtasks.filter(s => s.done).length;
+    const p = project(t.projectId);
+    const team = p.members.map(person);
+    return `
+      <div class="t ${t.done ? 'done' : ''}" data-id="${t.id}">
+        <div class="t-row">
+          <button type="button" class="t-check ${t.done ? 'on' : ''}" data-done="${t.id}" aria-label="${t.done ? 'Mark as not done' : 'Mark as done'}">${t.done ? icon('check') : ''}</button>
+          <button type="button" class="t-body" data-toggle="${t.id}">
+            <span class="t-title">${esc(t.title)}</span>
+            <span class="t-meta">
+              ${t.week < THIS && !t.done ? `<span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}
+              ${t.blocked && !t.done ? '<span class="tag-block">Blocked</span>' : ''}
+              ${t.subtasks.length ? `<span>☑ ${subDone}/${t.subtasks.length}</span>` : ''}
+              ${t.assignees.map(id => `<span class="avatar sm" title="${esc(person(id).name)}">${esc(initials(person(id).name))}</span>`).join('')}
+              ${t.contacts.map(id => `<span class="ext-chip">${esc(contact(id).name)}</span>`).join('')}
+            </span>
+          </button>
+        </div>
+        ${open ? `
+        <div class="t-open">
+          <div class="subs">
+            ${t.subtasks.map(s => `<label class="sub"><input type="checkbox" data-sub="${t.id}:${s.id}"${s.done ? ' checked' : ''}><span class="${s.done ? 'done' : ''}">${esc(s.title)}</span><button type="button" data-subdel="${t.id}:${s.id}" aria-label="Remove">×</button></label>`).join('')}
+            <div class="inline"><input placeholder="Add a sub-task" data-newsub="${t.id}"><button type="button" class="secondary" data-addsub="${t.id}">Add</button></div>
+          </div>
+          <div class="people">
+            ${team.map(m => `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assignees.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`).join('')}
+            ${D.contacts.map(c => `<label class="ext"><input type="checkbox" data-ext="${t.id}:${c.id}"${t.contacts.indexOf(c.id) !== -1 ? ' checked' : ''}>${esc(c.name)}</label>`).join('')}
+          </div>
+          <div class="inline"><input placeholder="Add someone outside the team" data-newext="${t.id}"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
+          ${t.blocked ? `<input class="block-note" placeholder="What is blocking it?" data-blocknote="${t.id}" value="${esc(t.blockNote)}">` : ''}
+          <div class="t-actions">
+            <button type="button" class="${t.blocked ? 'danger' : 'secondary'}" data-block="${t.id}">${t.blocked ? 'Unblock' : 'Blocked?'}</button>
+            <button type="button" class="secondary" data-move="${t.id}">${t.week === NEXT ? 'Move to this week' : 'Move to next week'}</button>
+            <button type="button" class="ghost danger-text" data-del="${t.id}">Delete</button>
+          </div>
+        </div>` : ''}
+      </div>`;
+  }
+
+  function bindTasks(root) {
+    const find = id => D.tasks.find(t => t.id === id);
+    const pair = v => v.split(':');
+    $$('[data-done]', root).forEach(b => b.onclick = () => { const t = find(b.dataset.done); t.done = !t.done; if (t.done && t.week < THIS) t.week = THIS; save(); render(); if (t.done) toast('Done ✔ – it goes into this week’s meeting'); });
+    $$('[data-toggle]', root).forEach(b => b.onclick = () => { UI.open[b.dataset.toggle] = !UI.open[b.dataset.toggle]; render(); });
+    $$('[data-sub]', root).forEach(c => c.onchange = () => { const [tid, sid] = pair(c.dataset.sub); find(tid).subtasks.find(s => s.id === sid).done = c.checked; save(); render(); });
+    $$('[data-subdel]', root).forEach(b => b.onclick = e => { e.preventDefault(); const [tid, sid] = pair(b.dataset.subdel); const t = find(tid); t.subtasks = t.subtasks.filter(s => s.id !== sid); save(); render(); });
+    const addSub = tid => { const i = $(`[data-newsub="${tid}"]`, root); if (!i.value.trim()) return; find(tid).subtasks.push({ id: uid(), title: i.value.trim(), done: false }); save(); render(); const n = $(`[data-newsub="${tid}"]`); if (n) n.focus(); };
+    $$('[data-addsub]', root).forEach(b => b.onclick = () => addSub(b.dataset.addsub));
+    $$('[data-newsub]', root).forEach(i => i.onkeydown = e => { if (e.key === 'Enter') addSub(i.dataset.newsub); });
+    $$('[data-asg]', root).forEach(c => c.onchange = () => { const [tid, pid] = pair(c.dataset.asg); const t = find(tid); t.assignees = c.checked ? t.assignees.concat(pid) : t.assignees.filter(x => x !== pid); save(); });
+    $$('[data-ext]', root).forEach(c => c.onchange = () => { const [tid, cid] = pair(c.dataset.ext); const t = find(tid); t.contacts = c.checked ? t.contacts.concat(cid) : t.contacts.filter(x => x !== cid); save(); });
+    const addExt = tid => {
+      const i = $(`[data-newext="${tid}"]`, root); const name = i.value.trim(); if (!name) return;
+      let c = D.contacts.find(x => x.name.toLowerCase() === name.toLowerCase());
+      if (!c) { c = { id: uid(), name }; D.contacts.push(c); }
+      const t = find(tid); if (t.contacts.indexOf(c.id) === -1) t.contacts.push(c.id);
+      save(); render(); toast(name + ' added – everyone can now pick them');
+    };
+    $$('[data-addext]', root).forEach(b => b.onclick = () => addExt(b.dataset.addext));
+    $$('[data-newext]', root).forEach(i => i.onkeydown = e => { if (e.key === 'Enter') addExt(i.dataset.newext); });
+    $$('[data-block]', root).forEach(b => b.onclick = () => { const t = find(b.dataset.block); t.blocked = !t.blocked; save(); render(); if (t.blocked) { const n = $(`[data-blocknote="${t.id}"]`); if (n) n.focus(); } });
+    $$('[data-blocknote]', root).forEach(i => i.oninput = () => { find(i.dataset.blocknote).blockNote = i.value; save(); });
+    $$('[data-move]', root).forEach(b => b.onclick = () => { const t = find(b.dataset.move); t.week = t.week === NEXT ? THIS : NEXT; save(); toast(t.week === NEXT ? 'Moved to next week' : 'Moved to this week'); render(); });
+    $$('[data-del]', root).forEach(b => b.onclick = () => { if (!confirm('Delete this task?')) return; D.tasks = D.tasks.filter(t => t.id !== b.dataset.del); save(); render(); });
+  }
+
+  function addBar(projects, fixedProject) {
+    return `
+      <form class="card addbar" id="addForm">
+        <input name="title" placeholder="${UI.which === 'next' ? 'What will you do next week?' : 'What are you doing this week?'}" autocomplete="off" required>
+        <div class="addbar-row">
+          ${fixedProject ? '' : `<select name="project" aria-label="Project">${projects.map(p => `<option value="${p.id}"${p.id === UI.lastProject ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`}
+          <button type="submit" class="primary small"${fixedProject ? ' style="flex:1;justify-content:center"' : ''}>${icon('plus')} Add</button>
+        </div>
+      </form>`;
+  }
+  function bindAddBar(root, fixedProject) {
+    const f = $('#addForm', root); if (!f) return;
+    f.onsubmit = e => {
+      e.preventDefault();
+      const title = f.elements.title.value.trim(); if (!title) return;
+      const pid = fixedProject || f.elements.project.value; if (!pid) return;
+      UI.lastProject = pid;
+      D.tasks.push({ id: uid(), projectId: pid, week: UI.which === 'next' ? NEXT : THIS, ownerId: D.me, title, done: false, blocked: false, blockNote: '',
+        assignees: [D.me], contacts: [], subtasks: [], at: Date.now() });
+      save(); render(); const i = $('#addForm input'); if (i) i.focus();
+    };
+  }
+
+  function weekSwitch(countThis, countNext) {
+    return `<div class="seg" style="margin-bottom:12px">
+      <button type="button" data-which="this" class="${UI.which === 'this' ? 'on' : ''}">This week <small>· ${wnum(THIS)} · ${countThis}</small></button>
+      <button type="button" data-which="next" class="${UI.which === 'next' ? 'on' : ''}">Next week <small>· ${wnum(NEXT)} · ${countNext}</small></button>
+    </div>`;
+  }
+  const bindWeekSwitch = root => $$('[data-which]', root).forEach(b => b.onclick = () => { UI.which = b.dataset.which; render(); });
+
+  // ---------- Screens ----------
+  function viewMyTasks(root) {
+    const list = D.tasks.filter(mine);
+    const cur = list.filter(t => inView(t, UI.which));
+    const groups = myProjects().filter(p => cur.some(t => t.projectId === p.id));
+    const open = cur.filter(t => !t.done).length;
+    root.innerHTML = `
+      <div class="page-head"><h2>Hi ${esc(me().name.split(' ')[0])}</h2><span class="muted">${esc(range(UI.which === 'next' ? NEXT : THIS))}</span></div>
+      ${weekSwitch(list.filter(t => inView(t, 'this')).length, list.filter(t => inView(t, 'next')).length)}
+      ${myProjects().length ? addBar(myProjects()) : `<div class="card"><p>You’re not on a project yet. <a href="#" data-go="projects">Join one</a> to start adding tasks.</p></div>`}
+      ${cur.length ? `<p class="muted small" style="margin:0 0 8px">${open} open · ${cur.length - open} done</p>` : ''}
+      ${groups.map(p => `<section class="card"><h3 class="card-title">${esc(p.name)} <span class="badge type-${slug(p.type === 'AVEVA + PLC' ? 'aveva' : p.type)}">${esc(p.type)}</span></h3>
+        ${cur.filter(t => t.projectId === p.id).sort((a, b) => a.done - b.done).map(taskHtml).join('')}</section>`).join('')
+        || `<div class="empty"><h3>Nothing ${UI.which === 'next' ? 'planned for next week' : 'for this week'} yet</h3><p>Add your first task above.</p></div>`}`;
+    bindWeekSwitch(root); bindAddBar(root); bindTasks(root);
+    $$('[data-go]', root).forEach(a => a.onclick = e => { e.preventDefault(); UI.tab = a.dataset.go; render(); });
+  }
+
+  function viewProjects(root) {
+    if (UI.project) return viewProject(root, project(UI.project));
+    const mineP = myProjects();
+    const others = D.projects.filter(p => mineP.indexOf(p) === -1);
+    const counts = p => { const ts = D.tasks.filter(t => t.projectId === p.id && inView(t, 'this')); return { open: ts.filter(t => !t.done).length, done: ts.filter(t => t.done).length, blocked: ts.filter(t => t.blocked && !t.done).length }; };
+    root.innerHTML = `
+      <div class="page-head"><h2>My projects</h2></div>
+      <div class="grid">${mineP.map(p => { const c = counts(p); return `
+        <button type="button" class="card list-card pcard2" data-project="${p.id}">
+          <span class="row-between"><strong>${esc(p.name)}</strong><span class="badge type-${slug(p.type === 'AVEVA + PLC' ? 'aveva' : p.type)}">${esc(p.type)}</span></span>
+          <span class="counts"><span><b>${c.open}</b> open</span><span><b>${c.done}</b> done</span>${c.blocked ? `<span style="color:var(--bad)"><b style="color:var(--bad)">${c.blocked}</b> blocked</span>` : ''}</span>
+          <span class="avatars">${p.members.slice(0, 6).map(id => `<span class="avatar sm" title="${esc(person(id).name)}">${esc(initials(person(id).name))}</span>`).join('')}</span>
+        </button>`; }).join('') || '<div class="empty"><h3>You’re not on any project</h3><p>Join one below.</p></div>'}</div>
+      <h2 style="margin:18px 0 10px;font-size:1.1rem">Other projects</h2>
+      <section class="card">${others.map(p => `
+        <div class="join"><span><strong>${esc(p.name)}</strong><br><span class="muted small">${esc(p.type)} · ${p.members.length} ${p.members.length === 1 ? 'person' : 'people'}</span></span>
+          <button type="button" class="secondary small-btn" data-join="${p.id}">Join</button></div>`).join('') || '<p class="muted">You’re on every project.</p>'}</section>`;
+    $$('[data-project]', root).forEach(b => b.onclick = () => { UI.project = b.dataset.project; render(); });
+    $$('[data-join]', root).forEach(b => b.onclick = () => { project(b.dataset.join).members.push(D.me); save(); toast('You joined ' + project(b.dataset.join).name); render(); });
+  }
+
+  function viewProject(root, p) {
+    const cur = D.tasks.filter(t => t.projectId === p.id && inView(t, UI.which));
+    const byPerson = {};
+    cur.forEach(t => { (byPerson[t.ownerId] = byPerson[t.ownerId] || []).push(t); });
+    root.innerHTML = `
+      <button type="button" class="back" id="backBtn">← My projects</button>
+      <div class="page-head"><h2>${esc(p.name)}</h2><button type="button" class="ghost small-btn" id="leaveBtn">Leave</button></div>
+      ${weekSwitch(D.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length, D.tasks.filter(t => t.projectId === p.id && inView(t, 'next')).length)}
+      ${addBar([p], p.id)}
+      ${Object.keys(byPerson).map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(person(id).name))}</span>${esc(person(id).name)} <span class="badge">${esc(person(id).team)}</span></h3>
+        ${byPerson[id].sort((a, b) => a.done - b.done).map(taskHtml).join('')}</section>`).join('') || '<div class="empty"><h3>No tasks yet</h3></div>'}`;
+    $('#backBtn', root).onclick = () => { UI.project = null; render(); };
+    $('#leaveBtn', root).onclick = () => { if (!confirm('Leave ' + p.name + '?')) return; p.members = p.members.filter(x => x !== D.me); UI.project = null; save(); render(); };
+    bindWeekSwitch(root); bindAddBar(root, p.id); bindTasks(root);
+  }
+
+  // The weekly meeting, written by the tasks. Column = the person's team (PLC / Dev).
+  function meetingData(week) {
+    const isThis = week === THIS;
+    return D.projects.map(p => {
+      const ts = D.tasks.filter(t => t.projectId === p.id);
+      const cols = {};
+      ['PLC', 'Dev'].forEach(team => {
+        const of = t => person(t.ownerId).team === team;
+        cols[team] = {
+          done: ts.filter(t => of(t) && t.done && t.week === week),
+          doing: ts.filter(t => of(t) && !t.done && (t.week === week || (isThis && t.week < week))),
+          next: ts.filter(t => of(t) && t.week === shift(week, 1)),
+        };
+      });
+      return { p, cols, any: ['PLC', 'Dev'].some(k => cols[k].done.length + cols[k].doing.length + cols[k].next.length) };
+    }).filter(x => x.any);
+  }
+  const who = t => t.assignees.map(id => person(id).name).concat(t.contacts.map(id => contact(id).name)).join(', ');
+
+  function viewMeeting(root) {
+    const week = UI.mtgWeek;
+    const rows = meetingData(week);
+    const li = (t, kind) => `<li class="${t.blocked && kind !== 'done' ? 'blk' : ''}">${kind === 'done' ? '✔ ' : ''}${esc(t.title)} <em>"${esc(who(t))}"</em>${t.blocked && kind !== 'done' ? ` — blocked: ${esc(t.blockNote || 'no reason given')}` : ''}${t.subtasks.length ? ` <em>(${t.subtasks.filter(s => s.done).length}/${t.subtasks.length})</em>` : ''}</li>`;
+    const col = (c, name) => `<div class="mtg-col"><strong>${name} team</strong>
+      ${c.done.length ? `<h4>Done</h4><ul>${c.done.map(t => li(t, 'done')).join('')}</ul>` : ''}
+      ${c.doing.length ? `<h4>In progress</h4><ul>${c.doing.map(t => li(t, 'doing')).join('')}</ul>` : ''}
+      ${c.next.length ? `<h4>Next week</h4><ul>${c.next.map(t => li(t, 'next')).join('')}</ul>` : ''}
+      ${c.done.length + c.doing.length + c.next.length ? '' : '<p class="muted">—</p>'}</div>`;
+    const blocked = D.tasks.filter(t => t.blocked && !t.done && (t.week === week || (week === THIS && t.week < THIS)));
+    root.innerHTML = `
+      <div class="weekbar">
+        <button type="button" class="icon-btn" data-mw="-1" aria-label="Previous week">‹</button>
+        <div class="weekbar-label"><strong>Week ${wnum(week)} meeting</strong><span>${esc(range(week))}</span></div>
+        <button type="button" class="icon-btn" data-mw="1" aria-label="Next week"${week >= THIS ? ' disabled' : ''}>›</button>
+      </div>
+      <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" onclick="window.print()">Print / PDF</button></div>
+      <p class="muted small" style="margin:0 0 12px">Built automatically from everyone’s tasks — nobody types the meeting notes.</p>
+      ${blocked.length ? `<section class="card warn"><h3 class="card-title">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(t => `<li><span><strong>${esc(t.title)}</strong><br><span class="muted">${esc(project(t.projectId).name)} · ${esc(who(t))} — ${esc(t.blockNote || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
+      ${rows.map(r => `<section class="card"><h3 class="card-title">${esc(r.p.name)} <span class="badge type-${slug(r.p.type === 'AVEVA + PLC' ? 'aveva' : r.p.type)}">${esc(r.p.type)}</span></h3>
+        <div class="mtg-grid">${col(r.cols.PLC, 'PLC')}${col(r.cols.Dev, 'Dev')}</div></section>`).join('') || '<div class="empty"><h3>No tasks for this week</h3></div>'}`;
+    $$('[data-mw]', root).forEach(b => b.onclick = () => { UI.mtgWeek = shift(UI.mtgWeek, Number(b.dataset.mw)); render(); });
+    $('#copyEmail', root).onclick = () => {
+      const cell = 'border:1px solid #E7E3DE;padding:12px;text-align:left;vertical-align:top;font-family:Arial,sans-serif;font-size:13px;';
+      const head = cell + 'background:#CB2150;color:#fff;font-size:14px;';
+      const list = c => { const items = c.done.map(t => '✔ ' + esc(t.title) + ' "' + esc(who(t)) + '"').concat(c.doing.map(t => esc(t.title) + ' "' + esc(who(t)) + '"' + (t.blocked ? ' (blocked: ' + esc(t.blockNote) + ')' : '')))
+        .concat(c.next.map(t => 'Next week: ' + esc(t.title) + ' "' + esc(who(t)) + '"'));
+        return '<ul style="margin:0;padding-left:18px">' + (items.length ? items.map(x => '<li style="margin-bottom:6px">' + x + '</li>').join('') : '<li>-</li>') + '</ul>'; };
+      const html = `<h2 style="text-align:center;font-family:Arial,sans-serif">Weekly Progress Check &amp; Action Plan</h2><p style="text-align:center;font-family:Arial,sans-serif;color:#6B6862"><b>Week ${wnum(week)} · ${esc(range(week))}</b></p>
+        <table style="width:100%;border-collapse:collapse"><thead><tr><th style="${head}">Project Name</th><th style="${head}">PLC Team Action Plan</th><th style="${head}">Dev Team Action Plan</th></tr></thead><tbody>
+        ${rows.map((r, i) => `<tr style="background:${i % 2 ? '#F7F5F2' : '#fff'}"><td style="${cell}font-weight:bold;color:#CB2150">${esc(r.p.name)}</td><td style="${cell}">${list(r.cols.PLC)}</td><td style="${cell}">${list(r.cols.Dev)}</td></tr>`).join('')}</tbody></table>`;
+      const text = rows.map(r => r.p.name + '\n' + ['PLC', 'Dev'].map(k => '  ' + k + ': ' + r.cols[k].done.concat(r.cols[k].doing).map(t => t.title).join('; ')).join('\n')).join('\n\n');
+      const ok = () => toast('Copied – paste into a new email');
+      if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+        navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html], { type: 'text/html' }), 'text/plain': new Blob([text], { type: 'text/plain' }) })]).then(ok, () => toast('Copy failed'));
+      } else if (navigator.clipboard) { navigator.clipboard.writeText(text).then(ok, () => toast('Copy failed')); }
+    };
+  }
+
+  function viewWho(root) {
+    document.body.classList.remove('signed-in');
+    root.innerHTML = `
+      <div class="login"><div class="login-card">
+        <div class="login-logo"><img src="../icons/acs-mark.svg" alt="" width="64" height="64"><span>ADVANCED<br>CONTROL<small>SYSTEMS</small></span></div>
+        <h1>Weekly Tasks</h1>
+        <p>Prototype — choose who you want to be. Your changes stay on this device.</p>
+        <div class="who">${D.people.filter(p => ['Adham Zaki', 'Ahmed Hamdy', 'Mahmoud Dahawy', 'Mohamed Ashraf', 'Hazem Shabaan'].indexOf(p.name) !== -1).map(p => `
+          <button type="button" data-me="${p.id}"><span class="avatar">${esc(initials(p.name))}</span><span><strong>${esc(p.name)}</strong><small>${p.admin ? 'Admin · ' : ''}${esc(p.team)} team</small></span></button>`).join('')}
+        </div></div></div>`;
+    $$('[data-me]', root).forEach(b => b.onclick = () => { D.me = b.dataset.me; save(); render(); });
+  }
+
+  // ---------- Shell ----------
+  const TABS = [{ id: 'tasks', label: 'My tasks' }, { id: 'projects', label: 'Projects' }, { id: 'meeting', label: 'Meeting' }];
+  function render() {
+    const root = $('#view');
+    if (!D.me) { $('#nav').innerHTML = ''; return viewWho(root); }
+    document.body.classList.add('signed-in');
+    $('#nav').innerHTML = TABS.map(t => `<a href="#" data-tab="${t.id}" class="${UI.tab === t.id ? 'active' : ''}">${icon(t.id)}<span>${t.label}</span></a>`).join('');
+    $$('#nav [data-tab]').forEach(a => a.onclick = e => { e.preventDefault(); UI.tab = a.dataset.tab; UI.project = null; render(); window.scrollTo(0, 0); });
+    $('#avatarBtn').textContent = initials(me().name);
+    ({ tasks: viewMyTasks, projects: viewProjects, meeting: viewMeeting })[UI.tab](root);
+  }
+
+  // "Live updates" demo: a teammate adds a task to one of your projects shortly after you start.
+  function simulateLive() {
+    setTimeout(() => {
+      if (!D.me) return simulateLive();
+      const p = myProjects().find(x => x.members.length > 1);
+      if (!p || D.live > 2) return;
+      const mate = person(p.members.find(id => id !== D.me));
+      const ideas = ['Site visit to check network readiness', 'Update the progress sheet', 'Call the consultant about approvals'];
+      D.tasks.push({ id: uid(), projectId: p.id, week: THIS, ownerId: mate.id, title: ideas[D.live % ideas.length], done: false, blocked: false, blockNote: '',
+        assignees: [mate.id], contacts: [], subtasks: [], at: Date.now() });
+      D.live++; save();
+      const s = $('#sync'); s.className = 'sync busy'; setTimeout(() => { s.className = 'sync'; }, 900);
+      toast('Live: ' + mate.name.split(' ')[0] + ' added a task in ' + p.name, true);
+      render();
+    }, 25000);
+  }
+
+  $('#resetBtn').onclick = () => { if (confirm('Reset the prototype to the sample data?')) { localStorage.removeItem(KEY); location.reload(); } };
+  $('#switchBtn').onclick = () => { D.me = null; save(); UI.tab = 'tasks'; render(); };
+  render();
+  simulateLive();
+})();
+</script>
+</body>
+</html>
