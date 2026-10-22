@@ -1,10 +1,10 @@
 // Service worker: caches the app shell so the app opens instantly (and offline).
 // Data requests to Supabase are never cached here; the app keeps its own data cache.
 // Bump VERSION on every deploy that changes these files.
-const VERSION = 'acs-tracker-v3';
+const VERSION = 'acs-tracker-v4';
 const SHELL = [
   './', 'index.html', 'css/styles.css', 'js/config.js', 'js/api.js', 'js/app.js', 'manifest.webmanifest',
-  'icons/icon-192.png', 'icons/apple-touch-icon.png',
+  'icons/icon-192.png', 'icons/apple-touch-icon.png', 'icons/acs-mark.svg',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js',
 ];
 
@@ -23,7 +23,7 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  const isShell = url.origin === location.origin || url.href.startsWith('https://cdn.jsdelivr.net/');
+  const isShell = url.origin === location.origin || /^https:\/\/(cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com)\//.test(url.href);
   if (!isShell) return;
   e.respondWith(caches.open(VERSION).then(async cache => {
     const cached = await cache.match(req, { ignoreSearch: url.origin === location.origin });
