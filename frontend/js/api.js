@@ -10,7 +10,7 @@
     auth: { persistSession: true, autoRefreshToken: true },
   });
   const DOMAIN = String(cfg.EMAIL_DOMAIN || '').toLowerCase();
-  const CACHE_KEY = 'acs-tracker-cache-v3';
+  const CACHE_KEY = 'acs-tracker-cache-v4';
   const HISTORY_WEEKS = 26;
 
   // ---------- Usernames <-> emails ----------
@@ -61,7 +61,7 @@
 
   const mapMember = r => ({
     id: r.id, username: toUsername(r.email), email: r.email, name: r.name || toUsername(r.email),
-    role: r.role === 'admin' ? 'Admin' : 'Member', active: r.active,
+    role: r.role === 'admin' ? 'Admin' : 'Member', active: r.active, team: r.team || '',
   });
   const mapProject = r => ({
     id: r.id, name: r.name, type: r.type, status: r.status, priority: r.priority || 'Medium',
@@ -76,7 +76,7 @@
   });
   const mapTask = r => ({
     id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
-    team: r.team || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
+    team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
     subtasks: Array.isArray(r.subtasks) ? r.subtasks : [], createdBy: r.created_by,
     createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
   });
@@ -166,7 +166,7 @@
     async saveTask(t) {
       const row = {
         project_id: t.projectId, week: t.week, title: String(t.title || '').trim(), notes: String(t.notes || '').trim(),
-        status: t.status || 'To Do', team: t.team || null,
+        status: t.status || 'To Do', team: t.team || null, block_note: String(t.blockNote || '').trim(),
         assignee_ids: t.assigneeIds || [], contact_ids: t.contactIds || [],
         subtasks: (t.subtasks || []).filter(x => String(x.t || '').trim()).map(x => ({ t: String(x.t).trim(), done: !!x.done })),
       };
@@ -222,6 +222,33 @@
       writeCache();
     },
 
+    // ----- Joining projects -----
+
+    async joinProject(projectId) {
+      check(await sb.from('assignments').insert({ project_id: projectId, user_id: data.me.id }));
+      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id))
+        .concat({ projectId: projectId, userId: data.me.id });
+      writeCache();
+    },
+
+    async leaveProject(projectId) {
+      check(await sb.from('assignments').delete().eq('project_id', projectId).eq('user_id', data.me.id));
+      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id));
+      writeCache();
+    },
+
+    // ----- Live updates -----
+
+    /** Calls onChange(table) whenever a teammate changes tasks, projects, assignments or 3rd parties. */
+    subscribe(onChange) {
+      const ch = sb.channel('acs-live');
+      ['tasks', 'assignments', 'contacts', 'projects'].forEach(table => {
+        ch.on('postgres_changes', { event: '*', schema: 'public', table: table }, payload => onChange(table, payload));
+      });
+      ch.subscribe(status => onChange('status', { status: status }));
+      return () => sb.removeChannel(ch);
+    },
+
     async meetings() {
       return check(await sb.from('meetings').select('*').order('date', { ascending: false })).map(mapMeeting);
     },
@@ -261,12 +288,12 @@
         const id = check(await sb.rpc('admin_create_user', {
           p_email: toEmail(p.username), p_password: password, p_name: p.name || '', p_role: role,
         }));
-        if (p.active === false) check(await sb.from('profiles').update({ active: false }).eq('id', id));
+        check(await sb.from('profiles').update({ active: p.active !== false, team: p.team || null }).eq('id', id));
       } else {
-        check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false }).eq('id', p.id));
+        check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false, team: p.team || null }).eq('id', p.id));
         if (password) check(await sb.rpc('admin_set_password', { p_user_id: p.id, p_password: password }));
       }
-      data.team = check(await sb.from('profiles').select('id,email,name,role,active').order('name')).map(mapMember);
+      data.team = check(await sb.from('profiles').select('id,email,name,role,active,team').order('name')).map(mapMember);
       writeCache();
     },
 
