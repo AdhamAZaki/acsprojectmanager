@@ -2,30 +2,38 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>ACS Project Tracker</title>
   <meta name="description" content="Weekly project updates and minutes of meeting for the ACS PLC / AVEVA team.">
+  <meta name="theme-color" content="#1f3a5f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ACS Tracker">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://bhjqtygkegqhggpdtrlm.supabase.co">
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
-  <header class="topbar" id="topbar" hidden>
-    <div class="brand">ACS <span>Project Tracker</span></div>
-    <nav class="tabs" id="tabs"></nav>
-    <div class="user">
-      <span id="userName"></span>
-      <button class="link" id="passwordBtn" type="button">Change password</button>
-      <button class="link" id="logoutBtn" type="button">Sign out</button>
-    </div>
+  <header class="topbar">
+    <div class="brand"><span class="logo">ACS</span><span class="brand-name">Project Tracker</span></div>
+    <nav class="nav" id="nav" aria-label="Main"></nav>
+    <span class="sync" id="sync" title="Sync status"></span>
+    <button class="avatar-btn" id="avatarBtn" type="button" aria-label="Account"></button>
   </header>
 
   <main id="app">
     <section class="login" id="loginView" hidden>
       <div class="login-card">
-        <h1>ACS Project Tracker</h1>
+        <div class="login-logo">ACS</div>
+        <h1>Project Tracker</h1>
         <p>Weekly updates and minutes of meeting for the PLC &amp; AVEVA team.</p>
         <form id="loginForm" class="login-form">
-          <label>Username<input name="username" autocomplete="username" required autofocus></label>
-          <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+          <label class="field">Username<input name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" required></label>
+          <label class="field">Password<input name="password" type="password" autocomplete="current-password" required></label>
           <p class="error" id="loginError" hidden></p>
           <button class="primary big" type="submit">Sign in</button>
         </form>
@@ -36,11 +44,11 @@
   </main>
 
   <dialog id="dialog"></dialog>
-  <div class="toast" id="toast" hidden></div>
+  <div class="toast" id="toast" role="status" hidden></div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
-  <script src="js/config.js"></script>
-  <script src="js/api.js"></script>
-  <script src="js/app.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"></script>
+  <script defer src="js/config.js"></script>
+  <script defer src="js/api.js"></script>
+  <script defer src="js/app.js"></script>
 </body>
 </html>

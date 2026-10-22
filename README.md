@@ -38,7 +38,8 @@ Everything is stored in a free **Supabase** database (Postgres). Admins get a we
 |---|---|
 | `frontend/` | Static site deployed to GitHub Pages |
 | `frontend/js/config.js` | Supabase Project URL + publishable key (both public by design) |
-| `frontend/js/api.js` | Data layer (Supabase queries) |
+| `frontend/js/api.js` | Data layer: one-request loading + local cache for instant start |
+| `frontend/sw.js`, `manifest.webmanifest` | Installable app (Add to Home screen) and offline app shell |
 | `supabase/setup.sql` | Creates the tables, security rules, admin functions and test data. Paste into the SQL Editor. |
 | `docs/SETUP.md` | Setup guide, test logins, and how to go live |
 | `.github/workflows/pages.yml` | Auto-deploys `frontend/` on every push to `main` |

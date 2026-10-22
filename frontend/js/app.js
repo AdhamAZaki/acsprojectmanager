@@ -1,22 +1,25 @@
-// ACS Project Tracker — UI. Plain JS, no build step.
+// ACS Project Tracker — UI. Plain JS, no build step. Mobile-first.
 (function () {
-  const { call, Auth } = window.Api;
+  const Api = window.Api;
   const $ = (sel, root) => (root || document).querySelector(sel);
   const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
   const UPDATE_STATUSES = ['On Track', 'At Risk', 'Delayed', 'Blocked', 'Done'];
-  const PROJECT_TYPES = ['PLC', 'AVEVA', 'Other'];
-  const PROJECT_STATUSES = ['Active', 'On Hold', 'Completed', 'Closed'];
+  const PROJECT_TYPES = ['PLC', 'AVEVA', 'BMS', 'Other'];
+  // Same statuses as the Notion "Projects" database.
+  const PROJECT_STATUSES = ['In Progress', 'Planning', 'Paused', 'Backlog', 'Done', 'Canceled'];
+  const PRIORITIES = ['High', 'Medium', 'Low'];
+  const CLOSED = ['Done', 'Canceled'];
 
   const S = {
-    user: null,
+    data: null,          // see Api.refresh()
     week: isoWeek(new Date()),
-    myProjects: [],
-    myUpdates: [],
+    open: {},            // expanded project cards on My week
     meetings: null,
-    projects: null,
-    team: null,
-    assignments: null,
+    report: {},          // week -> updates (admin)
+    manageTab: 'projects',
+    projectFilter: 'Open',
+    projectSearch: '',
   };
 
   // ---------- Helpers ----------
@@ -27,6 +30,13 @@
   }
   function multiline(v) { return esc(v).replace(/\n/g, '<br>'); }
   function slug(v) { return String(v || '').toLowerCase().replace(/[^a-z]+/g, '-'); }
+  function initials(name) {
+    return String(name || '?').replace(/\(.*?\)/g, '').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase();
+  }
+  const isAdmin = () => S.data && S.data.me.role === 'Admin';
+  const me = () => S.data.me;
+  const member = id => S.data.team.find(m => m.id === id) || { name: 'Unknown', username: '' };
+  const project = id => S.data.projects.find(p => p.id === id) || { name: id, type: '' };
 
   function toast(msg, isError) {
     const el = $('#toast');
@@ -34,7 +44,7 @@
     el.className = 'toast' + (isError ? ' error' : '');
     el.hidden = false;
     clearTimeout(toast.t);
-    toast.t = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2500);
+    toast.t = setTimeout(() => { el.hidden = true; }, isError ? 6000 : 2200);
   }
 
   async function guard(fn) {
@@ -43,8 +53,7 @@
 
   function isoWeek(d) {
     const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    const day = date.getUTCDay() || 7;
-    date.setUTCDate(date.getUTCDate() + 4 - day);
+    date.setUTCDate(date.getUTCDate() + 4 - (date.getUTCDay() || 7));
     const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
     const wk = Math.ceil(((date - yearStart) / 86400000 + 1) / 7);
     return date.getUTCFullYear() + '-W' + String(wk).padStart(2, '0');
@@ -61,47 +70,80 @@
     m.setUTCDate(m.getUTCDate() + 7 * n);
     return isoWeek(new Date(m.getUTCFullYear(), m.getUTCMonth(), m.getUTCDate()));
   }
-  function weekLabel(week) {
+  function weekRange(week) {
     const mon = weekMonday(week);
     const sun = new Date(mon); sun.setUTCDate(mon.getUTCDate() + 6);
     const f = d => d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', timeZone: 'UTC' });
-    return 'Week ' + week.split('-W')[1] + ' · ' + f(mon) + ' – ' + f(sun) + ' ' + sun.getUTCFullYear();
+    return f(mon) + ' – ' + f(sun);
   }
+  function weekLabel(week) { return 'Week ' + Number(week.split('-W')[1]) + ' · ' + weekRange(week); }
   function today() {
     const d = new Date();
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
-
   function options(list, selected) {
     return list.map(o => `<option${o === selected ? ' selected' : ''}>${esc(o)}</option>`).join('');
   }
 
-  function weekToolbar(extra) {
-    const isCurrent = S.week === isoWeek(new Date());
+  const ICONS = {
+    week: '<path d="M7 3v3M17 3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 14l2.5 2.5L16 11"/>',
+    history: '<path d="M12 8v4l3 2"/><path d="M3.05 11a9 9 0 1 1 .5 4M3 4v5h5"/>',
+    meetings: '<path d="M4 5h16v11H8l-4 4z"/><path d="M8 9h8M8 12h5"/>',
+    report: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    manage: '<path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/>',
+    chevron: '<path d="M9 6l6 6-6 6"/>',
+    left: '<path d="M15 6l-6 6 6 6"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    check: '<path d="M5 12l5 5 9-10"/>',
+  };
+  const icon = (name, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
+
+  function weekBar() {
+    const current = isoWeek(new Date());
     return `
-      <div class="toolbar">
-        <button type="button" class="icon" data-shift="-1" aria-label="Previous week">‹</button>
-        <h2>${esc(weekLabel(S.week))}</h2>
-        <button type="button" class="icon" data-shift="1" aria-label="Next week">›</button>
-        ${isCurrent ? '' : '<button type="button" class="link" data-shift="0">This week</button>'}
-        <span class="spacer"></span>
-        ${extra || ''}
+      <div class="weekbar">
+        <button type="button" class="icon-btn" data-shift="-1" aria-label="Previous week">${icon('left')}</button>
+        <div class="weekbar-label">
+          <strong>Week ${Number(S.week.split('-W')[1])}</strong>
+          <span>${esc(weekRange(S.week))}${S.week === current ? ' · this week' : ''}</span>
+        </div>
+        <button type="button" class="icon-btn" data-shift="1" aria-label="Next week">${icon('chevron')}</button>
+        ${S.week === current ? '' : '<button type="button" class="chip" data-shift="0">Today</button>'}
       </div>`;
   }
-  function bindWeekToolbar(root, rerender) {
+  function bindWeekBar(root) {
     $$('[data-shift]', root).forEach(b => b.addEventListener('click', () => {
       if (!confirmDiscard()) return;
       const n = Number(b.dataset.shift);
       S.week = n === 0 ? isoWeek(new Date()) : shiftWeek(S.week, n);
-      rerender();
+      render();
     }));
   }
 
-  // ---------- Generic form dialog ----------
+  function statusPill(status) {
+    return status ? `<span class="pill st-${slug(status)}">${esc(status)}</span>` : '';
+  }
+  function progressBar(v) {
+    if (v === null || v === undefined) return '';
+    return `<span class="bar" title="${esc(v)}%"><i style="width:${Math.max(0, Math.min(100, v))}%"></i></span><span class="bar-num">${esc(v)}%</span>`;
+  }
+
+  /** One weekly update, shown as a card section (used by History and the Report). */
+  function updateBlock(u, title) {
+    const rows = [['Done', u.done], ['Next', u.next], ['Blockers', u.blockers]].filter(r => r[1]);
+    return `
+      <div class="ublock">
+        <div class="ublock-head"><strong>${esc(title)}</strong><span class="ublock-meta">${statusPill(u.status)}${progressBar(u.progress)}</span></div>
+        ${rows.map(([k, v]) => `<div class="ublock-row ${k === 'Blockers' ? 'warn' : ''}"><span>${k}</span><p>${multiline(v)}</p></div>`).join('')
+          || '<p class="muted">No details.</p>'}
+      </div>`;
+  }
+
+  // ---------- Form sheet ----------
 
   /**
-   * fields: [{ name, label, type: text|email|password|date|select|textarea|checkbox|checklist, options, required }]
-   * onSubmit(values) may throw; the dialog stays open on error.
+   * fields: [{ name, label, type: text|email|password|date|select|textarea|checkbox|checklist|chips, options, required }]
+   * onSubmit(values) may throw; the sheet stays open and shows the error.
    */
   function openForm({ title, fields, values, onSubmit, submitLabel }) {
     const dlg = $('#dialog');
@@ -110,33 +152,41 @@
       const v = values[f.name];
       const req = f.required ? ' required' : '';
       const id = 'f-' + f.name;
+      const wide = f.wide || ['textarea', 'checklist', 'chips', 'checkbox'].indexOf(f.type) !== -1 ? ' wide' : '';
       if (f.type === 'textarea') {
-        return `<label for="${id}">${esc(f.label)}<textarea id="${id}" name="${f.name}" rows="${f.rows || 3}"${req}>${esc(v)}</textarea></label>`;
+        return `<label class="field${wide}" for="${id}">${esc(f.label)}<textarea id="${id}" name="${f.name}" rows="${f.rows || 3}"${req}>${esc(v)}</textarea></label>`;
       }
       if (f.type === 'select') {
-        return `<label for="${id}">${esc(f.label)}<select id="${id}" name="${f.name}">${options(f.options, v)}</select></label>`;
+        return `<label class="field${wide}" for="${id}">${esc(f.label)}<select id="${id}" name="${f.name}">${options(f.options, v)}</select></label>`;
+      }
+      if (f.type === 'chips') {
+        return `<fieldset class="field${wide}"><legend>${esc(f.label)}</legend><div class="chips">${f.options.map(o =>
+          `<label class="chip-opt"><input type="radio" name="${f.name}" value="${esc(o)}"${o === v ? ' checked' : ''}><span>${esc(o)}</span></label>`).join('')}</div></fieldset>`;
       }
       if (f.type === 'checkbox') {
-        return `<label class="check"><input type="checkbox" name="${f.name}"${v !== false ? ' checked' : ''}> ${esc(f.label)}</label>`;
+        return `<label class="check${wide}"><input type="checkbox" name="${f.name}"${v !== false ? ' checked' : ''}> ${esc(f.label)}</label>`;
       }
       if (f.type === 'checklist') {
         const sel = v || [];
         const items = f.options.length ? f.options.map(o =>
-          `<label class="check"><input type="checkbox" name="${f.name}" value="${esc(o.value)}"${sel.indexOf(o.value) !== -1 ? ' checked' : ''}> ${esc(o.label)}</label>`
+          `<label class="check row"><input type="checkbox" name="${f.name}" value="${esc(o.value)}"${sel.indexOf(o.value) !== -1 ? ' checked' : ''}>
+            <span class="avatar sm">${esc(initials(o.label))}</span> ${esc(o.label)}</label>`
         ).join('') : '<p class="muted">Nobody on the team yet.</p>';
-        return `<fieldset><legend>${esc(f.label)}</legend><div class="checklist">${items}</div></fieldset>`;
+        return `<fieldset class="field${wide}"><legend>${esc(f.label)}</legend><div class="checklist">${items}</div></fieldset>`;
       }
-      return `<label for="${id}">${esc(f.label)}<input id="${id}" type="${f.type || 'text'}" name="${f.name}" value="${esc(v)}"${req}${f.readonly ? ' readonly' : ''}></label>`;
+      return `<label class="field${wide}" for="${id}">${esc(f.label)}<input id="${id}" type="${f.type || 'text'}" name="${f.name}" value="${esc(v)}"${req}${f.readonly ? ' readonly' : ''}${f.type === 'password' ? ' autocomplete="new-password"' : ''}></label>`;
     }).join('');
 
     dlg.innerHTML = `
-      <form method="dialog" class="form">
-        <h3>${esc(title)}</h3>
-        <div class="form-grid">${fieldHtml}</div>
-        <p class="error" hidden></p>
-        <div class="actions">
-          <button type="button" class="secondary" data-cancel>Cancel</button>
-          <button type="submit" class="primary">${esc(submitLabel || 'Save')}</button>
+      <form method="dialog" class="sheet">
+        <header class="sheet-head">
+          <button type="button" class="text-btn" data-cancel>Cancel</button>
+          <h3>${esc(title)}</h3>
+          <button type="submit" class="text-btn strong">${esc(submitLabel || 'Save')}</button>
+        </header>
+        <div class="sheet-body">
+          <p class="error" hidden></p>
+          <div class="form-grid">${fieldHtml}</div>
         </div>
       </form>`;
     const form = $('form', dlg);
@@ -147,6 +197,7 @@
       fields.forEach(f => {
         if (f.type === 'checkbox') out[f.name] = form.elements[f.name].checked;
         else if (f.type === 'checklist') out[f.name] = $$(`input[name="${f.name}"]:checked`, form).map(i => i.value);
+        else if (f.type === 'chips') { const c = $(`input[name="${f.name}"]:checked`, form); out[f.name] = c ? c.value : ''; }
         else out[f.name] = form.elements[f.name].value.trim();
       });
       const btn = $('button[type=submit]', form);
@@ -157,6 +208,7 @@
         dlg.close();
       } catch (e) {
         err.textContent = e.message; err.hidden = false;
+        $('.sheet-body', dlg).scrollTop = 0;
       } finally {
         btn.disabled = false;
       }
@@ -166,93 +218,163 @@
 
   // ---------- My week ----------
 
-  function dirtyCards() { return $$('.update-card.dirty'); }
+  const draftKey = (week, projectId) => 'acs-draft:' + me().id + ':' + week + ':' + projectId;
+  function readDraft(week, projectId) {
+    try { return JSON.parse(localStorage.getItem(draftKey(week, projectId))); } catch (e) { return null; }
+  }
+  function writeDraft(card) {
+    try { localStorage.setItem(draftKey(S.week, card.dataset.project), JSON.stringify(cardValues(card))); } catch (e) { /* ignore */ }
+  }
+  function clearDraft(week, projectId) {
+    try { localStorage.removeItem(draftKey(week, projectId)); } catch (e) { /* ignore */ }
+  }
+
+  function dirtyCards() { return $$('.pcard.dirty'); }
   function confirmDiscard() {
-    return !dirtyCards().length || confirm('You have unsaved changes. Discard them?');
+    if (!dirtyCards().length) return true;
+    // Drafts are kept on the device, so leaving doesn't lose anything.
+    return true;
   }
 
-  async function loadMine() {
-    const [projects, updates] = await Promise.all([call('myProjects'), call('myUpdates')]);
-    S.myProjects = projects;
-    S.myUpdates = updates;
+  function myProjects() {
+    const mine = S.data.assignments.filter(a => a.userId === me().id).map(a => a.projectId);
+    return S.data.projects.filter(p => mine.indexOf(p.id) !== -1)
+      .sort((a, b) => (CLOSED.indexOf(a.status) !== -1) - (CLOSED.indexOf(b.status) !== -1) || a.name.localeCompare(b.name));
+  }
+  function myUpdate(week, projectId) {
+    return S.data.updates.find(u => u.week === week && u.projectId === projectId && u.userId === me().id);
   }
 
-  function findUpdate(week, projectId) {
-    return S.myUpdates.find(u => u.week === week && u.projectId === projectId);
+  function cardValues(card) {
+    const val = n => { const el = card.querySelector(`[name="${n}"]`); return el ? el.value : ''; };
+    const st = card.querySelector('input[name="status-' + card.dataset.project + '"]:checked');
+    return { done: val('done'), next: val('next'), blockers: val('blockers'), status: st ? st.value : 'On Track', progress: Number(val('progress')) };
   }
 
   function renderWeek(root) {
+    const projects = myProjects();
     const prevWeek = shiftWeek(S.week, -1);
-    const cards = S.myProjects.map(p => {
-      const u = findUpdate(S.week, p.id) || {};
-      const prev = findUpdate(prevWeek, p.id);
+    const doneCount = projects.filter(p => myUpdate(S.week, p.id)).length;
+    // Open the first project without an update for this week (once per week).
+    if (!S.open[S.week]) {
+      const first = projects.find(p => !myUpdate(S.week, p.id));
+      S.open[S.week] = {};
+      if (first) S.open[S.week][first.id] = true;
+    }
+
+    const cards = projects.map(p => {
+      const saved = myUpdate(S.week, p.id);
+      const draft = readDraft(S.week, p.id);
+      const u = draft || saved || {};
+      const prev = myUpdate(prevWeek, p.id);
       const progress = u.progress !== null && u.progress !== undefined ? u.progress : (prev && prev.progress) || 0;
+      const status = u.status || 'On Track';
+      const open = !!S.open[S.week][p.id];
       return `
-        <article class="card update-card" data-project="${esc(p.id)}">
-          <header>
-            <div>
-              <h3>${esc(p.name)}</h3>
-              <div class="meta"><span class="badge type-${slug(p.type)}">${esc(p.type)}</span>
-                ${p.client ? esc(p.client) + ' · ' : ''}${esc(p.id)}${p.status && p.status !== 'Active' ? ' · ' + esc(p.status) : ''}</div>
-            </div>
-            <span class="saved-at">${u.updatedAt ? 'Saved ' + esc(u.updatedAt) : 'Not submitted'}</span>
-          </header>
-          ${prev && prev.next ? `<div class="ref"><strong>You planned last week:</strong><br>${multiline(prev.next)}</div>` : ''}
-          <div class="fields">
-            <label>What I did this week<textarea name="done" rows="4">${esc(u.done)}</textarea></label>
-            <label>What I'll do next week<textarea name="next" rows="4">${esc(u.next)}</textarea></label>
-            <label class="wide">Blockers / support needed<textarea name="blockers" rows="2">${esc(u.blockers)}</textarea></label>
-          </div>
-          <footer>
-            <label class="inline">Status <select name="status">${options(UPDATE_STATUSES, u.status || 'On Track')}</select></label>
-            <label class="inline progress">Progress
+        <article class="card pcard${open ? ' open' : ''}${draft ? ' dirty' : ''}" data-project="${esc(p.id)}">
+          <button type="button" class="pcard-head" aria-expanded="${open}">
+            <span class="pcard-title">
+              <strong>${esc(p.name)}</strong>
+              <span class="meta"><span class="badge type-${slug(p.type)}">${esc(p.type)}</span>${p.client ? esc(p.client) + ' · ' : ''}${esc(p.status)}</span>
+            </span>
+            <span class="pcard-state">${saved ? statusPill(saved.status) : '<span class="pill todo">To do</span>'}</span>
+            ${icon('chevron', 'chev')}
+          </button>
+          <div class="pcard-body">
+            ${prev && prev.next ? `<div class="ref"><span>You planned last week</span><p>${multiline(prev.next)}</p></div>` : ''}
+            <label class="field">What I did this week<textarea name="done" rows="3" placeholder="e.g. Finished alarm screens, tested IO…">${esc(u.done)}</textarea></label>
+            <label class="field">What I'll do next week<textarea name="next" rows="3" placeholder="e.g. FAT with client…">${esc(u.next)}</textarea></label>
+            <label class="field">Blockers / support needed<textarea name="blockers" rows="2" placeholder="Optional">${esc(u.blockers)}</textarea></label>
+            <fieldset class="field"><legend>Status</legend><div class="chips">${UPDATE_STATUSES.map(s =>
+              `<label class="chip-opt st-${slug(s)}"><input type="radio" name="status-${esc(p.id)}" value="${esc(s)}"${s === status ? ' checked' : ''}><span>${esc(s)}</span></label>`).join('')}</div></fieldset>
+            <label class="field progress">Progress <output>${esc(progress)}%</output>
               <input type="range" name="progress" min="0" max="100" step="5" value="${esc(progress)}">
-              <output>${esc(progress)}%</output>
             </label>
-            <span class="spacer"></span>
-            <button type="button" class="primary" data-save>Save</button>
-          </footer>
+            <div class="pcard-foot">
+              <span class="saved-at">${draft ? 'Draft saved on this phone' : saved ? 'Saved ' + esc(saved.updatedAt) : 'Not submitted yet'}</span>
+              <button type="button" class="primary" data-save>Save</button>
+            </div>
+          </div>
         </article>`;
     }).join('');
 
-    root.innerHTML = weekToolbar('<button type="button" class="primary" id="saveAll">Save all</button>') + (cards ||
-      `<div class="empty"><h3>No projects assigned to you yet</h3><p>Ask an admin to assign you to your projects.</p></div>`);
+    root.innerHTML = weekBar() + (projects.length ? `
+      <div class="summary">
+        <span>${doneCount} of ${projects.length} project${projects.length === 1 ? '' : 's'} updated</span>
+        <span class="bar wide"><i style="width:${projects.length ? Math.round(100 * doneCount / projects.length) : 0}%"></i></span>
+      </div>
+      <div class="stack">${cards}</div>` :
+      `<div class="empty"><h3>No projects assigned to you yet</h3><p>Ask an admin to assign you to your projects.</p></div>`) + `
+      <div class="savebar" id="savebar" hidden><span id="savebarText"></span><button type="button" class="primary" id="saveAll">Save all</button></div>`;
 
-    bindWeekToolbar(root, () => render());
-    $$('.update-card', root).forEach(card => {
+    bindWeekBar(root);
+    $$('.pcard', root).forEach(card => {
+      const id = card.dataset.project;
+      $('.pcard-head', card).addEventListener('click', () => {
+        const open = !card.classList.contains('open');
+        card.classList.toggle('open', open);
+        $('.pcard-head', card).setAttribute('aria-expanded', open);
+        S.open[S.week][id] = open;
+      });
       card.addEventListener('input', ev => {
         card.classList.add('dirty');
         if (ev.target.name === 'progress') $('output', card).textContent = ev.target.value + '%';
+        if (ev.target.tagName === 'TEXTAREA') autoGrow(ev.target);
+        $('.saved-at', card).textContent = 'Draft saved on this phone';
+        writeDraft(card);
+        updateSaveBar();
       });
+      $$('textarea', card).forEach(autoGrow);
       $('[data-save]', card).addEventListener('click', () => saveCard(card));
     });
     const all = $('#saveAll', root);
     if (all) all.addEventListener('click', async () => {
-      const dirty = dirtyCards();
-      if (!dirty.length) return toast('Nothing to save');
-      for (const card of dirty) await saveCard(card, true);
+      all.disabled = true;
+      await Promise.all(dirtyCards().map(c => saveCard(c, true)));
+      all.disabled = false;
       if (!dirtyCards().length) toast('All updates saved');
     });
+    updateSaveBar();
+  }
+
+  function autoGrow(t) {
+    if (!t.offsetParent) return;
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight + 2, 400) + 'px';
+  }
+
+  function updateSaveBar() {
+    const bar = $('#savebar');
+    if (!bar) return;
+    const n = dirtyCards().length;
+    bar.hidden = n < 2;
+    $('#savebarText').textContent = n + ' unsaved updates';
   }
 
   async function saveCard(card, quiet) {
     const btn = $('[data-save]', card);
-    const val = n => card.querySelector(`[name="${n}"]`).value;
+    const week = S.week;
+    const projectId = card.dataset.project;
     btn.disabled = true; btn.textContent = 'Saving…';
     try {
-      const saved = await call('saveUpdate', {
-        week: S.week, projectId: card.dataset.project,
-        done: val('done'), next: val('next'), blockers: val('blockers'),
-        status: val('status'), progress: Number(val('progress')),
-      });
-      S.myUpdates = S.myUpdates.filter(u => !(u.week === saved.week && u.projectId === saved.projectId)).concat(saved);
+      const saved = await Api.saveUpdate(Object.assign({ week: week, projectId: projectId }, cardValues(card)));
+      clearDraft(week, projectId);
       card.classList.remove('dirty');
       $('.saved-at', card).textContent = 'Saved ' + saved.updatedAt;
+      $('.pcard-state', card).innerHTML = statusPill(saved.status);
+      const projects = myProjects();
+      const doneCount = projects.filter(p => myUpdate(week, p.id)).length;
+      const sum = $('.summary');
+      if (sum) {
+        sum.firstElementChild.textContent = doneCount + ' of ' + projects.length + ' project' + (projects.length === 1 ? '' : 's') + ' updated';
+        $('.bar i', sum).style.width = Math.round(100 * doneCount / projects.length) + '%';
+      }
       if (!quiet) toast('Saved');
     } catch (e) {
       toast(e.message, true);
     } finally {
       btn.disabled = false; btn.textContent = 'Save';
+      updateSaveBar();
     }
   }
 
@@ -260,83 +382,93 @@
 
   function renderHistory(root) {
     const byWeek = {};
-    S.myUpdates.forEach(u => { (byWeek[u.week] = byWeek[u.week] || []).push(u); });
+    S.data.updates.filter(u => u.userId === me().id).forEach(u => { (byWeek[u.week] = byWeek[u.week] || []).push(u); });
     const weeks = Object.keys(byWeek).sort().reverse();
-    root.innerHTML = `<div class="toolbar"><h2>My history</h2></div>` + (weeks.length ? weeks.map(w => `
-      <section class="card">
-        <h3>${esc(weekLabel(w))}</h3>
-        ${updatesTable(byWeek[w], false)}
-      </section>`).join('') : '<div class="empty"><h3>No updates yet</h3></div>');
-  }
-
-  function updatesTable(list, showPerson) {
-    return `<div class="table-wrap"><table>
-      <thead><tr>${showPerson ? '<th>Engineer</th>' : '<th>Project</th>'}<th>Done this week</th><th>Next week</th><th>Blockers</th><th>Status</th><th>%</th></tr></thead>
-      <tbody>${list.map(u => `<tr>
-        <td>${esc(showPerson ? u.name : u.projectName)}</td>
-        <td>${multiline(u.done)}</td><td>${multiline(u.next)}</td><td>${multiline(u.blockers)}</td>
-        <td><span class="pill st-${slug(u.status)}">${esc(u.status)}</span></td>
-        <td>${u.progress === null ? '' : esc(u.progress) + '%'}</td></tr>`).join('')}</tbody>
-    </table></div>`;
+    root.innerHTML = `<div class="page-head"><h2>My history</h2><span class="muted">Last 6 months</span></div>` +
+      (weeks.length ? weeks.map(w => `
+        <section class="card">
+          <h3 class="card-title">${esc(weekLabel(w))}</h3>
+          ${byWeek[w].map(u => updateBlock(u, project(u.projectId).name)).join('')}
+        </section>`).join('') : '<div class="empty"><h3>No updates yet</h3><p>Your saved weekly updates will appear here.</p></div>');
   }
 
   // ---------- Weekly report / MoM (admin) ----------
 
   async function renderReport(root) {
-    root.innerHTML = weekToolbar('') + '<p class="muted">Loading…</p>';
-    bindWeekToolbar(root, () => render());
     const week = S.week;
-    const r = await guard(() => call('weekReport', { week }));
-    if (!r || week !== S.week) return;
-    S.report = r;
+    const draw = () => {
+      if (week !== S.week || currentTab().id !== 'report') return;
+      const updates = S.report[week];
+      root.innerHTML = weekBar() + (updates ? reportHtml(week, updates) : '<div class="skeleton"></div><div class="skeleton"></div>');
+      bindWeekBar(root);
+      if (updates) bindReport(root, week, updates);
+    };
+    draw();
+    const fresh = await guard(() => Api.weekUpdates(week));
+    if (fresh) { S.report[week] = fresh; draw(); }
+  }
 
+  function reportData(week, updates) {
+    const open = S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1);
+    const active = S.data.team.filter(m => m.active);
+    const missing = [];
+    S.data.assignments.forEach(a => {
+      const p = open.find(x => x.id === a.projectId);
+      const m = active.find(x => x.id === a.userId);
+      if (p && m && !updates.some(u => u.projectId === p.id && u.userId === m.id)) missing.push({ name: m.name, projectName: p.name });
+    });
     const byProject = {};
-    r.updates.forEach(u => { (byProject[u.projectId] = byProject[u.projectId] || []).push(u); });
-    const sections = r.projects.filter(p => byProject[p.id]).map(p => `
-      <section class="card">
-        <h3>${esc(p.name)} <span class="badge type-${slug(p.type)}">${esc(p.type)}</span></h3>
-        ${updatesTable(byProject[p.id], true)}
-      </section>`).join('');
+    updates.forEach(u => { (byProject[u.projectId] = byProject[u.projectId] || []).push(u); });
+    const projects = S.data.projects.filter(p => byProject[p.id]);
+    return { missing, byProject, projects, people: new Set(updates.map(u => u.userId)).size };
+  }
 
-    const submitted = new Set(r.updates.map(u => u.username)).size;
-    const missingHtml = r.missing.length ? `
-      <section class="card warn">
-        <h3>Missing updates (${r.missing.length})</h3>
-        <ul>${r.missing.map(m => `<li><strong>${esc(m.name)}</strong> — ${esc(m.projectName)}</li>`).join('')}</ul>
-      </section>` : '';
-
-    root.innerHTML = weekToolbar(`
+  function reportHtml(week, updates) {
+    const r = reportData(week, updates);
+    const blockers = updates.filter(u => u.blockers).length;
+    return `
+      <div class="actions-row">
         <button type="button" class="secondary" id="copyMom">Copy as text</button>
         <button type="button" class="secondary" id="printMom">Print / PDF</button>
-        <button type="button" class="primary" id="newMeetingFromReport">Record meeting</button>`) + `
-      <div class="stats">
-        <div class="stat"><b>${r.updates.length}</b><span>updates</span></div>
-        <div class="stat"><b>${submitted}</b><span>people submitted</span></div>
-        <div class="stat ${r.missing.length ? 'bad' : ''}"><b>${r.missing.length}</b><span>missing</span></div>
+        <button type="button" class="primary" id="newMeetingFromReport">Record meeting</button>
       </div>
-      ${missingHtml}
-      ${sections || '<div class="empty"><h3>No updates submitted for this week yet</h3></div>'}`;
+      <div class="stats">
+        <div class="stat"><b>${updates.length}</b><span>updates</span></div>
+        <div class="stat"><b>${r.people}</b><span>people</span></div>
+        <div class="stat ${r.missing.length ? 'bad' : 'good'}"><b>${r.missing.length}</b><span>missing</span></div>
+        <div class="stat ${blockers ? 'warn' : ''}"><b>${blockers}</b><span>blockers</span></div>
+      </div>
+      ${r.missing.length ? `
+        <section class="card warn">
+          <h3 class="card-title">Missing updates</h3>
+          <ul class="plain">${r.missing.map(m => `<li><span class="avatar sm">${esc(initials(m.name))}</span><span><strong>${esc(m.name)}</strong><br><span class="muted">${esc(m.projectName)}</span></span></li>`).join('')}</ul>
+        </section>` : ''}
+      ${r.projects.map(p => `
+        <section class="card">
+          <h3 class="card-title">${esc(p.name)} <span class="badge type-${slug(p.type)}">${esc(p.type)}</span></h3>
+          ${r.byProject[p.id].map(u => updateBlock(u, member(u.userId).name)).join('')}
+        </section>`).join('') || '<div class="empty"><h3>No updates for this week yet</h3></div>'}`;
+  }
 
-    bindWeekToolbar(root, () => render());
+  function bindReport(root, week, updates) {
     $('#printMom', root).addEventListener('click', () => window.print());
     $('#copyMom', root).addEventListener('click', () => {
-      navigator.clipboard.writeText(momText(r)).then(() => toast('Copied'), () => toast('Copy failed', true));
+      navigator.clipboard.writeText(momText(week, updates)).then(() => toast('Copied'), () => toast('Copy failed', true));
     });
     $('#newMeetingFromReport', root).addEventListener('click', () => {
-      const attendees = Array.from(new Set(r.updates.map(u => u.name))).join(', ');
-      const actions = r.updates.filter(u => u.next).map(u => `${u.name} — ${u.projectName}: ${u.next.replace(/\s*\n\s*/g, '; ')}`).join('\n');
-      meetingForm({ date: today(), week: r.week, title: 'Weekly meeting — ' + weekLabel(r.week), attendees, actionItems: actions });
+      const attendees = Array.from(new Set(updates.map(u => member(u.userId).name))).join(', ');
+      const actions = updates.filter(u => u.next).map(u => `${member(u.userId).name} — ${project(u.projectId).name}: ${u.next.replace(/\s*\n\s*/g, '; ')}`).join('\n');
+      meetingForm({ date: today(), week: week, title: 'Weekly meeting — ' + weekLabel(week), attendees: attendees, actionItems: actions });
     });
   }
 
-  function momText(r) {
-    const lines = ['Minutes of meeting — ' + weekLabel(r.week), ''];
-    const byProject = {};
-    r.updates.forEach(u => { (byProject[u.projectId] = byProject[u.projectId] || []).push(u); });
-    r.projects.filter(p => byProject[p.id]).forEach(p => {
+  function momText(week, updates) {
+    const r = reportData(week, updates);
+    const lines = ['Minutes of meeting — ' + weekLabel(week), ''];
+    r.projects.forEach(p => {
       lines.push('■ ' + p.name + ' (' + p.type + ')');
-      byProject[p.id].forEach(u => {
-        lines.push('  • ' + u.name + ' — ' + u.status + (u.progress !== null ? ', ' + u.progress + '%' : ''));
+      r.byProject[p.id].forEach(u => {
+        lines.push('  • ' + member(u.userId).name + ' — ' + u.status + (u.progress !== null ? ', ' + u.progress + '%' : ''));
         if (u.done) lines.push('    Done: ' + u.done.replace(/\n/g, '\n          '));
         if (u.next) lines.push('    Next: ' + u.next.replace(/\n/g, '\n          '));
         if (u.blockers) lines.push('    Blockers: ' + u.blockers.replace(/\n/g, '\n              '));
@@ -353,189 +485,238 @@
   // ---------- Meetings ----------
 
   async function renderMeetings(root) {
-    if (!S.meetings) {
-      root.innerHTML = '<p class="muted">Loading…</p>';
-      S.meetings = await guard(() => call('listMeetings'));
-      if (!S.meetings) { S.meetings = null; return; }
-    }
-    const isAdmin = S.user.role === 'Admin';
-    root.innerHTML = `
-      <div class="toolbar"><h2>Meetings</h2><span class="spacer"></span>
-        ${isAdmin ? '<button type="button" class="primary" id="newMeeting">New meeting</button>' : ''}</div>
-      ${S.meetings.length ? S.meetings.map(m => `
-        <article class="card meeting">
-          <header>
-            <div><h3>${esc(m.title)}</h3><div class="meta">${esc(m.date)}${m.week ? ' · ' + esc(m.week) : ''}</div></div>
-            ${isAdmin ? `<button type="button" class="link" data-edit="${esc(m.id)}">Edit</button>` : ''}
-          </header>
-          ${m.attendees ? `<p><strong>Attendees:</strong> ${esc(m.attendees)}</p>` : ''}
-          ${m.decisions ? `<h4>Decisions</h4><p>${multiline(m.decisions)}</p>` : ''}
-          ${m.actionItems ? `<h4>Action items</h4><p>${multiline(m.actionItems)}</p>` : ''}
-          ${m.notes ? `<h4>Notes</h4><p>${multiline(m.notes)}</p>` : ''}
-        </article>`).join('') : '<div class="empty"><h3>No meetings recorded yet</h3></div>'}`;
-    const nb = $('#newMeeting', root);
-    if (nb) nb.addEventListener('click', () => meetingForm({ date: today(), week: isoWeek(new Date()) }));
-    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () =>
-      meetingForm(S.meetings.find(m => m.id === b.dataset.edit))));
+    const draw = () => {
+      if (currentTab().id !== 'meetings') return;
+      const list = S.meetings;
+      root.innerHTML = `
+        <div class="page-head"><h2>Meetings</h2>
+          ${isAdmin() ? `<button type="button" class="primary small" id="newMeeting">${icon('plus')} New</button>` : ''}</div>
+        ${!list ? '<div class="skeleton"></div>' : list.length ? list.map(m => `
+          <article class="card meeting">
+            <header class="row-between">
+              <div><h3 class="card-title">${esc(m.title)}</h3><div class="meta">${esc(m.date)}${m.week ? ' · ' + esc(m.week) : ''}</div></div>
+              ${isAdmin() ? `<button type="button" class="text-btn" data-edit="${esc(m.id)}">Edit</button>` : ''}
+            </header>
+            ${m.attendees ? `<p class="muted">${esc(m.attendees)}</p>` : ''}
+            ${m.decisions ? `<h4>Decisions</h4><p>${multiline(m.decisions)}</p>` : ''}
+            ${m.actionItems ? `<h4>Action items</h4><p>${multiline(m.actionItems)}</p>` : ''}
+            ${m.notes ? `<h4>Notes</h4><p>${multiline(m.notes)}</p>` : ''}
+          </article>`).join('') : '<div class="empty"><h3>No meetings recorded yet</h3></div>'}`;
+      const nb = $('#newMeeting', root);
+      if (nb) nb.addEventListener('click', () => meetingForm({ date: today(), week: isoWeek(new Date()) }));
+      $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => meetingForm(S.meetings.find(m => m.id === b.dataset.edit))));
+    };
+    draw();
+    const fresh = await guard(() => Api.meetings());
+    if (fresh) { S.meetings = fresh; draw(); }
   }
 
   function meetingForm(values) {
     openForm({
       title: values.id ? 'Edit meeting' : 'New meeting',
-      values,
+      values: values,
       fields: [
         { name: 'date', label: 'Date', type: 'date', required: true },
         { name: 'week', label: 'Week (e.g. 2026-W43)' },
-        { name: 'title', label: 'Title' },
-        { name: 'attendees', label: 'Attendees' },
+        { name: 'title', label: 'Title', wide: true },
+        { name: 'attendees', label: 'Attendees', wide: true },
         { name: 'decisions', label: 'Decisions', type: 'textarea', rows: 4 },
         { name: 'actionItems', label: 'Action items (owner — task — due)', type: 'textarea', rows: 6 },
         { name: 'notes', label: 'Notes', type: 'textarea', rows: 4 },
       ],
       onSubmit: async v => {
-        await call('saveMeeting', Object.assign({ id: values.id }, v));
+        await Api.saveMeeting(Object.assign({ id: values.id }, v));
         S.meetings = null;
         toast('Meeting saved');
-        location.hash = '#/meetings';
-        render();
+        if (location.hash !== '#/meetings') location.hash = '#/meetings'; else render();
       },
     });
   }
 
-  // ---------- Projects (admin) ----------
+  // ---------- Manage: projects & team (admin) ----------
 
-  async function loadAdminData(force) {
-    if (force || !S.projects) {
-      const [projects, team, assignments] = await Promise.all([call('listProjects'), call('listTeam'), call('listAssignments')]);
-      Object.assign(S, { projects, team, assignments });
-    }
+  function renderManage(root) {
+    root.innerHTML = `
+      <div class="page-head"><h2>Manage</h2>
+        <button type="button" class="primary small" id="addBtn">${icon('plus')} ${S.manageTab === 'projects' ? 'Project' : 'Member'}</button></div>
+      <div class="segmented">
+        <button type="button" data-tab="projects" class="${S.manageTab === 'projects' ? 'on' : ''}">Projects</button>
+        <button type="button" data-tab="team" class="${S.manageTab === 'team' ? 'on' : ''}">Team</button>
+      </div>
+      <div id="manageBody"></div>`;
+    $$('[data-tab]', root).forEach(b => b.addEventListener('click', () => { S.manageTab = b.dataset.tab; render(); }));
+    $('#addBtn', root).addEventListener('click', () => S.manageTab === 'projects'
+      ? projectForm({ type: 'PLC', status: 'In Progress', priority: 'Medium', assigned: [] })
+      : memberForm({ role: 'Member', active: true }));
+    const body = $('#manageBody', root);
+    if (S.manageTab === 'projects') renderProjects(body); else renderTeam(body);
   }
 
-  async function renderProjects(root) {
-    if (!S.projects) root.innerHTML = '<p class="muted">Loading…</p>';
-    await guard(() => loadAdminData());
-    if (!S.projects) return;
-    const nameOf = username => (S.team.find(m => m.username === username) || { name: username }).name;
-    const filter = S.projectFilter || '';
-    const rows = S.projects.filter(p => !filter || p.type === filter);
+  function renderProjects(root) {
+    const filters = ['Open'].concat(PROJECT_STATUSES).concat(['All']);
+    const q = S.projectSearch.toLowerCase();
+    const list = S.data.projects.filter(p =>
+      (S.projectFilter === 'All' || (S.projectFilter === 'Open' ? CLOSED.indexOf(p.status) === -1 : p.status === S.projectFilter)) &&
+      (!q || (p.name + ' ' + p.client + ' ' + p.id).toLowerCase().indexOf(q) !== -1));
     root.innerHTML = `
-      <div class="toolbar"><h2>Projects</h2>
-        <select id="typeFilter"><option value="">All types</option>${options(PROJECT_TYPES, filter)}</select>
-        <span class="spacer"></span>
-        <button type="button" class="primary" id="addProject">Add project</button></div>
-      <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Client</th><th>Manager</th><th>Status</th><th>Assigned to</th><th></th></tr></thead>
-        <tbody>${rows.map(p => `<tr>
-          <td>${esc(p.id)}</td><td>${esc(p.name)}</td>
-          <td><span class="badge type-${slug(p.type)}">${esc(p.type)}</span></td>
-          <td>${esc(p.client)}</td><td>${esc(p.manager)}</td><td>${esc(p.status)}</td>
-          <td>${S.assignments.filter(a => a.projectId === p.id).map(a => esc(nameOf(a.username))).join(', ')}</td>
-          <td><button type="button" class="link" data-edit="${esc(p.id)}">Edit</button></td></tr>`).join('')
-          || '<tr><td colspan="8" class="muted">No projects yet.</td></tr>'}</tbody>
-      </table></div></div>`;
-    $('#typeFilter', root).addEventListener('change', e => { S.projectFilter = e.target.value; render(); });
-    $('#addProject', root).addEventListener('click', () => projectForm({ type: 'PLC', status: 'Active' }));
+      <input type="search" class="search" id="projectSearch" placeholder="Search projects" value="${esc(S.projectSearch)}">
+      <div class="chips scroll">${filters.map(f => {
+        const n = f === 'All' ? S.data.projects.length : f === 'Open' ? S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1).length : S.data.projects.filter(p => p.status === f).length;
+        return `<button type="button" class="chip${S.projectFilter === f ? ' on' : ''}" data-filter="${esc(f)}">${esc(f)} <small>${n}</small></button>`;
+      }).join('')}</div>
+      <div class="grid">${list.map(p => {
+        const team = S.data.assignments.filter(a => a.projectId === p.id).map(a => member(a.userId));
+        return `
+          <button type="button" class="card list-card" data-edit="${esc(p.id)}">
+            <span class="row-between"><strong>${esc(p.name)}</strong><span class="prio prio-${slug(p.priority)}" title="${esc(p.priority)} priority">${esc(p.priority)}</span></span>
+            <span class="meta"><span class="badge type-${slug(p.type)}">${esc(p.type)}</span>${esc(p.id)}${p.client ? ' · ' + esc(p.client) : ''}</span>
+            <span class="row-between">
+              <span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>
+              <span class="avatars">${team.slice(0, 4).map(m => `<span class="avatar sm" title="${esc(m.name)}">${esc(initials(m.name))}</span>`).join('')}${team.length > 4 ? `<span class="avatar sm more">+${team.length - 4}</span>` : ''}</span>
+            </span>
+          </button>`;
+      }).join('') || '<div class="empty"><h3>No projects match</h3></div>'}</div>`;
+    const search = $('#projectSearch', root);
+    search.addEventListener('input', () => {
+      S.projectSearch = search.value;
+      const pos = search.selectionStart;
+      renderProjects(root);
+      const s2 = $('#projectSearch', root); s2.focus(); s2.setSelectionRange(pos, pos);
+    });
+    $$('[data-filter]', root).forEach(b => b.addEventListener('click', () => { S.projectFilter = b.dataset.filter; renderProjects(root); }));
     $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => {
-      const p = S.projects.find(x => x.id === b.dataset.edit);
-      projectForm(Object.assign({}, p, { assigned: S.assignments.filter(a => a.projectId === p.id).map(a => a.username) }));
+      const p = S.data.projects.find(x => x.id === b.dataset.edit);
+      projectForm(Object.assign({}, p, { assigned: S.data.assignments.filter(a => a.projectId === p.id).map(a => a.userId) }));
     }));
   }
 
   function projectForm(values) {
     openForm({
-      title: values.id ? 'Edit project' : 'Add project',
-      values,
+      title: values.id ? 'Edit project' : 'New project',
+      values: values,
       fields: [
+        { name: 'name', label: 'Project name', required: true, wide: true },
         { name: 'id', label: 'Project ID (blank = auto)', readonly: !!values.id },
-        { name: 'name', label: 'Project name', required: true },
         { name: 'type', label: 'Type', type: 'select', options: PROJECT_TYPES },
-        { name: 'status', label: 'Status', type: 'select', options: PROJECT_STATUSES },
+        { name: 'status', label: 'Status', type: 'chips', options: PROJECT_STATUSES },
+        { name: 'priority', label: 'Priority', type: 'chips', options: PRIORITIES },
         { name: 'client', label: 'Client' },
         { name: 'manager', label: 'Project manager' },
         { name: 'startDate', label: 'Start date', type: 'date' },
         { name: 'endDate', label: 'End date', type: 'date' },
-        { name: 'notes', label: 'Notes', type: 'textarea' },
         { name: 'assigned', label: 'Assigned engineers', type: 'checklist',
-          options: S.team.filter(m => m.active).map(m => ({ value: m.username, label: m.name })) },
+          options: S.data.team.filter(m => m.active).map(m => ({ value: m.id, label: m.name })) },
+        { name: 'notes', label: 'Notes', type: 'textarea' },
       ],
       onSubmit: async v => {
-        const saved = await call('saveProject', v);
-        await call('setAssignments', { projectId: saved.id, usernames: v.assigned });
-        await loadAdminData(true);
+        if (!v.name) throw new Error('Project name is required.');
+        await Api.saveProject(v, v.assigned);
         toast('Project saved');
         render();
       },
     });
   }
 
-  // ---------- Team (admin) ----------
-
-  async function renderTeam(root) {
-    if (!S.team) root.innerHTML = '<p class="muted">Loading…</p>';
-    await guard(() => loadAdminData());
-    if (!S.team) return;
-    root.innerHTML = `
-      <div class="toolbar"><h2>Team</h2><span class="spacer"></span>
-        <button type="button" class="primary" id="addMember">Add member</button></div>
-      <div class="card"><div class="table-wrap"><table>
-        <thead><tr><th>Name</th><th>Username</th><th>Role</th><th>Active</th><th>Projects</th><th></th></tr></thead>
-        <tbody>${S.team.map(m => `<tr class="${m.active ? '' : 'inactive'}">
-          <td>${esc(m.name)}</td><td>${esc(m.username)}</td><td>${esc(m.role)}</td><td>${m.active ? 'Yes' : 'No'}</td>
-          <td>${S.assignments.filter(a => a.username === m.username).length}</td>
-          <td><button type="button" class="link" data-edit="${esc(m.username)}">Edit</button></td></tr>`).join('')}</tbody>
-      </table></div></div>`;
-    $('#addMember', root).addEventListener('click', () => memberForm({ role: 'Member', active: true }));
-    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () =>
-      memberForm(S.team.find(m => m.username === b.dataset.edit))));
+  function renderTeam(root) {
+    root.innerHTML = `<div class="grid">${S.data.team.map(m => {
+      const n = S.data.assignments.filter(a => a.userId === m.id).length;
+      return `
+        <button type="button" class="card list-card member${m.active ? '' : ' inactive'}" data-edit="${esc(m.id)}">
+          <span class="avatar">${esc(initials(m.name))}</span>
+          <span class="member-info"><strong>${esc(m.name)}</strong><span class="muted">${esc(m.username)}</span></span>
+          <span class="member-side">${m.role === 'Admin' ? '<span class="badge">Admin</span>' : ''}${m.active ? '' : '<span class="badge off">Inactive</span>'}<small class="muted">${n} project${n === 1 ? '' : 's'}</small></span>
+        </button>`;
+    }).join('')}</div>`;
+    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => memberForm(S.data.team.find(m => m.id === b.dataset.edit))));
   }
 
   function memberForm(values) {
+    const isNew = !values.id;
     openForm({
-      title: values.username ? 'Edit member' : 'Add member',
-      values,
+      title: isNew ? 'New member' : 'Edit member',
+      values: values,
       fields: [
-        { name: 'username', label: 'Username (or full email)', required: true, readonly: !!values.username },
         { name: 'name', label: 'Full name', required: true },
-        { name: 'password', type: 'password', required: !values.username,
-          label: values.username ? 'New password (leave blank to keep)' : 'Password (min. 8 characters)' },
-        { name: 'role', label: 'Role', type: 'select', options: ['Member', 'Admin'] },
+        { name: 'username', label: 'Username (or full email)', required: true, readonly: !isNew },
+        { name: 'password', type: 'password', required: isNew,
+          label: isNew ? 'Password (min. 8 characters)' : 'New password (leave blank to keep)' },
+        { name: 'role', label: 'Role', type: 'chips', options: ['Member', 'Admin'] },
         { name: 'active', label: 'Active (can sign in)', type: 'checkbox' },
       ],
       onSubmit: async v => {
-        await call('saveMember', Object.assign({ isNew: !values.username }, v));
-        await loadAdminData(true);
+        await Api.saveMember(Object.assign({ isNew: isNew, id: values.id }, v));
         toast('Member saved');
         render();
       },
     });
   }
 
-  // ---------- Routing ----------
+  // ---------- Account ----------
+
+  function accountSheet() {
+    const dlg = $('#dialog');
+    dlg.innerHTML = `
+      <div class="sheet account">
+        <header class="sheet-head"><span></span><h3>Account</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+        <div class="sheet-body">
+          <div class="account-who"><span class="avatar lg">${esc(initials(me().name))}</span>
+            <div><strong>${esc(me().name)}</strong><br><span class="muted">${esc(me().username)} · ${esc(me().role)}</span></div></div>
+          <button type="button" class="secondary block" id="pwBtn">Change password</button>
+          <button type="button" class="danger block" id="outBtn">Sign out</button>
+          <p class="muted small">Tip: add this app to your home screen from your browser's Share/menu → "Add to Home screen".</p>
+        </div>
+      </div>`;
+    $('[data-close]', dlg).addEventListener('click', () => dlg.close());
+    $('#pwBtn', dlg).addEventListener('click', passwordForm);
+    $('#outBtn', dlg).addEventListener('click', async () => { dlg.close(); await Api.logout(); location.reload(); });
+    dlg.showModal();
+  }
+
+  function passwordForm() {
+    openForm({
+      title: 'Change password',
+      submitLabel: 'Change',
+      fields: [
+        { name: 'current', label: 'Current password', type: 'password', required: true, wide: true },
+        { name: 'next', label: 'New password (min. 8 characters)', type: 'password', required: true, wide: true },
+        { name: 'confirm', label: 'Repeat new password', type: 'password', required: true, wide: true },
+      ],
+      onSubmit: async v => {
+        if (v.next !== v.confirm) throw new Error('The new passwords do not match.');
+        await Api.changePassword(v.current, v.next);
+        toast('Password changed');
+      },
+    });
+  }
+
+  // ---------- Routing / shell ----------
 
   const TABS = [
     { id: 'week', label: 'My week', view: renderWeek },
-    { id: 'history', label: 'My history', view: renderHistory },
+    { id: 'history', label: 'History', view: renderHistory },
     { id: 'meetings', label: 'Meetings', view: renderMeetings },
-    { id: 'report', label: 'Weekly report', view: renderReport, admin: true },
-    { id: 'projects', label: 'Projects', view: renderProjects, admin: true },
-    { id: 'team', label: 'Team', view: renderTeam, admin: true },
+    { id: 'report', label: 'Report', view: renderReport, admin: true },
+    { id: 'manage', label: 'Manage', view: renderManage, admin: true },
   ];
 
   function currentTab() {
     const id = location.hash.replace(/^#\/?/, '');
-    const allowed = TABS.filter(t => !t.admin || S.user.role === 'Admin');
+    const allowed = TABS.filter(t => !t.admin || isAdmin());
     return allowed.find(t => t.id === id) || allowed[0];
   }
 
   function render() {
     const tab = currentTab();
-    $('#tabs').innerHTML = TABS.filter(t => !t.admin || S.user.role === 'Admin').map(t =>
-      `<a href="#/${t.id}" class="${t.id === tab.id ? 'active' : ''}${t.admin ? ' admin' : ''}">${esc(t.label)}</a>`).join('');
+    $('#nav').innerHTML = TABS.filter(t => !t.admin || isAdmin()).map(t =>
+      `<a href="#/${t.id}" class="${t.id === tab.id ? 'active' : ''}"${t.id === tab.id ? ' aria-current="page"' : ''}>${icon(t.id)}<span>${esc(t.label)}</span></a>`).join('');
+    $('#avatarBtn').textContent = initials(me().name);
+    $('#avatarBtn').title = me().name;
+    document.body.dataset.tab = tab.id;
     tab.view($('#view'));
   }
 
   function showLogin(message) {
-    $('#topbar').hidden = true;
+    document.body.classList.remove('signed-in');
     $('#view').innerHTML = '';
     $('#loginView').hidden = false;
     const err = $('#loginError');
@@ -543,67 +724,66 @@
     err.hidden = !message;
   }
 
-  function passwordForm() {
-    openForm({
-      title: 'Change password',
-      submitLabel: 'Change password',
-      fields: [
-        { name: 'current', label: 'Current password', type: 'password', required: true },
-        { name: 'next', label: 'New password (min. 8 characters)', type: 'password', required: true },
-        { name: 'confirm', label: 'Repeat new password', type: 'password', required: true },
-      ],
-      onSubmit: async v => {
-        if (v.next !== v.confirm) throw new Error('The new passwords do not match.');
-        await call('changePassword', { current: v.current, next: v.next });
-        toast('Password changed');
-      },
-    });
-  }
-
-  async function enterApp() {
+  function showApp() {
     $('#loginView').hidden = true;
-    $('#view').innerHTML = '<p class="muted">Loading your projects…</p>';
-    try {
-      S.user = await call('me');
-      await loadMine();
-    } catch (e) {
-      return showLogin(e.message);
-    }
-    $('#userName').textContent = S.user.name + (S.user.role === 'Admin' ? ' · Admin' : '');
-    $('#topbar').hidden = false;
+    document.body.classList.add('signed-in');
     render();
   }
 
-  function start() {
+  /** Background refresh. Re-renders only when nothing is being edited. */
+  async function refresh() {
+    const sync = $('#sync');
+    sync.className = 'sync busy';
+    try {
+      S.data = await Api.refresh();
+      sync.className = 'sync';
+      const editing = dirtyCards().length || $('#dialog').open || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+      if (!editing) showApp();
+    } catch (e) {
+      sync.className = 'sync off';
+      if (e.code === 401) return;
+      if (!S.data) return showLogin(e.message);
+      toast(e.code === 0 ? 'Offline — showing saved data' : e.message, e.code !== 0);
+    }
+  }
+
+  async function start() {
     $('#loginForm').addEventListener('submit', async ev => {
       ev.preventDefault();
       const form = ev.target;
       const btn = $('button[type=submit]', form);
-      btn.disabled = true;
+      btn.disabled = true; btn.textContent = 'Signing in…';
       $('#loginError').hidden = true;
       try {
-        await Auth.login(form.elements.username.value.trim(), form.elements.password.value);
+        S.data = await Api.login(form.elements.username.value.trim(), form.elements.password.value);
         form.reset();
-        await enterApp();
+        showApp();
       } catch (e) {
         showLogin(e.message);
       } finally {
-        btn.disabled = false;
+        btn.disabled = false; btn.textContent = 'Sign in';
       }
     });
-    $('#passwordBtn').addEventListener('click', passwordForm);
-    $('#logoutBtn').addEventListener('click', () => { if (confirmDiscard()) Auth.logout(); });
-    window.addEventListener('session-expired', e => showLogin(e.detail));
-    window.addEventListener('beforeunload', e => { if (dirtyCards().length) { e.preventDefault(); e.returnValue = ''; } });
-    let lastHash = location.hash;
-    window.addEventListener('hashchange', () => {
-      if (!S.user) return;
-      if (!confirmDiscard()) { history.replaceState(null, '', lastHash || '#/'); return; }
-      lastHash = location.hash;
-      render();
-    });
+    $('#avatarBtn').addEventListener('click', accountSheet);
+    window.addEventListener('session-expired', e => { S.data = null; showLogin(e.detail); });
+    window.addEventListener('hashchange', () => { if (S.data) render(); });
+    window.addEventListener('focus', () => { if (S.data && Date.now() - (S.data.loadedAt || 0) > 60000) refresh(); });
 
-    Auth.hasSession().then(ok => (ok ? enterApp() : showLogin()), () => showLogin());
+    const userId = await Api.sessionUserId().catch(() => null);
+    if (!userId) return showLogin();
+    const cached = Api.cached();
+    if (cached && cached.me && cached.me.id === userId) {
+      S.data = cached;   // instant: show what we had, then refresh
+      showApp();
+    } else {
+      $('#view').innerHTML = '<div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>';
+      document.body.classList.add('signed-in');
+    }
+    refresh();
+  }
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 
   start();
