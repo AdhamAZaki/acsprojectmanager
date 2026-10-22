@@ -10,7 +10,7 @@
     auth: { persistSession: true, autoRefreshToken: true },
   });
   const DOMAIN = String(cfg.EMAIL_DOMAIN || '').toLowerCase();
-  const CACHE_KEY = 'acs-tracker-cache-v2';
+  const CACHE_KEY = 'acs-tracker-cache-v3';
   const HISTORY_WEEKS = 26;
 
   // ---------- Usernames <-> emails ----------
@@ -74,6 +74,13 @@
     progress: r.progress === null || r.progress === undefined ? null : r.progress,
     submittedAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
   });
+  const mapTask = r => ({
+    id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
+    team: r.team || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
+    subtasks: Array.isArray(r.subtasks) ? r.subtasks : [], createdBy: r.created_by,
+    createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
+  });
+  const mapContact = r => ({ id: r.id, name: r.name, org: r.org || '' });
   const mapMeeting = r => ({
     id: r.id, date: r.date, week: r.week || '', title: r.title, attendees: r.attendees, notes: r.notes,
     decisions: r.decisions, actionItems: r.action_items, createdAt: stamp(r.created_at),
@@ -127,6 +134,8 @@
         projects: res.projects.map(mapProject),
         assignments: res.assignments.map(a => ({ projectId: a.project_id, userId: a.user_id })),
         updates: res.updates.map(mapUpdate),
+        tasks: (res.tasks || []).map(mapTask),
+        contacts: (res.contacts || []).map(mapContact),
         loadedAt: Date.now(),
       };
       writeCache();
@@ -150,6 +159,67 @@
     /** All updates for a week (admins see everyone's). */
     async weekUpdates(week) {
       return check(await sb.from('weekly_updates').select('*').eq('week', week)).map(mapUpdate);
+    },
+
+    // ----- Tasks -----
+
+    async saveTask(t) {
+      const row = {
+        project_id: t.projectId, week: t.week, title: String(t.title || '').trim(), notes: String(t.notes || '').trim(),
+        status: t.status || 'To Do', team: t.team || null,
+        assignee_ids: t.assigneeIds || [], contact_ids: t.contactIds || [],
+        subtasks: (t.subtasks || []).filter(x => String(x.t || '').trim()).map(x => ({ t: String(x.t).trim(), done: !!x.done })),
+      };
+      const q = t.id ? sb.from('tasks').update(row).eq('id', t.id) : sb.from('tasks').insert(row);
+      const saved = mapTask(check(await q.select().single()));
+      data.tasks = data.tasks.filter(x => x.id !== saved.id).concat(saved);
+      writeCache();
+      return saved;
+    },
+
+    async deleteTask(id) {
+      check(await sb.from('tasks').delete().eq('id', id));
+      data.tasks = data.tasks.filter(x => x.id !== id);
+      writeCache();
+    },
+
+    /** Fresh copy of every visible task for a week (used by the report). */
+    async weekTasks(week) {
+      const list = check(await sb.from('tasks').select('*').eq('week', week)).map(mapTask);
+      data.tasks = data.tasks.filter(x => x.week !== week).concat(list);
+      writeCache();
+      return list;
+    },
+
+    /** Adds a 3rd party (someone without an account). Re-uses an existing one with the same name. */
+    async addContact(name, org) {
+      const clean = String(name || '').trim();
+      if (!clean) throw new ApiError('Enter a name.');
+      const existing = data.contacts.find(c => c.name.toLowerCase() === clean.toLowerCase());
+      if (existing) return existing;
+      const res = await sb.from('contacts').insert({ name: clean, org: String(org || '').trim() }).select().single();
+      let saved;
+      if (res.error && /duplicate|unique/i.test(res.error.message || '')) {
+        saved = mapContact(check(await sb.from('contacts').select('*').ilike('name', clean).limit(1).single()));
+      } else {
+        saved = mapContact(check(res));
+      }
+      data.contacts = data.contacts.filter(c => c.id !== saved.id).concat(saved).sort((a, b) => a.name.localeCompare(b.name));
+      writeCache();
+      return saved;
+    },
+
+    async saveContact(c) {
+      const saved = mapContact(check(await sb.from('contacts').update({ name: String(c.name || '').trim(), org: String(c.org || '').trim() }).eq('id', c.id).select().single()));
+      data.contacts = data.contacts.map(x => x.id === saved.id ? saved : x);
+      writeCache();
+      return saved;
+    },
+
+    async deleteContact(id) {
+      check(await sb.from('contacts').delete().eq('id', id));
+      data.contacts = data.contacts.filter(c => c.id !== id);
+      writeCache();
     },
 
     async meetings() {
