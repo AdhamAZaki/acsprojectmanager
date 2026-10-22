@@ -41,12 +41,13 @@ The setup script also adds 5 dummy projects, assignments, 3 sample updates (week
 
 Usernames follow the company email format (`firstname_lastname@advcontrolsys.com`). If someone's address differs, edit their line in the script, or change it later in **Authentication → Users**.
 
-## Tasks and 3rd parties
+## How the app works (v3 "Weekly Tasks")
 
-- **Tasks tab:** add a task to one of your projects for any week. Each task has notes, sub-tasks, a status, and a **PLC / Dev** team tag. Unfinished tasks can be moved to the next week in one tap.
-- **Who sees a task:** everyone on the project's team (and admins), so the whole team stays in sync.
-- **3rd parties** are people without an account (e.g. "Eng. Moataz", "Megz"). Anyone can add one while assigning a task, and they then appear for everyone. Admins can rename or delete them under **Manage → 3rd parties**.
-- **Report → Copy as email** builds the *Weekly Progress Check & Action Plan* table (Project · PLC Team Action Plan · Dev Team Action Plan · Overall Status) from the week's tasks, ready to paste into Zoho Mail.
+- **My tasks:** two tabs, *This week* and *Next week*. Type a task, pick the project, tap Add. Tap a task to add sub-tasks, people, a Blocked note, or move it to the other week. Unfinished tasks from earlier weeks stay in *This week* until they are done.
+- **Projects:** everyone sees every project. *My projects* first; *Other projects* have a **Join** button (instant, no admin needed). A project page shows everyone's tasks grouped by person, and **Leave**.
+- **Meeting:** built from tasks, one card per project with PLC team / Dev team columns (Done, In progress, Next week) and blocked items at the top. **Copy as email** gives the *Weekly Progress Check & Action Plan* table, ready to paste into Zoho Mail.
+- **Manage (admins):** projects, team (set each person's **PLC / Dev** team, which decides their column in the meeting), and 3rd parties.
+- **Live updates:** when a teammate changes a task you see it within a second ("Updated by a teammate").
 
 ## Going live with real data
 

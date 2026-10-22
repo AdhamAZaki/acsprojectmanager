@@ -155,11 +155,10 @@ drop policy if exists profiles_admin_write on public.profiles;
 create policy profiles_admin_write on public.profiles for update to authenticated
   using ((select public.is_admin())) with check ((select public.is_admin()));
 
--- projects: members see the projects assigned to them; admins see and manage all
+-- projects: every active member can see every project (so they can join one); admins manage them
 drop policy if exists projects_read on public.projects;
 create policy projects_read on public.projects for select to authenticated
-  using ((select public.is_admin()) or ((select public.is_active_member()) and exists (
-    select 1 from public.assignments a where a.project_id = projects.id and a.user_id = (select auth.uid()))));
+  using ((select public.is_active_member()));
 drop policy if exists projects_admin_insert on public.projects;
 create policy projects_admin_insert on public.projects for insert to authenticated
   with check ((select public.is_admin()));
@@ -170,16 +169,18 @@ drop policy if exists projects_admin_delete on public.projects;
 create policy projects_admin_delete on public.projects for delete to authenticated
   using ((select public.is_admin()));
 
--- assignments: members see their own; admins manage all
+-- assignments: everyone sees who is on which project; you can join/leave yourself; admins manage all
 drop policy if exists assignments_read on public.assignments;
 create policy assignments_read on public.assignments for select to authenticated
-  using ((select public.is_admin()) or (user_id = (select auth.uid()) and (select public.is_active_member())));
+  using ((select public.is_active_member()));
 drop policy if exists assignments_admin_insert on public.assignments;
-create policy assignments_admin_insert on public.assignments for insert to authenticated
-  with check ((select public.is_admin()));
+drop policy if exists assignments_insert on public.assignments;
+create policy assignments_insert on public.assignments for insert to authenticated
+  with check ((select public.is_admin()) or (user_id = (select auth.uid()) and (select public.is_active_member())));
 drop policy if exists assignments_admin_delete on public.assignments;
-create policy assignments_admin_delete on public.assignments for delete to authenticated
-  using ((select public.is_admin()));
+drop policy if exists assignments_delete on public.assignments;
+create policy assignments_delete on public.assignments for delete to authenticated
+  using ((select public.is_admin()) or user_id = (select auth.uid()));
 
 -- weekly_updates: members read/write only their own, only on assigned projects; admins read all
 drop policy if exists updates_read on public.weekly_updates;
@@ -361,6 +362,29 @@ create policy tasks_delete on public.tasks for delete to authenticated
 
 revoke all on public.contacts, public.tasks from anon;
 
+-- ---------- Simple weekly tasks (v3): teams, blocked reason, self-join, live updates ----------
+
+-- Each person belongs to the PLC or Dev team; the weekly meeting groups tasks by it.
+alter table public.profiles add column if not exists team text;
+alter table public.profiles drop constraint if exists profiles_team_check;
+alter table public.profiles add constraint profiles_team_check check (team is null or team in ('PLC', 'Dev'));
+
+-- Why a task is blocked (shown in the meeting).
+alter table public.tasks add column if not exists block_note text not null default '';
+
+-- Live updates: the app listens for changes to these tables (still filtered by the rules above).
+do $$
+declare t text;
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
+    foreach t in array array['tasks', 'assignments', 'contacts', 'projects'] loop
+      if not exists (select 1 from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+        execute format('alter publication supabase_realtime add table public.%I', t);
+      end if;
+    end loop;
+  end if;
+end $$;
+
 -- ---------- Fast loading (one request instead of several) ----------
 -- SECURITY INVOKER: these run as the signed-in user, so every rule above still applies.
 -- Members get only their own data; admins also get every project and assignment.
@@ -368,8 +392,8 @@ revoke all on public.contacts, public.tasks from anon;
 create or replace function public.app_bootstrap(p_since text default null)
 returns json language sql stable security invoker set search_path = public as $$
   select json_build_object(
-    'me', (select row_to_json(p) from (select id, email, name, role, active from profiles where id = (select auth.uid())) p),
-    'team', coalesce((select json_agg(t order by t.name) from (select id, email, name, role, active from profiles) t), '[]'::json),
+    'me', (select row_to_json(p) from (select id, email, name, role, active, team from profiles where id = (select auth.uid())) p),
+    'team', coalesce((select json_agg(t order by t.name) from (select id, email, name, role, active, team from profiles) t), '[]'::json),
     'projects', coalesce((select json_agg(pr order by pr.id) from projects pr), '[]'::json),
     'assignments', coalesce((select json_agg(json_build_object('project_id', a.project_id, 'user_id', a.user_id)) from assignments a), '[]'::json),
     'updates', coalesce((select json_agg(w order by w.week desc) from (
@@ -415,6 +439,15 @@ revoke all on function public.is_admin() from public, anon;
 revoke all on function public.is_active_member() from public, anon;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.is_active_member() to authenticated;
+
+-- Starting PLC / Dev team for the engineers in the Projects List sheet (only fills empty values).
+update public.profiles set team = 'PLC' where team is null and email in (
+  'ahmed_hamdy@advcontrolsys.com', 'tarek_khaled@advcontrolsys.com', 'ahmed_shady_mokhtar@advcontrolsys.com',
+  'mohamed_ashraf@advcontrolsys.com', 'galal_ali@advcontrolsys.com', 'mohamed_elsoudy@advcontrolsys.com');
+update public.profiles set team = 'Dev' where team is null and email in (
+  'adham_zaki@advcontrolsys.com', 'mahmoud_dahawy@advcontrolsys.com', 'ahmed_yasser@advcontrolsys.com', 'mohamed_adel@advcontrolsys.com',
+  'hazem_shabaan@advcontrolsys.com', 'hady_alaa@advcontrolsys.com', 'abdelrahman_ashraf@advcontrolsys.com', 'marina_talat@advcontrolsys.com',
+  'abdelrahman_hesham@advcontrolsys.com');
 
 -- Tiny public function the daily GitHub Action calls so the free project never pauses.
 create or replace function public.ping() returns text

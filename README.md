@@ -1,14 +1,14 @@
 # ACS Project Tracker (acsprojectmanager)
 
-A weekly project-update and minutes-of-meeting tool for the ACS PLC / AVEVA development team.
+A weekly task tool for the ACS PLC / AVEVA development team. It replaces typing up the weekly meeting by hand.
 
-Each engineer signs in with a **username and password**, sees the projects assigned to them, and records:
+Each engineer signs in with a **username and password** and:
 
-- what they did this week
-- what they plan to do next week
-- blockers or support needed, status, and % progress
+- sees the projects they are on, or **joins** any project in one tap
+- adds **tasks** (with sub-tasks) for **this week or next week**; unfinished tasks roll over automatically
+- marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-Everything is stored in a free **Supabase** database (Postgres). Admins get a weekly report, ready to use as the minutes of the meeting (with copy-as-text and print-to-PDF), and they manage projects, the team and assignments.
+The **Meeting** tab builds the minutes automatically from everyone's tasks (PLC / Dev columns per project, blocked items first) with **Copy as email** and print-to-PDF. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
 
 ![My week](docs/screenshots/3-my-week.png)
 
