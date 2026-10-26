@@ -1,9 +1,20 @@
-name: Deploy frontend to GitHub Pages
+name: Deploy
 
+# On every push to main: run the checks, update the live database (when the
+# SUPABASE_DB_URL secret is set), then publish frontend/ to GitHub Pages.
+# Nothing is published if a check or the database update fails.
 on:
   push:
     branches: [main]
-    paths: ['frontend/**', '.github/workflows/pages.yml']
+    paths:
+      - 'frontend/**'
+      - 'supabase/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'eslint.config.js'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 permissions:
@@ -13,10 +24,34 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  checks:
+    uses: ./.github/workflows/ci.yml
+
+  database:
+    name: Update the live database
+    needs: checks
+    runs-on: ubuntu-latest
+    # The SUPABASE_DB_URL secret lives in this environment, limited to the main branch (docs/SETUP.md).
+    environment: database
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run supabase/setup.sql (one transaction, so a failure changes nothing)
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$SUPABASE_DB_URL" ]; then
+            echo "::notice title=Database not updated::Add the SUPABASE_DB_URL secret to update the database automatically (docs/SETUP.md), or paste supabase/setup.sql into the Supabase SQL Editor."
+            exit 0
+          fi
+          command -v psql || (sudo apt-get update && sudo apt-get install -y postgresql-client)
+          psql "$SUPABASE_DB_URL" -X -q -v ON_ERROR_STOP=1 --single-transaction -f supabase/setup.sql
+
   deploy:
+    name: Publish the website
+    needs: [checks, database]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -24,6 +59,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # A new cache name per deploy, so installed apps pick up the new version.
+      - name: Stamp app version
+        run: |
+          sed -i "s/const VERSION = '[^']*'/const VERSION = 'acs-tracker-${GITHUB_SHA::12}'/" frontend/sw.js
+          grep -q "acs-tracker-${GITHUB_SHA::12}" frontend/sw.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend
