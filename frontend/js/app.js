@@ -280,6 +280,12 @@
       const title = f.elements.title.value.trim();
       const pid = fixedProject || f.elements.project.value;
       if (!title || !pid) return;
+      if (title.split(/\s+/).length < 3 && f.dataset.nudged !== title) {
+        f.dataset.nudged = title;
+        toast('Add a bit more detail so the meeting understands it, or tap Add again to keep it.');
+        f.elements.title.focus();
+        return;
+      }
       S.lastProject = pid;
       const btn = $('button[type=submit]', f); btn.disabled = true;
       S.lastWrite = Date.now();
@@ -397,11 +403,21 @@
     const { rows, blocked } = meetingData(week);
     const subs = t => t.subtasks.length ? ` <em>(${t.subtasks.filter(s => s.done).length}/${t.subtasks.length})</em>` : '';
     const li = (t, kind) => `<li class="${isBlocked(t) ? 'blk' : ''}">${kind === 'done' ? '✔ ' : ''}${esc(t.title)} <em>"${esc(who(t))}"</em>${isBlocked(t) ? ` — blocked: ${esc(t.blockNote || 'no reason given')}` : ''}${subs(t)}</li>`;
-    const col = (c, name) => `<div class="mtg-col"><strong>${name} team</strong>
-      ${c.done.length ? `<h4>Done</h4><ul>${c.done.map(t => li(t, 'done')).join('')}</ul>` : ''}
-      ${c.doing.length ? `<h4>In progress</h4><ul>${c.doing.map(t => li(t, 'doing')).join('')}</ul>` : ''}
-      ${c.next.length ? `<h4>Next week</h4><ul>${c.next.map(t => li(t, 'next')).join('')}</ul>` : ''}
-      ${c.done.length + c.doing.length + c.next.length ? '' : '<p class="muted">—</p>'}</div>`;
+    const mark = (t, kind) => kind === 'done' ? '✔' : kind === 'next' ? '→' : isBlocked(t) ? '⛔' : '•';
+    const item = (t, kind) => `<li class="${isBlocked(t) ? 'blk' : ''}"><span class="mk">${mark(t, kind)}</span><span>${esc(t.title)}${kind === 'next' ? ' <em>(next week)</em>' : ''}${t.week < week && !isDone(t) ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}${isBlocked(t) ? ` — blocked: ${esc(t.blockNote || 'no reason given')}` : ''}${subs(t)}</span></li>`;
+    // One block per person under the project, so the meeting goes round the people
+    const people = r => {
+      const by = {};
+      ['PLC', 'Dev'].forEach(k => ['doing', 'done', 'next'].forEach(kind => r.cols[k][kind].forEach(t => {
+        (by[t.createdBy] = by[t.createdBy] || []).push([t, kind]);
+      })));
+      return Object.keys(by).sort((a, b) => member(a).name.localeCompare(member(b).name)).map(id => `<div class="mtg-person">
+        <strong><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</strong>
+        <ul>${by[id].map(x => item(x[0], x[1])).join('')}</ul></div>`).join('');
+    };
+    const count = k => rows.reduce((n, r) => n + r.cols.PLC[k].length + r.cols.Dev[k].length, 0);
+    const delayed = rows.reduce((n, r) => n + ['PLC', 'Dev'].reduce((m, k) => m + r.cols[k].doing.filter(t => t.week < week).length, 0), 0);
+    const moved = rows.filter(r => r.cols.PLC.done.length + r.cols.Dev.done.length + r.cols.PLC.doing.length + r.cols.Dev.doing.length).length;
     root.innerHTML = `
       <div class="weekbar">
         <button type="button" class="icon-btn" data-mw="-1" aria-label="Previous week">${icon('left')}</button>
@@ -410,9 +426,10 @@
       </div>
       <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button></div>
       <p class="muted small" style="margin:0 0 12px">Built automatically from everyone’s tasks${isAdmin() ? '' : ' on your projects'}.</p>
+      ${rows.length ? `<div class="mtg-sum"><span><b>${moved}</b> ${moved === 1 ? 'project' : 'projects'} with progress</span><span><b>${count('done')}</b> done</span><span class="${blocked.length ? 'bad' : ''}"><b>${blocked.length}</b> blocked</span><span class="${delayed ? 'warn' : ''}"><b>${delayed}</b> delayed</span></div>` : ''}
       ${blocked.length ? `<section class="card warn"><h3 class="card-title">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(t => `<li><span><strong>${esc(t.title)}</strong><br><span class="muted">${esc(project(t.projectId).name)} · ${esc(who(t))} — ${esc(t.blockNote || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
       ${rows.map(r => `<section class="card"><h3 class="card-title">${esc(r.p.name)} <span class="badge ${typeClass(r.p.type)}">${esc(r.p.type)}</span><span class="pstatus ps-${slug(r.p.status)}">${esc(r.p.status)}</span></h3>
-        <div class="mtg-grid">${col(r.cols.PLC, 'PLC')}${col(r.cols.Dev, 'Dev')}</div></section>`).join('')
+        ${people(r)}</section>`).join('')
         || '<div class="empty"><h3>No tasks for this week yet</h3><p>As people add tasks, the meeting fills itself in.</p></div>'}`;
     $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); render(); });
     $('#printMom', root).onclick = () => window.print();

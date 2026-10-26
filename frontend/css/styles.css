@@ -474,3 +474,15 @@ ul.plan .tpill { margin-left: 6px; }
 .back { display: inline-flex; align-items: center; gap: 4px; }
 .back .ico { width: 18px; height: 18px; }
 .icon-btn:disabled { opacity: .4; }
+
+/* Meeting: people under each project + summary */
+.mtg-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.mtg-sum span { background: #fff; border: 1px solid var(--line, #e7e2dc); border-radius: 999px; padding: 6px 12px; font-size: 14px; }
+.mtg-sum .bad { color: #CB2150; border-color: #CB2150; }
+.mtg-sum .warn { color: #b4560f; border-color: #F25F22; }
+.mtg-person { background: #f3f1ee; border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
+.mtg-person > strong { display: flex; align-items: center; gap: 8px; }
+.mtg-person ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.mtg-person li { display: flex; gap: 8px; padding: 3px 0; }
+.mtg-person li .mk { width: 1em; flex: none; text-align: center; }
+.mtg-person li.blk { color: #CB2150; }
