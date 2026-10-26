@@ -79,8 +79,12 @@
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
     subtasks: Array.isArray(r.subtasks) ? r.subtasks : [], createdBy: r.created_by,
     createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
+    version: r.updated_at,   // exact timestamp, used to spot a teammate saving the same task first
   });
   const mapContact = r => ({ id: r.id, name: r.name, org: r.org || '' });
+  const mapMinutes = r => ({
+    id: r.id, week: r.week, savedAt: stamp(r.updated_at), savedBy: r.created_by, snapshot: r.snapshot,
+  });
   const mapMeeting = r => ({
     id: r.id, date: r.date, week: r.week || '', title: r.title, attendees: r.attendees, notes: r.notes,
     decisions: r.decisions, actionItems: r.action_items, createdAt: stamp(r.created_at),
@@ -96,7 +100,49 @@
 
   // ---------- Local cache ----------
 
-  let data = null; // { me, team, projects, assignments, updates, loadedAt }
+  let data = null; // { me, team, projects, assignments, updates, tasks, contacts, loadedAt }
+
+  // Last version of each task the server confirmed. The screen may show changes that are
+  // still saving; changes are always worked out against this confirmed copy.
+  const base = new Map();
+  function remember(t) { base.set(t.id, t); return t; }
+  function putTask(t) {
+    data.tasks = data.tasks.some(x => x.id === t.id) ? data.tasks.map(x => x.id === t.id ? t : x) : data.tasks.concat(t);
+  }
+
+  // Every write goes through write(), so a refresh that overlaps a save can tell, and
+  // fetches again instead of showing data from before the save.
+  let writeSeq = 0, inflight = 0;
+  async function write(fn) {
+    writeSeq++; inflight++;
+    try { return await fn(); } finally { inflight--; writeSeq++; }
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const uniq = list => Array.from(new Set(list || []));
+  const cleanSubs = list => (list || []).filter(x => String(x.t || '').trim()).map(x => ({ t: String(x.t).trim(), done: !!x.done }));
+
+  /** Turns app-side task changes into database columns (only the fields given). */
+  function taskRow(c) {
+    const r = {};
+    if ('projectId' in c) r.project_id = c.projectId;
+    if ('week' in c) r.week = c.week;
+    if ('title' in c) r.title = String(c.title || '').trim();
+    if ('notes' in c) r.notes = String(c.notes || '').trim();
+    if ('status' in c) r.status = c.status || 'To Do';
+    if ('team' in c) r.team = c.team || null;
+    if ('blockNote' in c) r.block_note = String(c.blockNote || '').trim();
+    if ('assigneeIds' in c) r.assignee_ids = uniq(c.assigneeIds);
+    if ('contactIds' in c) r.contact_ids = uniq(c.contactIds);
+    if ('subtasks' in c) r.subtasks = cleanSubs(c.subtasks);
+    return r;
+  }
+
+  async function fetchTask(id) {
+    const rows = check(await sb.from('tasks').select('*').eq('id', id));
+    if (!rows.length) { base.delete(id); return null; }
+    return remember(mapTask(rows[0]));
+  }
+  const taskQueues = {};   // one save at a time per task, in the order they were made
 
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)); } catch (e) { return null; }
@@ -122,12 +168,22 @@
 
     /** Fetches everything in one request and updates the cache. */
     async refresh() {
-      const res = check(await sb.rpc('app_bootstrap', { p_since: sinceWeek() }));
-      if (!res || !res.me) expire('Please sign in.');
-      if (!res.me.active) {
-        await sb.auth.signOut();
-        expire('Your account is not active. Ask an admin to activate it on the Team page.');
+      for (let attempt = 0; ; attempt++) {
+        // Let saves finish first, and fetch again if one happened meanwhile.
+        for (let waited = 0; inflight > 0 && waited < 10000; waited += 150) await sleep(150);
+        const seq = writeSeq;
+        const res = check(await sb.rpc('app_bootstrap', { p_since: sinceWeek() }));
+        if (!res || !res.me) expire('Please sign in.');
+        if (!res.me.active) {
+          await sb.auth.signOut();
+          expire('Your account is not active. Ask an admin to activate it on the Team page.');
+        }
+        if ((writeSeq !== seq || inflight > 0) && attempt < 3) continue;
+        return Api._apply(res);
       }
+    },
+
+    _apply(res) {
       data = {
         me: mapMember(res.me),
         team: res.team.map(mapMember),
@@ -138,6 +194,8 @@
         contacts: (res.contacts || []).map(mapContact),
         loadedAt: Date.now(),
       };
+      base.clear();
+      data.tasks.forEach(remember);
       writeCache();
       return data;
     },
@@ -163,36 +221,68 @@
 
     // ----- Tasks -----
 
-    async saveTask(t) {
-      const row = {
-        project_id: t.projectId, week: t.week, title: String(t.title || '').trim(), notes: String(t.notes || '').trim(),
-        status: t.status || 'To Do', team: t.team || null, block_note: String(t.blockNote || '').trim(),
-        assignee_ids: t.assigneeIds || [], contact_ids: t.contactIds || [],
-        subtasks: (t.subtasks || []).filter(x => String(x.t || '').trim()).map(x => ({ t: String(x.t).trim(), done: !!x.done })),
-      };
-      const q = t.id ? sb.from('tasks').update(row).eq('id', t.id) : sb.from('tasks').insert(row);
-      const saved = mapTask(check(await q.select().single()));
-      data.tasks = data.tasks.filter(x => x.id !== saved.id).concat(saved);
-      writeCache();
-      return saved;
+    /** Creates a task. */
+    async addTask(t) {
+      return write(async () => {
+        const row = taskRow(Object.assign({ notes: '', status: 'To Do', team: '', blockNote: '', assigneeIds: [], contactIds: [], subtasks: [] }, t));
+        const saved = remember(mapTask(check(await sb.from('tasks').insert(row).select().single())));
+        putTask(saved);
+        writeCache();
+        return saved;
+      });
+    },
+
+    /**
+     * Saves a change to a task. `change(task)` returns only the fields to change, e.g.
+     * { status: 'Done' }. It is worked out against the latest saved version, and if a
+     * teammate saved the task first it is worked out again on top of their version, so
+     * neither person's change is lost.
+     */
+    patchTask(id, change) {
+      const prev = taskQueues[id] || Promise.resolve();
+      const job = prev.catch(() => {}).then(() => write(async () => {
+        let cur = base.get(id) || await fetchTask(id);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          if (!cur) throw new ApiError('This task was deleted by a teammate.', 404);
+          const row = taskRow(change(cur));
+          if (!Object.keys(row).length) return cur;
+          let q = sb.from('tasks').update(row).eq('id', id);
+          if (cur.version) q = q.eq('updated_at', cur.version);
+          const rows = check(await q.select());
+          if (rows.length) return remember(mapTask(rows[0]));
+          cur = await fetchTask(id);   // someone saved first (or it's gone): try again on their version
+        }
+        throw new ApiError('You are not allowed to change this task.', 403);
+      }));
+      taskQueues[id] = job;
+      const last = () => taskQueues[id] === job;
+      return job.then(saved => {
+        // While more changes to this task are queued, keep showing them.
+        if (last()) { delete taskQueues[id]; putTask(saved); writeCache(); }
+        return saved;
+      }, e => {
+        if (last()) {
+          delete taskQueues[id];
+          const b = base.get(id);
+          if (b) putTask(b); else data.tasks = data.tasks.filter(x => x.id !== id);
+          writeCache();
+        }
+        throw e;
+      });
     },
 
     async deleteTask(id) {
-      check(await sb.from('tasks').delete().eq('id', id));
-      data.tasks = data.tasks.filter(x => x.id !== id);
-      writeCache();
-    },
-
-    /** Fresh copy of every visible task for a week (used by the report). */
-    async weekTasks(week) {
-      const list = check(await sb.from('tasks').select('*').eq('week', week)).map(mapTask);
-      data.tasks = data.tasks.filter(x => x.week !== week).concat(list);
-      writeCache();
-      return list;
+      return write(async () => {
+        check(await sb.from('tasks').delete().eq('id', id));
+        base.delete(id);
+        data.tasks = data.tasks.filter(x => x.id !== id);
+        writeCache();
+      });
     },
 
     /** Adds a 3rd party (someone without an account). Re-uses an existing one with the same name. */
-    async addContact(name, org) {
+    async addContact(name, org) { return write(() => Api._addContact(name, org)); },
+    async _addContact(name, org) {
       const clean = String(name || '').trim();
       if (!clean) throw new ApiError('Enter a name.');
       const existing = data.contacts.find(c => c.name.toLowerCase() === clean.toLowerCase());
@@ -209,14 +299,16 @@
       return saved;
     },
 
-    async saveContact(c) {
+    async saveContact(c) { return write(() => Api._saveContact(c)); },
+    async _saveContact(c) {
       const saved = mapContact(check(await sb.from('contacts').update({ name: String(c.name || '').trim(), org: String(c.org || '').trim() }).eq('id', c.id).select().single()));
       data.contacts = data.contacts.map(x => x.id === saved.id ? saved : x);
       writeCache();
       return saved;
     },
 
-    async deleteContact(id) {
+    async deleteContact(id) { return write(() => Api._deleteContact(id)); },
+    async _deleteContact(id) {
       check(await sb.from('contacts').delete().eq('id', id));
       data.contacts = data.contacts.filter(c => c.id !== id);
       writeCache();
@@ -224,14 +316,16 @@
 
     // ----- Joining projects -----
 
-    async joinProject(projectId) {
+    async joinProject(projectId) { return write(() => Api._joinProject(projectId)); },
+    async _joinProject(projectId) {
       check(await sb.from('assignments').insert({ project_id: projectId, user_id: data.me.id }));
       data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id))
         .concat({ projectId: projectId, userId: data.me.id });
       writeCache();
     },
 
-    async leaveProject(projectId) {
+    async leaveProject(projectId) { return write(() => Api._leaveProject(projectId)); },
+    async _leaveProject(projectId) {
       check(await sb.from('assignments').delete().eq('project_id', projectId).eq('user_id', data.me.id));
       data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id));
       writeCache();
@@ -264,24 +358,50 @@
       return mapMeeting(check(await q.select().single()));
     },
 
-    async saveProject(p, userIds) {
-      const row = check(await sb.rpc('admin_save_project', {
-        p: {
-          id: p.id || '', name: p.name, type: p.type, status: p.status, priority: p.priority,
-          client: p.client || '', manager: p.manager || '', notes: p.notes || '',
-          start_date: p.startDate || '', end_date: p.endDate || '',
-        },
-        p_user_ids: userIds || [],
-      }));
-      const saved = mapProject(row);
-      data.projects = data.projects.filter(x => x.id !== saved.id).concat(saved).sort((a, b) => a.id.localeCompare(b.id));
-      data.assignments = data.assignments.filter(a => a.projectId !== saved.id)
-        .concat((userIds || []).map(id => ({ projectId: saved.id, userId: id })));
-      writeCache();
-      return saved;
+    /**
+     * Saves a project. userIds = the people ticked in the form; originalIds = the people
+     * ticked when the form was opened. Only the difference is sent, so people who joined
+     * in the meantime stay on the project.
+     */
+    async saveProject(p, userIds, originalIds) {
+      return write(async () => {
+        const add = uniq(userIds);
+        const remove = uniq(originalIds).filter(id => add.indexOf(id) === -1);
+        const row = check(await sb.rpc('admin_save_project', {
+          p: {
+            id: p.id || '', name: p.name, type: p.type, status: p.status, priority: p.priority,
+            client: p.client || '', manager: p.manager || '', notes: p.notes || '',
+            start_date: p.startDate || '', end_date: p.endDate || '',
+          },
+          p_add_ids: add,
+          p_remove_ids: remove,
+        }));
+        const saved = mapProject(row);
+        data.projects = data.projects.filter(x => x.id !== saved.id).concat(saved).sort((a, b) => a.id.localeCompare(b.id));
+        data.assignments = data.assignments
+          .filter(a => !(a.projectId === saved.id && (remove.indexOf(a.userId) !== -1 || add.indexOf(a.userId) !== -1)))
+          .concat(add.map(id => ({ projectId: saved.id, userId: id })));
+        writeCache();
+        return saved;
+      });
     },
 
-    async saveMember(p) {
+    // ----- Saved minutes -----
+
+    /** The saved minutes for a week, or null. */
+    async minutes(week) {
+      const rows = check(await sb.from('meetings').select('id,week,updated_at,created_by,snapshot')
+        .eq('week', week).not('snapshot', 'is', null).limit(1));
+      return rows.length ? mapMinutes(rows[0]) : null;
+    },
+
+    /** Saves (or replaces) the week's minutes. Admins only. */
+    async saveMinutes(week, snapshot) {
+      return write(async () => mapMinutes(check(await sb.rpc('admin_save_minutes', { p_week: week, p_snapshot: snapshot }))));
+    },
+
+    async saveMember(p) { return write(() => Api._saveMember(p)); },
+    async _saveMember(p) {
       const role = p.role === 'Admin' ? 'admin' : 'member';
       const password = String(p.password || '');
       if (p.isNew) {

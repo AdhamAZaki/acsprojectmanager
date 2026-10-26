@@ -69,10 +69,13 @@ Then sign in with it, and delete the `*.test` users in **Authentication → User
 ## How the app works (v3 "Weekly Tasks")
 
 - **My tasks:** two tabs, *This week* and *Next week*. Type a task, pick the project, tap Add. Tap a task to add sub-tasks, people, a Blocked note, or move it to the other week. Unfinished tasks from earlier weeks stay in *This week* until they are done.
-- **Projects:** everyone sees every project. *My projects* first; *Other projects* have a **Join** button (instant, no admin needed). A project page shows everyone's tasks grouped by person, and **Leave**.
-- **Meeting:** built from tasks, one card per project with PLC team / Dev team columns (Done, In progress, Next week) and blocked items at the top. **Copy as email** gives the *Weekly Progress Check & Action Plan* table, ready to paste into Zoho Mail.
+- **Projects:** everyone sees every project. *My projects* first; *Other projects* have a **Join** button (instant, no admin needed). A project page shows everyone's tasks grouped by the person assigned (or the creator, if nobody is assigned), and **Leave**.
+- **Meeting:** built from tasks, one card per project listing each assigned person's tasks (Done, In progress, Next week), with blocked items at the top. A task goes in the PLC or Dev column of the people assigned to it. **Copy as email** gives the *Weekly Progress Check & Action Plan* table, ready to paste into Zoho Mail.
+- **Saved minutes:** the Meeting tab changes as tasks change. After the meeting, an admin taps **Save minutes** to keep a fixed copy of that week. Saved weeks open on the saved copy (with **Show live tasks** to compare); unsaved past weeks say they are rebuilt from today's tasks.
 - **Manage (admins):** projects, team (set each person's **PLC / Dev** team, which decides their column in the meeting, and whether they are **Active**), and 3rd parties.
-- **Live updates:** when a teammate changes a task you see it within a second ("Updated by a teammate").
+- **Live updates:** when a teammate changes a task you see it within a second ("Updated by a teammate"). Two people editing the same task at once don't overwrite each other: each save only changes the fields that person changed.
+- **New week:** an app left open moves on to the new week by itself on Monday.
+- **App updates:** every deploy gets a new version number automatically; installed apps update themselves the next time they are opened or left.
 
 ### How usernames work
 A username like `ahmed` signs in as `ahmed@advcontrolsys.com`. The domain is set by `EMAIL_DOMAIN` in `config.js`. When adding a member you can also type a full email address, for someone outside the company domain.
@@ -97,7 +100,7 @@ Every rule is enforced inside the database, not just in the website:
 - The last active admin can't be demoted or deactivated.
 
 ## Keeping the free project awake
-Free Supabase projects pause after 7 days without activity. The **Keep Supabase awake** GitHub Action pings the database every day. If the project ever does pause, click **Restore project** in the Supabase dashboard.
+Free Supabase projects pause after 7 days without activity. The **Keep Supabase awake** GitHub Action pings the database every day. GitHub switches off scheduled actions after 60 days without commits, so the action also switches itself back on every run. If a run fails, GitHub emails the repository owner. If the project ever does pause, click **Restore project** in the Supabase dashboard.
 
 ## Troubleshooting
 

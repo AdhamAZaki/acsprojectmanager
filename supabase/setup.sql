@@ -427,15 +427,20 @@ returns json language sql stable security invoker set search_path = public as $$
     'updates', coalesce((select json_agg(w order by w.week desc) from (
         select id, week, user_id, project_id, done, next, blockers, status, progress, created_at, updated_at
         from weekly_updates where user_id = (select auth.uid()) and (p_since is null or week >= p_since)) w), '[]'::json),
-    'tasks', coalesce((select json_agg(k order by k.created_at) from tasks k where p_since is null or k.week >= p_since), '[]'::json),
+    -- Recent tasks, plus unfinished ones of any age (they keep rolling over until done).
+    'tasks', coalesce((select json_agg(k order by k.created_at) from tasks k
+        where p_since is null or k.week >= p_since or k.status <> 'Done'), '[]'::json),
     'contacts', coalesce((select json_agg(c order by c.name) from contacts c), '[]'::json)
   );
 $$;
 revoke all on function public.app_bootstrap(text) from public, anon;
 grant execute on function public.app_bootstrap(text) to authenticated;
 
--- Saves a project and replaces its assigned engineers in one transaction (admins only, via the rules above).
-create or replace function public.admin_save_project(p jsonb, p_user_ids uuid[])
+-- Saves a project and changes its team in one transaction (admins only, via the rules above).
+-- Only the people the admin ticked (p_add_ids) or unticked (p_remove_ids) change, so anyone
+-- who joined the project while the admin had the form open stays on it.
+drop function if exists public.admin_save_project(jsonb, uuid[]);
+create or replace function public.admin_save_project(p jsonb, p_add_ids uuid[], p_remove_ids uuid[])
 returns json language plpgsql security invoker set search_path = public as $$
 declare v_id text := nullif(trim(p ->> 'id'), ''); v_row projects;
 begin
@@ -452,12 +457,37 @@ begin
     priority = excluded.priority, client = excluded.client, manager = excluded.manager, notes = excluded.notes,
     start_date = excluded.start_date, end_date = excluded.end_date
   returning * into v_row;
-  delete from assignments where project_id = v_id;
-  insert into assignments (project_id, user_id) select v_id, unnest(coalesce(p_user_ids, '{}'));
+  delete from assignments where project_id = v_id and user_id = any (coalesce(p_remove_ids, '{}'));
+  insert into assignments (project_id, user_id) select v_id, unnest(coalesce(p_add_ids, '{}')) on conflict do nothing;
   return row_to_json(v_row);
 end $$;
-revoke all on function public.admin_save_project(jsonb, uuid[]) from public, anon;
-grant execute on function public.admin_save_project(jsonb, uuid[]) to authenticated;
+revoke all on function public.admin_save_project(jsonb, uuid[], uuid[]) from public, anon;
+grant execute on function public.admin_save_project(jsonb, uuid[], uuid[]) to authenticated;
+
+-- ---------- Saved minutes ----------
+-- The Meeting tab is rebuilt from the tasks, so it changes as tasks change. An admin can
+-- save the week's minutes; the saved copy (snapshot) then never changes. One per week.
+-- Every active member can read saved minutes (the meetings rules above).
+alter table public.meetings add column if not exists snapshot jsonb;
+create unique index if not exists meetings_week_minutes_key on public.meetings (week) where snapshot is not null;
+
+create or replace function public.admin_save_minutes(p_week text, p_snapshot jsonb)
+returns json language plpgsql security invoker set search_path = public as $$
+declare v_row meetings;
+begin
+  if not public.is_admin() then raise exception 'Admin access required'; end if;
+  if p_week !~ '^\d{4}-W\d{2}$' then raise exception 'Invalid week: %', p_week; end if;
+  update meetings set snapshot = p_snapshot, date = current_date, created_by = auth.uid()
+  where week = p_week and snapshot is not null returning * into v_row;
+  if v_row.id is null then
+    insert into meetings (date, week, title, snapshot, created_by)
+    values (current_date, p_week, 'Weekly meeting - ' || p_week, p_snapshot, auth.uid()) returning * into v_row;
+  end if;
+  return json_build_object('id', v_row.id, 'week', v_row.week, 'updated_at', v_row.updated_at,
+                           'created_by', v_row.created_by, 'snapshot', v_row.snapshot);
+end $$;
+revoke all on function public.admin_save_minutes(text, jsonb) from public, anon;
+grant execute on function public.admin_save_minutes(text, jsonb) to authenticated;
 
 -- Internal helpers and triggers: not callable from outside.
 revoke all on function public.handle_new_user() from public, anon, authenticated;

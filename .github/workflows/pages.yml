@@ -24,6 +24,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # A new cache name per deploy, so installed apps pick up the new version.
+      - name: Stamp app version
+        run: |
+          sed -i "s/const VERSION = '[^']*'/const VERSION = 'acs-tracker-${GITHUB_SHA::12}'/" frontend/sw.js
+          grep -q "acs-tracker-${GITHUB_SHA::12}" frontend/sw.js
       - uses: actions/upload-pages-artifact@v3
         with:
           path: frontend

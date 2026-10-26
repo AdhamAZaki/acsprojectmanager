@@ -259,7 +259,7 @@ body[data-tab="manage"] main, body[data-tab="report"] main { max-width: 1100px; 
 .ublock-row.warn p { color: var(--bad); }
 
 /* ---------- Report ---------- */
-.actions-row { display: flex; gap: 8px; overflow-x: auto; margin: 0 -16px 12px; padding: 0 16px; scrollbar-width: none; }
+.actions-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .actions-row::-webkit-scrollbar { display: none; }
 .actions-row button { white-space: nowrap; }
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
@@ -486,3 +486,12 @@ ul.plan .tpill { margin-left: 6px; }
 .mtg-person li { display: flex; gap: 8px; padding: 3px 0; }
 .mtg-person li .mk { width: 1em; flex: none; text-align: center; }
 .mtg-person li.blk { color: #CB2150; }
+
+/* Meeting: saved minutes / live view note */
+.mtg-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  background: var(--surface-2); border-radius: 12px; padding: 4px 4px 4px 12px; margin: 0 0 12px; font-size: .9rem; }
+.mtg-note > span { padding: 6px 0; }
+.mtg-note.saved { background: var(--ok-soft); color: var(--ok); font-weight: 600; }
+.mtg-note.warn { background: var(--warn-soft); color: var(--warn); padding-right: 12px; }
+.mtg-note .text-btn { min-height: 36px; }
+@media print { .mtg-note .text-btn { display: none !important; } .mtg-note { background: none; padding: 0; } }

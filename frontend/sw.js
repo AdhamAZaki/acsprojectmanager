@@ -1,7 +1,8 @@
 // Service worker: caches the app shell so the app opens instantly (and offline).
 // Data requests to Supabase are never cached here; the app keeps its own data cache.
-// Bump VERSION on every deploy that changes these files.
-const VERSION = 'acs-tracker-v8';
+// VERSION is replaced with the commit id on every deploy (.github/workflows/pages.yml),
+// so each deploy gets a fresh cache and the app updates itself.
+const VERSION = 'acs-tracker-dev';
 const SHELL = [
   './', 'index.html', 'css/styles.css', 'js/config.js', 'js/api.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png', 'icons/acs-mark.svg',
@@ -9,7 +10,9 @@ const SHELL = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  // cache: 'reload' skips the browser's HTTP cache, so the new version gets the new files.
+  e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
