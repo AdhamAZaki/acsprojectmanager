@@ -12,7 +12,9 @@ The site is at **https://adhamazaki.github.io/acsprojectmanager/**. The data liv
 2. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/supabase/setup.sql>, select all (Ctrl+A) and copy (Ctrl+C).
 3. Paste it into the SQL Editor and click **Run**. You should see `ACS Project Tracker setup complete`.
 
-It is safe to run again: it creates what is missing and never deletes data. Run it again after every update to this file. It creates no people or projects (see steps 3 and 4).
+It is safe to run again: it creates what is missing and never deletes data. Run it again whenever it changes (or set up automatic updates, step 6). It creates no people or projects (see steps 3 and 4).
+
+`setup.sql` is generated from the files in `supabase/migrations/`; don't edit it by hand.
 
 ## 2. Turn off public sign-up (important)
 
@@ -45,6 +47,22 @@ Set `v_password` at the top to a password of your choice (it is used for all 4 l
 ## 5. Connect the website
 
 `frontend/js/config.js` holds the **Project URL** and the **Publishable key**. Both are designed to be public; the data is protected by the database's security rules.
+
+## 6. Optional: automatic database updates
+
+When the repository secret `SUPABASE_DB_URL` is set, every deploy from `main` first runs `supabase/setup.sql` against the live database, then publishes the website. It runs in one transaction, so if anything fails the database is left as it was and the website is not published. Without the secret, the deploy skips this step and shows a note; paste `setup.sql` by hand instead.
+
+To set it up:
+
+1. In Supabase, click **Connect** (top of the project page) → **Session pooler**, and copy the URI. It looks like
+   `postgresql://postgres.<project-ref>:[YOUR-PASSWORD]@aws-0-<region>.pooler.supabase.com:5432/postgres`.
+   Use the *session pooler*: GitHub's servers can't reach the direct connection address.
+2. Put your database password in place of `[YOUR-PASSWORD]`. If the password contains symbols like `@`, `#` or `/`, either reset it to letters and numbers (**Project Settings → Database → Reset database password**) or URL-encode them.
+3. In GitHub: **Settings → Environments → New environment**, name it `database`.
+   - Under **Deployment branches and tags**, choose **Selected branches and tags** and add `main`.
+   - Under **Environment secrets**, add a secret named `SUPABASE_DB_URL` with the URI as its value.
+
+The secret gives full access to the database. Keeping it in the `database` environment, limited to `main`, means a workflow on any other branch can't read it.
 
 ## Old test accounts (security fix)
 
@@ -79,6 +97,9 @@ Then sign in with it, and delete the `*.test` users in **Authentication → User
 
 ### How usernames work
 A username like `ahmed` signs in as `ahmed@advcontrolsys.com`. The domain is set by `EMAIL_DOMAIN` in `config.js`. When adding a member you can also type a full email address, for someone outside the company domain.
+
+## The old `weekly_updates` table
+The first versions of the app stored weekly updates in `weekly_updates`. The app no longer uses it, but it is kept so no old data is lost. To check whether it has anything in it, run `select count(*) from weekly_updates;`. If you want it gone, export it first (Table Editor → ⋯ → Export to CSV), then add a migration that drops it.
 
 ## Viewing and editing the data
 - **Supabase → Table Editor** shows every table like a spreadsheet: you can filter, sort and edit cells, and export to CSV from the **⋯** menu.

@@ -1,0 +1,189 @@
+// Browser tests: drive the real app (frontend/) in Chromium against an in-memory
+// fake of Supabase (tests/e2e/fake-supabase.js). Run: npm run test:e2e
+const { chromium, serve, newApp, signIn } = require('./harness');
+
+let failures = 0;
+const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failures++; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const T1 = 'Commission the pump station panels';
+const T2 = 'Wire the remote IO cabinet';
+
+async function mainFlow(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  const db = () => page.evaluate(() => window.__db.get());
+  const task = async title => (await db()).tasks.find(t => t.title === title);
+
+  // ---- Sign in ----
+  await page.goto(url);
+  await page.fill('input[name=username]', 'nobody');
+  await page.fill('input[name=password]', 'test-password');
+  await page.click('button[type=submit]');
+  await page.waitForSelector('#loginError:not([hidden])');
+  ok((await page.textContent('#loginError')).includes('Wrong username or password'), 'unknown user gets a clear sign-in error');
+  await signIn(page, url, 'adham');
+  ok(await page.isVisible(`text=${T1}`), 'signed in; My tasks shows this week’s tasks');
+
+  // ---- Add a task ----
+  await page.fill('#addForm input[name=title]', 'Panels');
+  await page.click('#addForm button[type=submit]');
+  ok(await page.isVisible('text=Add a bit more detail'), 'a very short task title gets a nudge');
+  await page.fill('#addForm input[name=title]', 'Test the duty and standby pump logic');
+  await page.click('#addForm button[type=submit]');
+  await page.waitForSelector('text=Test the duty and standby pump logic');
+  const added = await task('Test the duty and standby pump logic');
+  ok(added && added.project_id === 'PRJ-0001' && added.status === 'To Do', 'new task saved to the project');
+  ok(await page.inputValue('#addForm input[name=title]') === '', 'add box is cleared after adding');
+
+  // ---- Half-typed text survives a redraw ----
+  await page.fill('#addForm input[name=title]', 'Half typed');
+  await page.click('[data-done]');   // ticking a task redraws the screen
+  await sleep(300);
+  ok(await page.inputValue('#addForm input[name=title]') === 'Half typed', 'half-typed new task kept when the screen redraws');
+  await page.click('[data-done]');
+  await page.fill('#addForm input[name=title]', '');
+  await sleep(300);
+
+  // ---- A teammate's change is not overwritten ----
+  await page.evaluate(t => {
+    const d = window.__db.get(); const k = d.tasks.find(x => x.title === t);
+    k.assignee_ids.push(d.users.omar.id); k.subtasks[1].done = true; k.updated_at = window.__db.ts(); window.__db.save();
+  }, T1);
+  await page.click(`[data-toggle] >> text=${T1}`);
+  await page.check('[data-sub$=":0"]');
+  await sleep(400);
+  let k = await task(T1);
+  ok(k.subtasks[0].done && k.subtasks[1].done, 'my tick and a teammate’s tick on the same task are both kept');
+  ok(k.assignee_ids.length === 2, 'teammate-added assignee kept after my save');
+
+  // ---- Quick edits on a slow connection all land ----
+  await page.evaluate(() => { window.__db.ctl.delay = 250; });
+  await page.uncheck('[data-sub$=":0"]');
+  await page.uncheck('[data-sub$=":1"]');
+  await page.fill('[data-newsub]', 'Panel C');
+  await page.press('[data-newsub]', 'Enter');
+  await sleep(2000);
+  k = await task(T1);
+  ok(!k.subtasks[0].done && !k.subtasks[1].done && k.subtasks.length === 3 && k.subtasks[2].t === 'Panel C',
+    'three quick edits on a slow connection are all saved');
+  ok((await page.$$eval('.sub span', els => els.map(e => e.textContent))).join(',') === 'Panel A,Panel B,Panel C', 'screen matches the database');
+  ok(await page.inputValue('[data-newsub]') === '', 'sub-task box is cleared after adding');
+  const lastUpd = (await db()).log.filter(l => l.table === 'tasks' && l.op === 'update').pop();
+  ok(Object.keys(lastUpd.payload).join() === 'subtasks', 'a save sends only the changed field');
+
+  // ---- Block note survives a refresh landing mid-typing ----
+  await page.evaluate(() => { window.__db.ctl.delay = 50; });
+  await page.click('[data-block]');
+  await page.waitForSelector('[data-blocknote]');
+  await page.click('[data-blocknote]');
+  await page.keyboard.type('Waiting for the client');
+  await page.evaluate(() => window.__db.emit('tasks'));
+  await sleep(150);
+  await page.keyboard.type(' tag list');
+  await page.evaluate(() => window.__db.emit('tasks'));
+  await sleep(1500);
+  k = await task(T1);
+  ok(k.status === 'Blocked' && k.block_note === 'Waiting for the client tag list', 'blocked note saved in full despite live refreshes');
+  ok(await page.inputValue('[data-blocknote]') === 'Waiting for the client tag list', 'note box keeps what was typed');
+  await page.click('.page-head h2');
+  await sleep(500);
+
+  // ---- A failed save is undone on screen ----
+  await page.evaluate(() => { window.__db.ctl.failNextUpdate = true; });
+  await page.click('[data-done]');
+  await sleep(600);
+  k = await task(T1);
+  ok(k.status === 'Blocked', 'database unchanged after a failed save');
+  ok(await page.isVisible('.toast.error'), 'error message shown');
+  ok(!(await page.$eval('[data-done]', b => b.classList.contains('on'))), 'tick undone on screen after the failure');
+
+  // ---- Meeting: tasks under the person assigned, in that person's column ----
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.mtg-person');
+  const people = await page.$$eval('.mtg-person', els => els.map(e =>
+    e.querySelector('strong').textContent.trim().replace(/^[A-Z]{1,2}(?=[A-Z][a-z])/, '') + ' :: ' +
+    Array.from(e.querySelectorAll('li')).map(l => l.textContent.trim()).join(' | ')));
+  ok(people.some(p => p.startsWith('Mona PLC') && p.includes(T2)), 'meeting: task created by Adham but assigned to Mona shows under Mona');
+  ok(!people.some(p => p.startsWith('Adham Admin') && p.includes(T2)), 'meeting: ...and not under Adham');
+  ok(people.some(p => p.startsWith('Omar Dev') && p.includes(T1)), 'meeting: a shared task shows under each assigned person');
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#copyEmail');
+  await sleep(300);
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  ok(text.split('PLC team:')[1].split('Dev team:')[0].includes(T2), 'email: Mona’s task is in the PLC column');
+
+  // ---- Saved minutes stay fixed ----
+  await page.click('#saveMins');
+  await page.waitForSelector('.mtg-note.saved');
+  await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).title = 'RENAMED after the meeting'; window.__db.save(); }, T2);
+  await page.evaluate(() => window.__db.emit('tasks'));
+  await sleep(800);
+  ok(await page.isVisible(`.mtg-person >> text=${T2}`) && !(await page.isVisible('text=RENAMED after the meeting')), 'saved minutes don’t change when a task changes');
+  await page.click('#mtgLive');
+  ok(await page.isVisible('text=RENAMED after the meeting'), '"Show live tasks" shows the change');
+  await page.click('#mtgSaved');
+  await page.click('[data-mw="-1"]');
+  await page.waitForSelector('.mtg-note.warn, .empty');
+  ok(await page.isVisible('.mtg-note.warn'), 'an unsaved past week warns it is rebuilt from today’s tasks');
+
+  // ---- Admin project save keeps people who joined meanwhile ----
+  await page.goto(url + '#/manage');
+  await page.click('[data-edit="PRJ-0001"]');
+  await page.waitForSelector('dialog[open]');
+  await page.evaluate(() => { const d = window.__db.get(); d.assignments.push({ project_id: 'PRJ-0001', user_id: d.users.omar.id }); window.__db.save(); });
+  const u = (await db()).users;
+  await page.uncheck(`dialog input[name=assigned][value="${u.mona.id}"]`);
+  await page.click('dialog button[type=submit]');
+  await page.waitForFunction(() => !document.querySelector('#dialog').open);
+  const team = (await db()).assignments.filter(a => a.project_id === 'PRJ-0001').map(a => a.user_id);
+  ok(team.includes(u.omar.id) && team.includes(u.adm.id) && !team.includes(u.mona.id), 'project save: person who joined meanwhile kept, unticked person removed');
+
+  ok(errors.length === 0, 'no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
+async function memberView(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  await signIn(page, url, 'omar');
+  ok(!(await page.isVisible('nav >> text=Manage')), 'members don’t see the Manage tab');
+  await page.goto(url + '#/projects');
+  await page.click('[data-join="PRJ-0001"]');
+  await page.waitForSelector('[data-project="PRJ-0001"]');
+  ok(true, 'a member can join a project in one tap');
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.weekbar');
+  ok(!(await page.isVisible('#saveMins')), 'members can’t save minutes');
+  await ctx.close();
+}
+
+async function weekRollover(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  await page.clock.install({ time: new Date('2026-11-01T23:58:00') });   // Sunday night, week 44
+  await signIn(page, url, 'adham');
+  const before = await page.textContent('.week-seg');
+  await page.clock.runFor(5 * 60 * 1000);                                // Monday, week 45
+  await page.waitForTimeout(500);
+  const after = await page.textContent('.week-seg');
+  ok(/· 44 ·/.test(before) && /This week\s*· 45/.test(after) && /Next week\s*· 46/.test(after), 'the week moves on by itself while the app stays open');
+  ok(/This week\s*· 45\s*· 2/.test(after), 'unfinished tasks roll over into the new week');
+  await ctx.close();
+}
+
+(async () => {
+  const { server, url } = await serve();
+  const browser = await chromium.launch();
+  try {
+    await mainFlow(browser, url);
+    await memberView(browser, url);
+    await weekRollover(browser, url);
+  } finally {
+    await browser.close();
+    server.close();
+  }
+  console.log(failures ? `\n${failures} FAILED` : '\nAll browser checks passed');
+  process.exit(failures ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(2); });

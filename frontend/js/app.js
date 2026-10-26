@@ -102,10 +102,6 @@
   function options(list, selected) {
     return list.map(o => `<option${o === selected ? ' selected' : ''}>${esc(o)}</option>`).join('');
   }
-  function today() {
-    const d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
 
   const ICONS = {
     tasks: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M3.5 6l1.5 1.5L7.5 5M3.5 12l1.5 1.5L7.5 11M3.5 18l1.5 1.5L7.5 17"/>',
@@ -195,13 +191,13 @@
         <div class="t-open">
           <div class="subs">
             ${t.subtasks.map((s, i) => `<label class="sub"><input type="checkbox" data-sub="${t.id}:${i}"${s.done ? ' checked' : ''}><span class="${s.done ? 'done' : ''}">${esc(s.t)}</span><button type="button" data-subdel="${t.id}:${i}" aria-label="Remove sub-task">×</button></label>`).join('')}
-            <div class="inline"><input placeholder="Add a sub-task" data-newsub="${t.id}" autocomplete="off"><button type="button" class="secondary" data-addsub="${t.id}">Add</button></div>
+            <div class="inline"><input placeholder="Add a sub-task" data-newsub="${t.id}" data-keep="sub-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addsub="${t.id}">Add</button></div>
           </div>
           <div class="people">
             ${team.concat(extra).map(m => `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assigneeIds.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`).join('')}
             ${S.data.contacts.map(c => `<label class="ext"><input type="checkbox" data-ext="${t.id}:${c.id}"${t.contactIds.indexOf(c.id) !== -1 ? ' checked' : ''}>${esc(c.name)}</label>`).join('')}
           </div>
-          <div class="inline"><input placeholder="Add someone outside the team" data-newext="${t.id}" autocomplete="off"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
+          <div class="inline"><input placeholder="Add someone outside the team" data-newext="${t.id}" data-keep="ext-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
           ${isBlocked(t) ? `<input class="block-note" placeholder="What is blocking it?" data-blocknote="${t.id}" value="${esc(t.blockNote)}">` : ''}
           <div class="t-actions">
             <button type="button" class="${isBlocked(t) ? 'danger' : 'secondary'}" data-block="${t.id}">${isBlocked(t) ? 'Unblock' : 'Blocked?'}</button>
@@ -239,6 +235,7 @@
     });
     const addSub = tid => {
       const input = $(`[data-newsub="${tid}"]`, root); const title = input.value.trim(); if (!title) return;
+      input.value = '';
       const t = findTask(tid);
       updateTask(t, x => ({ subtasks: x.subtasks.concat({ t: title, done: false }) }));
       const again = $(`[data-newsub="${tid}"]`); if (again) again.focus();
@@ -257,6 +254,7 @@
       const input = $(`[data-newext="${tid}"]`, root); const name = input.value.trim(); if (!name) return;
       const c = await guard(() => Api.addContact(name));
       if (!c) return;
+      input.value = '';
       const t = findTask(tid);
       if (t.contactIds.indexOf(c.id) === -1) updateTask(t, x => ({ contactIds: addId(x.contactIds, c.id) })); else render();
       toast(c.name + ' added — everyone can now pick them');
@@ -312,7 +310,7 @@
   function addBar(projects, fixedProject) {
     return `
       <form class="card addbar" id="addForm">
-        <input name="title" placeholder="${S.which === 'next' ? 'What will you do next week?' : 'What are you working on this week?'}" autocomplete="off" required>
+        <input name="title" data-keep="add-title" placeholder="${S.which === 'next' ? 'What will you do next week?' : 'What are you working on this week?'}" autocomplete="off" required>
         <div class="addbar-row">
           ${fixedProject ? '' : `<select name="project" aria-label="Project">${projects.map(p => `<option value="${esc(p.id)}"${p.id === S.lastProject ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select>`}
           <button type="submit" class="primary small"${fixedProject ? ' style="flex:1;justify-content:center"' : ''}>${icon('plus')} Add</button>
@@ -339,7 +337,7 @@
       const saved = await guard(() => Api.addTask({ projectId: pid, week: S.which === 'next' ? NEXT : THIS, title: title, status: 'To Do',
         team: me().team || '', assigneeIds: [me().id], contactIds: [], subtasks: [] }));
       btn.disabled = false;
-      if (saved) { render(); const i = $('#addForm input'); if (i) i.focus(); }
+      if (saved) { f.elements.title.value = ''; render(); const i = $('#addForm input'); if (i) i.focus(); }
     };
   }
 
@@ -860,7 +858,11 @@
     $('#avatarBtn').textContent = initials(me().name);
     $('#avatarBtn').title = me().name;
     document.body.dataset.tab = tab.id;
+    // Text half-typed into an "add" box survives the redraw (e.g. ticking a task meanwhile).
+    const kept = {};
+    $$('#view [data-keep]').forEach(i => { if (i.value) kept[i.dataset.keep] = i.value; });
     tab.view($('#view'));
+    $$('#view [data-keep]').forEach(i => { if (kept[i.dataset.keep] && !i.value) i.value = kept[i.dataset.keep]; });
   }
 
   function showLogin(message) {

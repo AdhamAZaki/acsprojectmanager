@@ -1,0 +1,174 @@
+-- Security and behaviour checks for the database. Run by tests/db/run.sh after
+-- supabase/setup.sql and supabase/seed-test-data.sql. Any failed check stops
+-- the run with "FAIL: ...". Passing checks print "PASS: ...".
+\set ON_ERROR_STOP 1
+set client_min_messages = notice;
+
+-- ---------- Test helpers (in their own schema) ----------
+create schema test;
+grant usage on schema test to anon, authenticated;
+
+-- "Signs in" as the user with this email (no role change; tests do SET ROLE).
+create function test.login(p_email text) returns void language plpgsql security definer as $$
+declare v uuid := (select id from public.profiles where email = p_email);
+begin
+  if v is null then raise exception 'FAIL: no test user %', p_email; end if;
+  perform set_config('request.jwt.claim.sub', v::text, false);
+end $$;
+create function test.uid(p_email text) returns uuid language sql security definer stable as
+  $$ select id from public.profiles where email = p_email $$;
+create function test.ok(p_cond boolean, p_label text) returns void language plpgsql as $$
+begin
+  if p_cond is distinct from true then raise exception 'FAIL: %', p_label; end if;
+  raise notice 'PASS: %', p_label;
+end $$;
+create function test.fails(p_sql text, p_pattern text, p_label text) returns void language plpgsql as $$
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    if sqlerrm !~* p_pattern then raise exception 'FAIL: % (wrong error: %)', p_label, sqlerrm; end if;
+    raise notice 'PASS: %', p_label;
+    return;
+  end;
+  raise exception 'FAIL: % (no error)', p_label;
+end $$;
+create function test.n(p_sql text) returns bigint language plpgsql as $$
+declare v bigint;
+begin execute 'select count(*) from (' || p_sql || ') x' into v; return v; end $$;
+grant execute on all functions in schema test to anon, authenticated;
+
+-- Seeded data (supabase/seed-test-data.sql):
+--   admin.test (admin) · ahmed.test on PRJ-0001, 0002, 0004 · mona.test on 0001, 0003 · omar.test on 0002, 0003
+
+-- ---------- Signed-out visitors ----------
+set role anon;
+select test.fails('select * from public.projects', 'permission denied', 'signed-out: cannot read projects');
+select test.fails('select * from public.tasks', 'permission denied', 'signed-out: cannot read tasks');
+select test.fails('select * from public.profiles', 'permission denied', 'signed-out: cannot read the team');
+select test.ok((select public.ping()) = 'ok', 'signed-out: keep-alive ping works');
+reset role;
+
+-- ---------- Old test accounts (handled by running setup.sql a second time) ----------
+select test.ok(not active, 'legacy.test account with a published password was deactivated')
+  from public.profiles where email = 'legacy.test@advcontrolsys.com';
+select test.ok(encrypted_password <> extensions.crypt('Test@2026', encrypted_password), 'legacy.test password was changed')
+  from auth.users where email = 'legacy.test@advcontrolsys.com';
+
+-- ---------- New accounts start inactive ----------
+insert into auth.users (id, email, raw_user_meta_data) values (gen_random_uuid(), 'stranger@example.com', '{}');
+select test.ok(not active and role = 'member', 'account not made by an admin starts inactive')
+  from public.profiles where email = 'stranger@example.com';
+select test.login('stranger@example.com');
+set role authenticated;
+select test.ok(test.n('select * from public.projects') = 0, 'inactive account sees no projects');
+select test.ok(test.n('select * from public.tasks') = 0, 'inactive account sees no tasks');
+reset role;
+
+-- ---------- Members ----------
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n('select * from public.projects') = 5, 'member sees every project (to join one)');
+select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) = 0, 'member does not see tasks of a project they are not on');
+select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0001'$$) > 0, 'member sees tasks of their project');
+select test.fails($$insert into public.tasks (project_id, week, title) values ('PRJ-0003', '2026-W44', 'sneaky')$$,
+  'row-level security', 'member cannot add a task to a project they are not on');
+select test.fails($$update public.tasks set created_by = test.uid('mona.test@advcontrolsys.com') where title like 'Build main%'$$,
+  'creator of a task cannot be changed', 'member cannot change who created a task');
+select test.fails($$update public.tasks set project_id = 'PRJ-0003' where title like 'Build main%'$$,
+  'only move a task to a project you are on', 'member cannot move a task into a project they are not on');
+update public.tasks set project_id = 'PRJ-0002' where title like 'Build main%';
+select test.ok(test.n($$select * from public.tasks where title like 'Build main%' and project_id = 'PRJ-0002'$$) = 1,
+  'member can move a task between their own projects');
+update public.projects set name = 'hacked' where id = 'PRJ-0001';
+update public.profiles set role = 'admin' where id = auth.uid();
+reset role;
+select test.ok((select name from public.projects where id = 'PRJ-0001') <> 'hacked', 'member cannot rename a project');
+select test.ok((select role from public.profiles where email = 'ahmed.test@advcontrolsys.com') = 'member', 'member cannot make themselves admin');
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+select test.fails($$select public.admin_create_user('x@advcontrolsys.com', 'Password1', 'X')$$, 'admin access required', 'member cannot create accounts');
+select test.fails($$select public.admin_set_password(auth.uid(), 'Password1')$$, 'admin access required', 'member cannot reset passwords');
+select test.fails($$select public._create_login('x@advcontrolsys.com', 'Password1', 'X', 'admin')$$, 'permission denied', 'member cannot call the internal login function');
+select test.fails($$select public.admin_save_minutes('2026-W44', '{}')$$, 'admin access required', 'member cannot save minutes');
+select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0003', test.uid('omar.test@advcontrolsys.com'))$$,
+  'row-level security', 'member cannot add someone else to a project');
+insert into public.assignments (project_id, user_id) values ('PRJ-0003', auth.uid());
+select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) > 0, 'member can join a project and then sees its tasks');
+delete from public.assignments where project_id = 'PRJ-0003' and user_id = auth.uid();
+
+-- An assignee who is not on the project can edit the task but not move it to a project they are not on
+reset role;
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+update public.tasks set assignee_ids = assignee_ids || test.uid('ahmed.test@advcontrolsys.com') where title like 'Review IO%';
+reset role;
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+update public.tasks set notes = 'checked' where title like 'Review IO%';
+select test.ok(test.n($$select * from public.tasks where title like 'Review IO%' and notes = 'checked'$$) = 1, 'assignee can edit a task on a project they are not on');
+select test.fails($$update public.tasks set project_id = 'PRJ-0005' where title like 'Review IO%'$$,
+  'only move a task to a project you are on', 'assignee cannot move it into a project they are not on');
+
+-- Two people saving the same task: the second save, based on the old version, changes nothing
+reset role;
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+select updated_at as v0 from public.tasks where title like 'Start PLC%' \gset
+update public.tasks set notes = 'first' where title like 'Start PLC%' and updated_at = :'v0';
+update public.tasks set notes = 'second' where title like 'Start PLC%' and updated_at = :'v0';
+select test.ok((select notes from public.tasks where title like 'Start PLC%') = 'first', 'save based on an old version is refused (no lost edits)');
+
+-- Startup data keeps unfinished tasks of any age
+reset role;
+insert into public.tasks (project_id, week, title, status, created_by, assignee_ids) values
+  ('PRJ-0001', to_char(current_date - 280, 'IYYY-"W"IW'), 'very old open task', 'To Do', test.uid('ahmed.test@advcontrolsys.com'), '{}'),
+  ('PRJ-0001', to_char(current_date - 280, 'IYYY-"W"IW'), 'very old done task', 'Done', test.uid('ahmed.test@advcontrolsys.com'), '{}');
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(
+  (select count(*) from json_array_elements(public.app_bootstrap(to_char(current_date - 182, 'IYYY-"W"IW')) -> 'tasks') t
+   where t ->> 'title' = 'very old open task') = 1
+  and (select count(*) from json_array_elements(public.app_bootstrap(to_char(current_date - 182, 'IYYY-"W"IW')) -> 'tasks') t
+   where t ->> 'title' = 'very old done task') = 0,
+  'startup data keeps old unfinished tasks and drops old finished ones');
+reset role;
+
+-- ---------- Admins ----------
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+select public.admin_create_user('new.person@advcontrolsys.com', 'Password1', 'New Person') as new_id \gset
+select test.ok((select active and role = 'member' from public.profiles where id = :'new_id'), 'account created by an admin is an active member');
+update public.tasks set created_by = test.uid('mona.test@advcontrolsys.com') where title like 'Build main%';
+select test.ok(test.n($$select * from public.tasks where title like 'Build main%' and created_by = test.uid('mona.test@advcontrolsys.com')$$) = 1,
+  'admin can change who created a task');
+select test.fails($$update public.profiles set role = 'member' where id = auth.uid()$$, 'at least one active admin', 'the last admin cannot demote themselves');
+
+-- Project save only changes the people the admin changed
+reset role;
+select test.login('omar.test@advcontrolsys.com');
+set role authenticated;
+insert into public.assignments (project_id, user_id) values ('PRJ-0001', auth.uid());   -- Omar joins while the admin edits
+reset role;
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+select public.admin_save_project(jsonb_build_object('id', 'PRJ-0001', 'name', 'Water Treatment Plant SCADA', 'type', 'AVEVA', 'status', 'In Progress'),
+  array[test.uid('ahmed.test@advcontrolsys.com')], array[test.uid('mona.test@advcontrolsys.com')]);
+select test.ok(
+  (select array_agg(p.email order by p.email) from public.assignments a join public.profiles p on p.id = a.user_id where a.project_id = 'PRJ-0001')
+  = array['ahmed.test@advcontrolsys.com', 'omar.test@advcontrolsys.com'],
+  'project save removes only the unticked person and keeps someone who joined meanwhile');
+select test.ok(public.admin_save_project(jsonb_build_object('name', 'Brand new'), '{}', '{}') ->> 'id' = 'PRJ-0006', 'new project gets the next id');
+
+-- Saved minutes: one per week, replaced on a second save, readable by members
+select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 1}');
+select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 2}');
+select test.ok((select count(*) = 1 and max(snapshot ->> 'n') = '2' from public.meetings where week = '2026-W44'), 'saving minutes twice keeps one copy, the newest');
+select test.fails($$select public.admin_save_minutes('W44', '{}')$$, 'invalid week', 'minutes need a valid week');
+reset role;
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.meetings where week = '2026-W44' and snapshot is not null$$) = 1, 'members can read saved minutes');
+reset role;
+
+select 'All database checks passed' as result;

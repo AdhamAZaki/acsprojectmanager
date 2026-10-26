@@ -68,12 +68,6 @@
     client: r.client || '', manager: r.manager || '', notes: r.notes || '',
     startDate: r.start_date || '', endDate: r.end_date || '',
   });
-  const mapUpdate = r => ({
-    id: r.id, week: r.week, userId: r.user_id, projectId: r.project_id,
-    done: r.done || '', next: r.next || '', blockers: r.blockers || '', status: r.status,
-    progress: r.progress === null || r.progress === undefined ? null : r.progress,
-    submittedAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
-  });
   const mapTask = r => ({
     id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
@@ -85,11 +79,6 @@
   const mapMinutes = r => ({
     id: r.id, week: r.week, savedAt: stamp(r.updated_at), savedBy: r.created_by, snapshot: r.snapshot,
   });
-  const mapMeeting = r => ({
-    id: r.id, date: r.date, week: r.week || '', title: r.title, attendees: r.attendees, notes: r.notes,
-    decisions: r.decisions, actionItems: r.action_items, createdAt: stamp(r.created_at),
-  });
-
   function sinceWeek() {
     const d = new Date(Date.now() - HISTORY_WEEKS * 7 * 86400000);
     const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
@@ -100,7 +89,7 @@
 
   // ---------- Local cache ----------
 
-  let data = null; // { me, team, projects, assignments, updates, tasks, contacts, loadedAt }
+  let data = null; // { me, team, projects, assignments, tasks, contacts, loadedAt }
 
   // Last version of each task the server confirmed. The screen may show changes that are
   // still saving; changes are always worked out against this confirmed copy.
@@ -189,7 +178,6 @@
         team: res.team.map(mapMember),
         projects: res.projects.map(mapProject),
         assignments: res.assignments.map(a => ({ projectId: a.project_id, userId: a.user_id })),
-        updates: res.updates.map(mapUpdate),
         tasks: (res.tasks || []).map(mapTask),
         contacts: (res.contacts || []).map(mapContact),
         loadedAt: Date.now(),
@@ -198,25 +186,6 @@
       data.tasks.forEach(remember);
       writeCache();
       return data;
-    },
-
-    async saveUpdate(p) {
-      const progress = p.progress === '' || p.progress === null || p.progress === undefined
-        ? null : Math.max(0, Math.min(100, Math.round(Number(p.progress) || 0)));
-      const row = check(await sb.from('weekly_updates').upsert({
-        week: p.week, user_id: data.me.id, project_id: p.projectId,
-        done: String(p.done || '').trim(), next: String(p.next || '').trim(), blockers: String(p.blockers || '').trim(),
-        status: p.status || 'On Track', progress: progress,
-      }, { onConflict: 'week,user_id,project_id' }).select().single());
-      const saved = mapUpdate(row);
-      data.updates = data.updates.filter(u => !(u.week === saved.week && u.projectId === saved.projectId)).concat(saved);
-      writeCache();
-      return saved;
-    },
-
-    /** All updates for a week (admins see everyone's). */
-    async weekUpdates(week) {
-      return check(await sb.from('weekly_updates').select('*').eq('week', week)).map(mapUpdate);
     },
 
     // ----- Tasks -----
@@ -341,21 +310,6 @@
       });
       ch.subscribe(status => onChange('status', { status: status }));
       return () => sb.removeChannel(ch);
-    },
-
-    async meetings() {
-      return check(await sb.from('meetings').select('*').order('date', { ascending: false })).map(mapMeeting);
-    },
-
-    async saveMeeting(p) {
-      const row = {
-        date: p.date, week: p.week || null, title: p.title || 'Weekly meeting', attendees: p.attendees || '',
-        notes: p.notes || '', decisions: p.decisions || '', action_items: p.actionItems || '',
-      };
-      const q = p.id
-        ? sb.from('meetings').update(row).eq('id', p.id)
-        : sb.from('meetings').insert(Object.assign({ created_by: data.me.id }, row));
-      return mapMeeting(check(await q.select().single()));
     },
 
     /**

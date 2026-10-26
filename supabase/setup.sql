@@ -1,11 +1,20 @@
 -- =====================================================================
 -- ACS Project Tracker: Supabase database setup
 --
+-- GENERATED from supabase/migrations by scripts/build-setup.js. Do not edit
+-- this file: add a new migration and run `npm run build:setup`.
+--
 -- Paste this whole file into Supabase → SQL Editor → New query → Run.
 -- Safe to run again: it creates what is missing and never deletes data.
 -- It adds no people or projects: use supabase/import-team.example.sql for the
 -- real team, or supabase/seed-test-data.sql for test data.
 -- =====================================================================
+
+-- ##### 20261026120000_baseline.sql #####
+
+-- Baseline: the whole database as of October 2026 (tables, security rules,
+-- admin functions, tasks, saved minutes). Safe to run on a new database and on
+-- one built by an older supabase/setup.sql.
 
 -- ---------- Tables ----------
 
@@ -38,6 +47,8 @@ create table if not exists public.assignments (
   primary key (project_id, user_id)
 );
 
+-- Legacy (v1/v2 weekly updates): no longer used by the app. Kept so old data is not lost.
+-- Once you have checked it is empty (or exported it), it can be dropped in a new migration.
 create table if not exists public.weekly_updates (
   id         uuid primary key default gen_random_uuid(),
   week       text not null check (week ~ '^\d{4}-W\d{2}$'),
@@ -115,21 +126,24 @@ drop trigger if exists meetings_touch on public.meetings;
 create trigger meetings_touch before update on public.meetings
   for each row execute function public.touch_updated_at();
 
--- Every new login account gets a profile. The very first one becomes an active admin.
--- Everyone else starts INACTIVE (no access) until an admin activates them, so an account
--- created any other way (e.g. public sign-up left on by mistake) can't see anything.
--- Accounts made from the app's Team page are activated by admin_create_user.
+-- Every new login account gets a profile.
+-- Accounts made by _create_login (the app's Team page, the import script) get the role
+-- they were created with and are active. Any other new account starts INACTIVE (no access)
+-- until an admin activates it, so e.g. public sign-up left on by mistake shows nothing;
+-- the only exception is the very first account in an empty database, which becomes admin.
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
-declare v_first boolean := not exists (select 1 from profiles where role = 'admin');
+declare
+  v_role  text    := nullif(current_setting('acs.new_login_role', true), '');
+  v_first boolean := not exists (select 1 from profiles where role = 'admin');
 begin
   insert into profiles (id, email, name, role, active)
   values (
     new.id,
     lower(new.email),
     coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
-    case when v_first then 'admin' else 'member' end,
-    v_first
+    coalesce(v_role, case when v_first then 'admin' else 'member' end),
+    v_role is not null or v_first
   )
   on conflict (id) do nothing;
   return new;
@@ -236,6 +250,8 @@ begin
   if length(coalesce(p_password, '')) < 8 then raise exception 'Password must be at least 8 characters'; end if;
   if exists (select 1 from auth.users where email = v_email) then raise exception 'That user already exists'; end if;
 
+  -- Tells handle_new_user which role to give this account (for this transaction only).
+  perform set_config('acs.new_login_role', case when p_role in ('member', 'admin') then p_role else 'member' end, true);
   insert into auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at,
     raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
     confirmation_token, recovery_token, email_change_token_new, email_change)
@@ -248,11 +264,8 @@ begin
   values (gen_random_uuid(), v_id, v_id::text,
     jsonb_build_object('sub', v_id::text, 'email', v_email, 'email_verified', true), 'email', now(), now(), now());
 
-  update profiles set
-    active = true,
-    name = coalesce(nullif(trim(p_name), ''), name),
-    role = case when p_role in ('member', 'admin') then p_role else role end
-  where id = v_id;
+  perform set_config('acs.new_login_role', '', true);
+  update profiles set name = coalesce(nullif(trim(p_name), ''), name) where id = v_id;
   return v_id;
 end $$;
 revoke all on function public._create_login(text, text, text, text) from public, anon, authenticated;
@@ -424,9 +437,6 @@ returns json language sql stable security invoker set search_path = public as $$
     'team', coalesce((select json_agg(t order by t.name) from (select id, email, name, role, active, team from profiles) t), '[]'::json),
     'projects', coalesce((select json_agg(pr order by pr.id) from projects pr), '[]'::json),
     'assignments', coalesce((select json_agg(json_build_object('project_id', a.project_id, 'user_id', a.user_id)) from assignments a), '[]'::json),
-    'updates', coalesce((select json_agg(w order by w.week desc) from (
-        select id, week, user_id, project_id, done, next, blockers, status, progress, created_at, updated_at
-        from weekly_updates where user_id = (select auth.uid()) and (p_since is null or week >= p_since)) w), '[]'::json),
     -- Recent tasks, plus unfinished ones of any age (they keep rolling over until done).
     'tasks', coalesce((select json_agg(k order by k.created_at) from tasks k
         where p_since is null or k.week >= p_since or k.status <> 'Done'), '[]'::json),
