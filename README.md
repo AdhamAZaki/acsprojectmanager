@@ -26,9 +26,10 @@ The **Meeting** tab builds the minutes automatically from everyone's tasks (PLC 
 
 - **No server of our own**: the website talks to Supabase directly. Every request takes a fraction of a second.
 - **Security is enforced in the database** (`supabase/setup.sql`):
-  - **Members** see and edit only their own updates, on projects assigned to them.
+  - **Members** see every project and can join one. They see and edit the tasks on their projects, and tasks assigned to them.
   - **Admins** manage projects, the team, assignments and meetings.
   - **Signed-out visitors** see nothing.
+  - **New accounts start inactive** unless an admin created them from the app, so a stray sign-up can't see anything.
 - **Login**: Supabase Auth with email + password. People type a short username, and `@advcontrolsys.com` is added automatically. Admins create accounts and reset passwords from the **Team** page.
 - **The data is easy to view and edit** in Supabase's Table Editor, and can be exported to CSV.
 
@@ -40,7 +41,9 @@ The **Meeting** tab builds the minutes automatically from everyone's tasks (PLC 
 | `frontend/js/config.js` | Supabase Project URL + publishable key (both public by design) |
 | `frontend/js/api.js` | Data layer: one-request loading + local cache for instant start |
 | `frontend/sw.js`, `manifest.webmanifest` | Installable app (Add to Home screen) and offline app shell |
-| `supabase/setup.sql` | Creates the tables, security rules, admin functions and test data. Paste into the SQL Editor. |
+| `supabase/setup.sql` | Creates the tables, security rules and admin functions. Paste into the SQL Editor. |
+| `supabase/import-team.example.sql` | Template for importing the real team and projects (fill it in outside git) |
+| `supabase/seed-test-data.sql` | Optional test logins and dummy projects, with a password you choose |
 | `docs/SETUP.md` | Setup guide, test logins, and how to go live |
 | `.github/workflows/pages.yml` | Auto-deploys `frontend/` on every push to `main` |
 | `.github/workflows/keep-alive.yml` | Daily ping so the free Supabase project never pauses |
@@ -51,4 +54,7 @@ Follow **[docs/SETUP.md](docs/SETUP.md)**:
 
 1. Paste `supabase/setup.sql` into Supabase's SQL Editor and click **Run**
 2. Turn off public sign-up in Supabase Auth settings
-3. Sign in at https://adhamazaki.github.io/acsprojectmanager/
+3. Add the team with the import template (or test data with `seed-test-data.sql`)
+4. Sign in at https://adhamazaki.github.io/acsprojectmanager/
+
+This repository is public: never commit passwords or the real team list.

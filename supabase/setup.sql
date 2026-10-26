@@ -3,6 +3,8 @@
 --
 -- Paste this whole file into Supabase → SQL Editor → New query → Run.
 -- Safe to run again: it creates what is missing and never deletes data.
+-- It adds no people or projects: use supabase/import-team.example.sql for the
+-- real team, or supabase/seed-test-data.sql for test data.
 -- =====================================================================
 
 -- ---------- Tables ----------
@@ -113,16 +115,21 @@ drop trigger if exists meetings_touch on public.meetings;
 create trigger meetings_touch before update on public.meetings
   for each row execute function public.touch_updated_at();
 
--- Every new login account gets a profile. The very first one becomes admin.
+-- Every new login account gets a profile. The very first one becomes an active admin.
+-- Everyone else starts INACTIVE (no access) until an admin activates them, so an account
+-- created any other way (e.g. public sign-up left on by mistake) can't see anything.
+-- Accounts made from the app's Team page are activated by admin_create_user.
 create or replace function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = public as $$
+declare v_first boolean := not exists (select 1 from profiles where role = 'admin');
 begin
-  insert into profiles (id, email, name, role)
+  insert into profiles (id, email, name, role, active)
   values (
     new.id,
     lower(new.email),
     coalesce(nullif(new.raw_user_meta_data ->> 'name', ''), split_part(new.email, '@', 1)),
-    case when exists (select 1 from profiles where role = 'admin') then 'member' else 'admin' end
+    case when v_first then 'admin' else 'member' end,
+    v_first
   )
   on conflict (id) do nothing;
   return new;
@@ -242,6 +249,7 @@ begin
     jsonb_build_object('sub', v_id::text, 'email', v_email, 'email_verified', true), 'email', now(), now(), now());
 
   update profiles set
+    active = true,
     name = coalesce(nullif(trim(p_name), ''), name),
     role = case when p_role in ('member', 'admin') then p_role else role end
   where id = v_id;
@@ -362,6 +370,26 @@ create policy tasks_delete on public.tasks for delete to authenticated
 
 revoke all on public.contacts, public.tasks from anon;
 
+-- The rules above let anyone assigned to a task edit it. This stops two misuses:
+-- changing who created a task, and moving a task into a project you are not on.
+-- Admins, and changes made from the SQL Editor (no signed-in user), are not limited.
+create or replace function public.guard_task_update() returns trigger
+language plpgsql set search_path = public as $$
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if new.created_by is distinct from old.created_by then
+    raise exception 'The creator of a task cannot be changed' using errcode = '42501';
+  end if;
+  if new.project_id is distinct from old.project_id and not public.on_project(new.project_id) then
+    raise exception 'You can only move a task to a project you are on' using errcode = '42501';
+  end if;
+  return new;
+end $$;
+revoke all on function public.guard_task_update() from public, anon, authenticated;
+drop trigger if exists tasks_guard on public.tasks;
+create trigger tasks_guard before update on public.tasks
+  for each row execute function public.guard_task_update();
+
 -- ---------- Simple weekly tasks (v3): teams, blocked reason, self-join, live updates ----------
 
 -- Each person belongs to the PLC or Dev team; the weekly meeting groups tasks by it.
@@ -440,61 +468,39 @@ revoke all on function public.is_active_member() from public, anon;
 grant execute on function public.is_admin() to authenticated;
 grant execute on function public.is_active_member() to authenticated;
 
--- Starting PLC / Dev team for the engineers in the Projects List sheet (only fills empty values).
-update public.profiles set team = 'PLC' where team is null and email in (
-  'ahmed_hamdy@advcontrolsys.com', 'tarek_khaled@advcontrolsys.com', 'ahmed_shady_mokhtar@advcontrolsys.com',
-  'mohamed_ashraf@advcontrolsys.com', 'galal_ali@advcontrolsys.com', 'mohamed_elsoudy@advcontrolsys.com');
-update public.profiles set team = 'Dev' where team is null and email in (
-  'adham_zaki@advcontrolsys.com', 'mahmoud_dahawy@advcontrolsys.com', 'ahmed_yasser@advcontrolsys.com', 'mohamed_adel@advcontrolsys.com',
-  'hazem_shabaan@advcontrolsys.com', 'hady_alaa@advcontrolsys.com', 'abdelrahman_ashraf@advcontrolsys.com', 'marina_talat@advcontrolsys.com',
-  'abdelrahman_hesham@advcontrolsys.com');
-
 -- Tiny public function the daily GitHub Action calls so the free project never pauses.
 create or replace function public.ping() returns text
 language sql stable set search_path = '' as $$ select 'ok'::text $$;
 grant execute on function public.ping() to anon, authenticated;
 
--- =====================================================================
--- TEST DATA: dummy users, projects and updates. Delete this section
--- (or the rows) before real use. Test logins: see docs/SETUP.md.
--- =====================================================================
+-- ---------- Lock old test accounts ----------
+-- Earlier versions of this script created *.test accounts whose passwords were
+-- published in this (public) repository. Any that still use those passwords get
+-- a random password, are signed out everywhere, and are deactivated, so nobody
+-- can sign in with them. Test data now lives in supabase/seed-test-data.sql.
 do $$
-declare
-  v_admin uuid; v_ahmed uuid; v_mona uuid; v_omar uuid;
+declare r record; n int := 0;
 begin
-  if exists (select 1 from public.projects) then
-    raise notice 'Test data skipped: projects already exist.';
-    return;
-  end if;
-
-  select id into v_admin from auth.users where email = 'admin.test@advcontrolsys.com';
-  if v_admin is null then v_admin := public._create_login('admin.test@advcontrolsys.com', 'Admin@2026', 'Adham Zaki (Admin)', 'admin'); end if;
-  select id into v_ahmed from auth.users where email = 'ahmed.test@advcontrolsys.com';
-  if v_ahmed is null then v_ahmed := public._create_login('ahmed.test@advcontrolsys.com', 'Test@2026', 'Ahmed (Test Engineer)', 'member'); end if;
-  select id into v_mona from auth.users where email = 'mona.test@advcontrolsys.com';
-  if v_mona is null then v_mona := public._create_login('mona.test@advcontrolsys.com', 'Test@2026', 'Mona (Test Engineer)', 'member'); end if;
-  select id into v_omar from auth.users where email = 'omar.test@advcontrolsys.com';
-  if v_omar is null then v_omar := public._create_login('omar.test@advcontrolsys.com', 'Test@2026', 'Omar (Test Engineer)', 'member'); end if;
-
-  insert into public.projects (id, name, type, client, manager, status, start_date, end_date, notes) values
-    ('PRJ-0001', 'Water Treatment Plant SCADA', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'In Progress', '2026-09-01', '2027-03-31', 'DUMMY DATA - replace'),
-    ('PRJ-0002', 'Packaging Line PLC Upgrade', 'PLC', 'Demo Client B', 'Adham Zaki', 'In Progress', '2026-08-15', '2026-12-20', 'DUMMY DATA - replace'),
-    ('PRJ-0003', 'Pump Station Control Panels', 'PLC', 'Demo Client C', 'Adham Zaki', 'Planning', '2026-10-01', '2027-01-15', 'DUMMY DATA - replace'),
-    ('PRJ-0004', 'AVEVA Historian Integration', 'AVEVA', 'Demo Client A', 'Adham Zaki', 'Paused', '2026-07-01', '2026-11-30', 'DUMMY DATA - replace'),
-    ('PRJ-0005', 'Boiler Room Automation', 'PLC', 'Demo Client D', 'Adham Zaki', 'Done', '2026-03-01', '2026-09-30', 'DUMMY DATA - replace');
-
-  insert into public.assignments (project_id, user_id) values
-    ('PRJ-0001', v_ahmed), ('PRJ-0001', v_mona), ('PRJ-0002', v_ahmed), ('PRJ-0002', v_omar),
-    ('PRJ-0003', v_omar), ('PRJ-0003', v_mona), ('PRJ-0004', v_ahmed);
-
-  insert into public.weekly_updates (week, user_id, project_id, done, next, blockers, status, progress) values
-    ('2026-W42', v_ahmed, 'PRJ-0001', 'Built main overview and filter screens in InTouch', 'Alarm configuration and trends', 'Waiting for final tag list from client', 'At Risk', 35),
-    ('2026-W42', v_omar, 'PRJ-0002', 'Migrated conveyor logic to new CPU, tested in simulation', 'Site FAT preparation', '', 'On Track', 60),
-    ('2026-W42', v_mona, 'PRJ-0003', 'Reviewed IO list and electrical drawings', 'Start PLC program for duty/standby pumps', '', 'On Track', 15);
-
-  insert into public.meetings (date, week, title, attendees, notes, decisions, action_items, created_by) values
-    ('2026-10-15', '2026-W42', 'Weekly meeting - Week 42 (DUMMY)', 'Adham, Ahmed, Mona, Omar', 'Dummy meeting record for testing',
-     'Follow up with client on SCADA tag list', 'Ahmed - get tag list from client - 2026-10-20', v_admin);
+  for r in
+    select u.id, u.email from auth.users u
+    where u.email like '%.test@%'
+      and (u.encrypted_password = extensions.crypt('Admin@2026', u.encrypted_password)
+        or u.encrypted_password = extensions.crypt('Test@2026', u.encrypted_password))
+  loop
+    n := n + 1;
+    update auth.users set encrypted_password = extensions.crypt(gen_random_uuid()::text, extensions.gen_salt('bf')),
+      updated_at = now() where id = r.id;
+    begin
+      delete from auth.sessions where user_id = r.id;   -- sign it out everywhere
+    exception when others then null;                    -- not fatal: deactivating below also blocks access
+    end;
+    begin
+      update public.profiles set active = false where id = r.id;
+    exception when others then
+      raise notice '% is the only active admin, so it was left active (but its password was changed). See docs/SETUP.md, "Locked out?".', r.email;
+    end;
+  end loop;
+  if n > 0 then raise notice 'Locked % test account(s) that still used a published password.', n; end if;
 end $$;
 
 select 'ACS Project Tracker setup complete' as result;

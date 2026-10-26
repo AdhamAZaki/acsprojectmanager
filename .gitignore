@@ -2,3 +2,6 @@
 .clasprc.json
 node_modules/
 .DS_Store
+
+# Real team lists (names, emails) stay out of this public repo
+supabase/*.local.sql

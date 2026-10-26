@@ -1,7 +1,7 @@
 // Service worker: caches the app shell so the app opens instantly (and offline).
 // Data requests to Supabase are never cached here; the app keeps its own data cache.
 // Bump VERSION on every deploy that changes these files.
-const VERSION = 'acs-tracker-v7';
+const VERSION = 'acs-tracker-v8';
 const SHELL = [
   './', 'index.html', 'css/styles.css', 'js/config.js', 'js/api.js', 'js/app.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/apple-touch-icon.png', 'icons/acs-mark.svg',

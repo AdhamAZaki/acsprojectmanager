@@ -126,7 +126,7 @@
       if (!res || !res.me) expire('Please sign in.');
       if (!res.me.active) {
         await sb.auth.signOut();
-        expire('Your account is disabled. Contact an admin.');
+        expire('Your account is not active. Ask an admin to activate it on the Team page.');
       }
       data = {
         me: mapMember(res.me),
