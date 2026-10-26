@@ -1,6 +1,6 @@
 // Browser tests: drive the real app (frontend/) in Chromium against an in-memory
 // fake of Supabase (tests/e2e/fake-supabase.js). Run: npm run test:e2e
-const { chromium, serve, newApp, signIn } = require('./harness');
+const { launch, serve, newApp, signIn } = require('./harness');
 
 let failures = 0;
 const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failures++; };
@@ -127,6 +127,12 @@ async function mainFlow(browser, url) {
   await page.click('[data-mw="-1"]');
   await page.waitForSelector('.mtg-note.warn, .empty');
   ok(await page.isVisible('.mtg-note.warn'), 'an unsaved past week warns it is rebuilt from today’s tasks');
+  await page.click('#archiveBtn');
+  await page.waitForSelector('.archive-row');
+  ok((await page.$$('.archive-row')).length === 1, 'past minutes lists the one saved week');
+  await page.click('.archive-row');
+  await page.waitForSelector('.mtg-note.saved');
+  ok((await page.textContent('.weekbar-label')).includes('this week'), 'tapping a saved week opens its minutes');
 
   // ---- Admin project save keeps people who joined meanwhile ----
   await page.goto(url + '#/manage');
@@ -159,6 +165,77 @@ async function memberView(browser, url) {
   await ctx.close();
 }
 
+async function adminNudges(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  await page.goto(url);
+  // Omar joins the project but adds nothing; Mona's only task is from last week and untouched since.
+  await page.evaluate(() => {
+    const d = window.__db.get();
+    d.assignments.push({ project_id: 'PRJ-0001', user_id: d.users.omar.id });
+    const t = d.tasks.find(x => x.assignee_ids.indexOf(d.users.mona.id) !== -1);
+    const [y, w] = d.W.split('-W').map(Number);
+    t.week = y + '-W' + String(w - 1).padStart(2, '0');
+    t.updated_at = new Date(Date.now() - 10 * 86400000).toISOString();
+    window.__db.save();
+  });
+  await signIn(page, url, 'adham');
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.weekbar');
+  const card = await page.textContent('.card.quiet').catch(() => '');
+  ok(/No update yet \(2\)/.test(card) && card.includes('Mona') && card.includes('Omar') && !card.includes('Adham'),
+    'admin sees who has no update this week (Mona, Omar; not Adham)');
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#copyReminder');
+  await sleep(300);
+  const text = await page.evaluate(() => navigator.clipboard.readText());
+  ok(/^Hi Mona, Omar — please add your tasks for week \d+/.test(text), 'reminder text names them: "' + text.slice(0, 60) + '…"');
+  await ctx.close();
+
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  await signIn(p2, url, 'mona');
+  await p2.goto(url + '#/meeting');
+  await p2.waitForSelector('.weekbar');
+  ok(!(await p2.isVisible('.card.quiet')), 'members don’t see the no-update list');
+  await c2.close();
+}
+
+async function planNudge(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  await page.clock.install({ time: new Date('2026-10-29T10:00:00') });   // Thursday, week 44
+  await signIn(page, url, 'adham');
+  ok(await page.isVisible('#planNudge'), 'Thursday with nothing planned for next week: nudge shown');
+  await page.click('#planNext');
+  ok((await page.getAttribute('[data-which="next"]', 'class')).includes('on'), 'the nudge opens Next week');
+  await page.fill('#addForm input[name=title]', 'Prepare the site acceptance test documents');
+  await page.click('#addForm button[type=submit]');
+  await page.waitForSelector('text=Prepare the site acceptance test documents');
+  await page.click('[data-which="this"]');
+  ok(!(await page.isVisible('#planNudge')), 'nudge gone once something is planned');
+  await ctx.close();
+
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  await p2.clock.install({ time: new Date('2026-10-30T10:00:00') });     // Friday
+  await signIn(p2, url, 'mona');
+  ok(await p2.isVisible('#planNudge'), 'nudge shown to another person with nothing planned');
+  await p2.click('#planLater');
+  ok(!(await p2.isVisible('#planNudge')), '"Later" hides it');
+  await p2.reload();
+  await p2.waitForSelector('.week-seg');
+  ok(!(await p2.isVisible('#planNudge')), '...and it stays hidden for that week');
+  await c2.close();
+
+  const c3 = await newApp(browser);
+  const p3 = await c3.newPage();
+  await p3.clock.install({ time: new Date('2026-10-26T10:00:00') });     // Monday
+  await signIn(p3, url, 'adham');
+  ok(!(await p3.isVisible('#planNudge')), 'no nudge early in the week');
+  await c3.close();
+}
+
 async function weekRollover(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
@@ -175,10 +252,12 @@ async function weekRollover(browser, url) {
 
 (async () => {
   const { server, url } = await serve();
-  const browser = await chromium.launch();
+  const browser = await launch();
   try {
     await mainFlow(browser, url);
     await memberView(browser, url);
+    await adminNudges(browser, url);
+    await planNudge(browser, url);
     await weekRollover(browser, url);
   } finally {
     await browser.close();

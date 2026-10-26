@@ -8,7 +8,7 @@ Each engineer signs in with a **username and password** and:
 - adds **tasks** (with sub-tasks) for **this week or next week**; unfinished tasks roll over automatically
 - marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-The **Meeting** tab builds the minutes automatically from everyone's tasks: one card per project, each person's tasks under their name, blocked items first. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
+The **Meeting** tab builds the minutes automatically from everyone's tasks: one card per project, each person's tasks under their name, blocked items first. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
 
 | My tasks | Project | Meeting |
 |---|---|---|

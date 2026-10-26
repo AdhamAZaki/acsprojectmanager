@@ -60,6 +60,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
+      # GitHub's runners come with Google Chrome: use it if present (saves ~10 minutes of installing).
+      - name: Browser
+        run: |
+          if [ -x /opt/google/chrome/chrome ]; then
+            echo "PW_CHANNEL=chrome" >> "$GITHUB_ENV"; /opt/google/chrome/chrome --version
+          else
+            npx playwright install --with-deps chromium
+          fi
       - name: The app in Chromium (against a fake Supabase)
         run: npm run test:e2e

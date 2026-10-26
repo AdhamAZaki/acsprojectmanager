@@ -385,15 +385,15 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 
 /* Meeting: people under each project + summary */
 .mtg-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
-.mtg-sum span { background: #fff; border: 1px solid var(--line, #e7e2dc); border-radius: 999px; padding: 6px 12px; font-size: 14px; }
-.mtg-sum .bad { color: #CB2150; border-color: #CB2150; }
-.mtg-sum .warn { color: #b4560f; border-color: #F25F22; }
-.mtg-person { background: #f3f1ee; border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
+.mtg-sum span { background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; font-size: 14px; }
+.mtg-sum .bad { color: var(--bad); border-color: var(--bad); }
+.mtg-sum .warn { color: var(--warn); border-color: var(--warn); }
+.mtg-person { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; margin-top: 10px; }
 .mtg-person > strong { display: flex; align-items: center; gap: 8px; }
 .mtg-person ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .mtg-person li { display: flex; gap: 8px; padding: 3px 0; }
 .mtg-person li .mk { width: 1em; flex: none; text-align: center; }
-.mtg-person li.blk { color: #CB2150; }
+.mtg-person li.blk { color: var(--bad); }
 
 /* Meeting: saved minutes / live view note */
 .mtg-note { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
@@ -403,3 +403,23 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .mtg-note.warn { background: var(--warn-soft); color: var(--warn); padding-right: 12px; }
 .mtg-note .text-btn { min-height: 36px; }
 @media print { .mtg-note .text-btn { display: none !important; } .mtg-note, .mtg-note.saved, .mtg-note.warn { background: none; padding: 0; } }
+
+/* My tasks: "plan next week" nudge */
+.nudge { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--brand-soft); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin: 0 0 12px; font-size: .92rem; }
+.nudge strong { color: var(--brand-2); }
+.nudge-actions { display: flex; align-items: center; gap: 4px; }
+
+/* Meeting: people with no update this week */
+.card.quiet { border-left: 4px solid var(--acs-amber); }
+.avatars-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.person-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2); border-radius: 999px; padding: 3px 10px 3px 3px; font-size: .9rem; }
+
+/* Meeting: archive of saved minutes */
+.archive { display: grid; gap: 8px; }
+.archive-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; color: var(--text); }
+.archive-row.on { border-color: var(--brand-2); }
+.archive-row .ico { flex: none; color: var(--muted); }
+
+@media print { .nudge, .card.quiet { display: none !important; } }

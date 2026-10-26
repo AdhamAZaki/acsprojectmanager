@@ -343,6 +343,22 @@
 
   // ---------- My tasks ----------
 
+  /** Small per-device memory (e.g. a dismissed nudge). Never required: storage may be blocked. */
+  const remember = {
+    get(k) { try { return localStorage.getItem('acs-' + k); } catch (e) { return null; } },
+    set(k, v) { try { localStorage.setItem('acs-' + k, v); } catch (e) { /* blocked */ } },
+  };
+
+  /** From Thursday, nudge people who have nothing planned for next week yet. */
+  function planNudge(list, hasProjects) {
+    const day = new Date().getDay();   // 0 = Sunday
+    const lateInWeek = day === 0 || day >= 4;
+    if (!lateInWeek || !hasProjects || S.which !== 'this') return '';
+    if (list.some(t => t.week === NEXT) || remember.get('plan-dismissed') === NEXT) return '';
+    return `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
+      <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>`;
+  }
+
   function viewMyTasks(root) {
     const list = S.data.tasks.filter(isMine);
     const cur = list.filter(t => inView(t, S.which));
@@ -353,12 +369,17 @@
     root.innerHTML = `
       <div class="page-head"><h2>Hi ${esc(me().name.split(' ')[0])}</h2><span class="muted">${esc(weekRange(S.which === 'next' ? NEXT : THIS))}</span></div>
       ${weekSwitch(list.filter(t => inView(t, 'this')).length, list.filter(t => inView(t, 'next')).length)}
+      ${planNudge(list, mine.some(p => CLOSED.indexOf(p.status) === -1))}
       ${mine.length ? addBar(mine.filter(p => CLOSED.indexOf(p.status) === -1)) : `<div class="card"><p>You’re not on a project yet. <a href="#/projects">Join your projects</a> to start adding tasks.</p></div>`}
       ${cur.length ? `<p class="muted small" style="margin:0 0 8px">${open} open · ${cur.length - open} done</p>` : ''}
       ${groups.map(p => `<section class="card"><h3 class="card-title">${esc(p.name)} <span class="badge ${typeClass(p.type)}">${esc(p.type)}</span></h3>
         ${cur.filter(t => t.projectId === p.id).sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t)).join('')}</section>`).join('')
         || `<div class="empty"><h3>Nothing ${S.which === 'next' ? 'planned for next week' : 'for this week'} yet</h3><p>${mine.length ? 'Add your first task above.' : ''}</p></div>`}`;
     bindWeekSwitch(root); bindAddBar(root); bindTasks(root);
+    const plan = $('#planNext', root);
+    if (plan) plan.onclick = () => { S.which = 'next'; render(); const i = $('#addForm input'); if (i) i.focus(); };
+    const later = $('#planLater', root);
+    if (later) later.onclick = () => { remember.set('plan-dismissed', NEXT); render(); };
   }
 
   // ---------- Projects ----------
@@ -469,6 +490,51 @@
     return { v: 1, week: week, rows: rows, blocked: blocked, summary: summary };
   }
 
+  /**
+   * Active people on an open project with no task activity in the week: none of their tasks
+   * (created by or assigned to them) was saved that week, and nothing is planned for it.
+   */
+  function quietPeople(week) {
+    const openIds = S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1).map(p => p.id);
+    const onOpenProject = id => S.data.assignments.some(a => a.userId === id && openIds.indexOf(a.projectId) !== -1);
+    const active = new Set();
+    S.data.tasks.forEach(t => {
+      const savedThatWeek = t.version && isoWeek(new Date(t.version)) === week;
+      if (!savedThatWeek && t.week !== week) return;
+      active.add(t.createdBy);
+      t.assigneeIds.forEach(id => active.add(id));
+    });
+    return S.data.team.filter(m => m.active && onOpenProject(m.id) && !active.has(m.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function copyText(text, okMsg) {
+    const done = () => toast(okMsg);
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => toast('Copy failed', true));
+    else toast('Copy failed', true);
+  }
+
+  /** Every week with saved minutes, newest first; tap one to open it. */
+  async function minutesArchive() {
+    const dlg = $('#dialog');
+    dlg.innerHTML = `<div class="sheet"><header class="sheet-head"><span></span><h3>Saved minutes</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+      <div class="sheet-body" id="archiveBody"><div class="skeleton"></div></div></div>`;
+    $('[data-close]', dlg).onclick = () => dlg.close();
+    dlg.showModal();
+    const list = await guard(() => Api.minutesList());
+    const body = $('#archiveBody', dlg);
+    if (!list || !body) return;
+    list.sort((a, b) => b.week.localeCompare(a.week));
+    body.innerHTML = list.length ? `<div class="archive">${list.map(r => `
+      <button type="button" class="archive-row${r.week === S.mtgWeek ? ' on' : ''}" data-week="${esc(r.week)}">
+        <span><strong>Week ${wnum(r.week)}</strong> · ${esc(weekRange(r.week))} ${weekMonday(r.week).getUTCFullYear()}<br>
+        <span class="muted small">Saved ${esc(r.savedAt)}${r.savedBy ? ' by ' + esc(member(r.savedBy).name) : ''}</span></span>${icon('chevron')}</button>`).join('')}</div>`
+      : '<div class="empty"><h3>No saved minutes yet</h3><p>An admin can save them from the Meeting tab after each meeting.</p></div>';
+    $$('[data-week]', body).forEach(b => b.onclick = () => {
+      S.mtgWeek = b.dataset.week; S.mtgLive = false; dlg.close(); render(); window.scrollTo(0, 0);
+    });
+  }
+
   /** Loads the saved minutes for a week once, then redraws. */
   function loadMinutes(week) {
     S.minutes[week] = undefined;
@@ -491,6 +557,12 @@
     const people = r => r.people.map(pp => `<div class="mtg-person">
         <strong><span class="avatar sm">${esc(initials(pp.name))}</span>${esc(pp.name)}${pp.team ? ` <span class="badge">${esc(pp.team)}</span>` : ''}</strong>
         <ul>${pp.items.map(item).join('')}</ul></div>`).join('');
+    // Admins, live view of this week or an earlier one: who hasn't touched their tasks.
+    const quiet = isAdmin() && !showSaved && week <= THIS ? quietPeople(week) : [];
+    const quietCard = quiet.length ? `<section class="card quiet"><h3 class="card-title">No update ${week === THIS ? 'yet' : ''} (${quiet.length})</h3>
+      <p class="muted small" style="margin:0 0 8px">On an open project, but none of their tasks was added or changed in week ${wnum(week)}.</p>
+      <div class="avatars-row">${quiet.map(m => `<span class="person-chip"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}${m.team ? ` <small class="muted">${esc(m.team)}</small>` : ''}</span>`).join('')}</div>
+      ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}</section>` : '';
     const note = showSaved
       ? `<div class="mtg-note saved"><span>Saved minutes · ${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}</span><button type="button" class="text-btn" id="mtgLive">Show live tasks</button></div>`
       : saved ? `<div class="mtg-note"><span>Live view of today’s tasks.</span><button type="button" class="text-btn" id="mtgSaved">Show saved minutes</button></div>`
@@ -501,8 +573,9 @@
         <div class="weekbar-label"><strong>Week ${wnum(week)} meeting</strong><span>${esc(weekRange(week))}${week === THIS ? ' · this week' : ''}</span></div>
         <button type="button" class="icon-btn" data-mw="1" aria-label="Next week"${week >= THIS ? ' disabled' : ''}>${icon('chevron')}</button>
       </div>
-      <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${isAdmin() && !showSaved ? `<button type="button" class="secondary" id="saveMins">${saved ? 'Replace saved minutes' : 'Save minutes'}</button>` : ''}</div>
+      <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${isAdmin() && !showSaved ? `<button type="button" class="secondary" id="saveMins">${saved ? 'Replace saved minutes' : 'Save minutes'}</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
       ${note}
+      ${quietCard}
       ${showSaved ? '' : `<p class="muted small" style="margin:0 0 12px">Built automatically from everyone’s tasks${isAdmin() ? '' : ' on your projects'}.</p>`}
       ${rows.length ? `<div class="mtg-sum"><span><b>${summary.moved}</b> ${summary.moved === 1 ? 'project' : 'projects'} with progress</span><span><b>${summary.done}</b> done</span><span class="${summary.blocked ? 'bad' : ''}"><b>${summary.blocked}</b> blocked</span><span class="${summary.delayed ? 'warn' : ''}"><b>${summary.delayed}</b> delayed</span></div>` : ''}
       ${blocked.length ? `<section class="card warn"><h3 class="card-title">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
@@ -512,6 +585,12 @@
     $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); S.mtgLive = false; render(); });
     $('#printMom', root).onclick = () => window.print();
     $('#copyEmail', root).onclick = () => copyEmail(m);
+    $('#archiveBtn', root).onclick = minutesArchive;
+    const remind = $('#copyReminder', root);
+    if (remind) remind.onclick = () => copyText(
+      'Hi ' + quiet.map(x => x.name.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0]).join(', ') +
+      ' — please add your tasks for week ' + wnum(week) + ' in Weekly Tasks before the meeting: ' + location.origin + location.pathname,
+      'Reminder copied — paste it into your team chat');
     const live = $('#mtgLive', root); if (live) live.onclick = () => { S.mtgLive = true; render(); };
     const back = $('#mtgSaved', root); if (back) back.onclick = () => { S.mtgLive = false; render(); };
     const save = $('#saveMins', root);

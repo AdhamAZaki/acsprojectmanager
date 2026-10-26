@@ -349,6 +349,12 @@
       return rows.length ? mapMinutes(rows[0]) : null;
     },
 
+    /** Every week with saved minutes (without their content), newest first. */
+    async minutesList() {
+      return check(await sb.from('meetings').select('id,week,updated_at,created_by')
+        .not('snapshot', 'is', null).order('week', { ascending: false }).limit(500)).map(mapMinutes);
+    },
+
     /** Saves (or replaces) the week's minutes. Admins only. */
     async saveMinutes(week, snapshot) {
       return write(async () => mapMinutes(check(await sb.rpc('admin_save_minutes', { p_week: week, p_snapshot: snapshot }))));

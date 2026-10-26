@@ -1,7 +1,7 @@
 // Regenerates docs/screenshots/*.png from the real app with made-up demo data.
 // Run: npm run screenshots
 const path = require('path');
-const { chromium, serve, newApp, signIn } = require('./harness');
+const { launch, serve, newApp, signIn } = require('./harness');
 
 const OUT = path.join(__dirname, '..', '..', 'docs', 'screenshots');
 
@@ -54,7 +54,7 @@ function demo() {
 
 (async () => {
   const { server, url } = await serve();
-  const browser = await chromium.launch();
+  const browser = await launch();
   const ctx = await newApp(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2 });
   const page = await ctx.newPage();
   await page.goto(url);

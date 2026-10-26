@@ -37,4 +37,7 @@ async function signIn(page, url, username) {
   await page.waitForSelector('.week-seg');
 }
 
-module.exports = { chromium, serve, newApp, signIn };
+// PW_CHANNEL=chrome uses an installed Google Chrome instead of Playwright's Chromium (CI does this).
+const launch = () => chromium.launch(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {});
+
+module.exports = { chromium, launch, serve, newApp, signIn };
