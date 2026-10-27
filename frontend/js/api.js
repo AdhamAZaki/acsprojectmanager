@@ -123,6 +123,7 @@
     if ('assigneeIds' in c) r.assignee_ids = uniq(c.assigneeIds);
     if ('contactIds' in c) r.contact_ids = uniq(c.contactIds);
     if ('subtasks' in c) r.subtasks = cleanSubs(c.subtasks);
+    if (c.createdBy) r.created_by = c.createdBy;   // admins adding a task for someone else
     return r;
   }
 

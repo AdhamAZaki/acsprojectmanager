@@ -423,3 +423,15 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .archive-row .ico { flex: none; color: var(--muted); }
 
 @media print { .nudge, .card.quiet { display: none !important; } }
+
+/* Meeting: this week | next week side by side; swipe between them on a phone */
+.wk2 { display: grid; grid-auto-flow: column; grid-auto-columns: 86%; gap: 10px; overflow-x: auto;
+  scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; margin: 10px -4px 0; padding: 0 4px 6px; scrollbar-width: thin; }
+.wk-col { scroll-snap-align: start; min-width: 0; border: 1px solid var(--line, #e7e2dc); border-radius: 12px; padding: 10px; background: #fff; }
+.wk-col.next { background: #fbf8f4; border-style: dashed; }
+.wk-col h4 { margin: 0 0 2px; font-size: 15px; display: flex; gap: 6px; align-items: baseline; }
+.wk-col h4 span { font-weight: 400; font-size: 13px; color: var(--muted, #6b6862); }
+.wk-col .mtg-person { margin-top: 8px; }
+.addbar .admin-row select { flex: 1; min-width: 0; }
+@media (min-width: 720px) { .wk2 { grid-auto-flow: row; grid-template-columns: 1fr 1fr; overflow: visible; margin: 10px 0 0; padding: 0; } }
+@media print { .wk2 { grid-auto-flow: row; grid-template-columns: 1fr 1fr; overflow: visible; } }

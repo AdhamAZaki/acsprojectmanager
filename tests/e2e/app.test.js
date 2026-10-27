@@ -250,6 +250,46 @@ async function weekRollover(browser, url) {
   await ctx.close();
 }
 
+// Admin plans tasks for someone else in any week; the meeting shows this week and next side by side.
+async function adminPlans(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  await signIn(page, url, 'adham');
+  const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.value));
+  const later = weeks[weeks.length - 1 - 5];   // three weeks ahead
+  await page.fill('#addForm input[name=title]', 'Prepare the FAT procedure for the client');
+  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC' });
+  await page.selectOption('#addForm select[name=week]', later);
+  await page.click('#addForm button[type=submit]');
+  await sleep(500);
+  const t = await page.evaluate(() => { const d = window.__db.get(); return d.tasks.find(x => x.title === 'Prepare the FAT procedure for the client'); });
+  const mona = await page.evaluate(() => window.__db.get().users.mona.id);
+  ok(t && t.created_by === mona && t.assignee_ids.join() === mona, 'admin adds a task for someone else');
+  ok(t && t.week === later, 'admin picks any week (' + later + ')');
+  ok(/Added for Mona/.test(await page.textContent('#toast').catch(() => '')), 'admin is told who and which week it was added for');
+
+  await page.fill('#addForm input[name=title]', 'Download the PLC program to site');
+  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC' });
+  await page.selectOption('#addForm select[name=week]', weeks[5]);   // next week
+  await page.click('#addForm button[type=submit]');
+  await sleep(500);
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.wk2');
+  ok(await page.locator('.wk2').first().locator('.wk-col').count() === 2, 'meeting: this week and next week side by side');
+  ok(/Download the PLC program/.test(await page.textContent('.wk-col.next')), 'meeting: next week’s plan is in the second column');
+  const scrolls = await page.$eval('.wk2', el => el.scrollWidth > el.clientWidth + 20);
+  ok(scrolls, 'meeting: on a phone the two weeks scroll sideways');
+  await page.setViewportSize({ width: 1000, height: 900 });
+  ok(await page.$eval('.wk2', el => el.scrollWidth <= el.clientWidth + 1), 'meeting: on a wide screen both weeks fit');
+  await ctx.close();
+
+  const ctx2 = await newApp(browser);
+  const p2 = await ctx2.newPage();
+  await signIn(p2, url, 'mona');
+  ok(await p2.locator('#addForm select[name=person]').count() === 0, 'members can only add tasks for themselves');
+  await ctx2.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -259,6 +299,7 @@ async function weekRollover(browser, url) {
     await adminNudges(browser, url);
     await planNudge(browser, url);
     await weekRollover(browser, url);
+    await adminPlans(browser, url);
   } finally {
     await browser.close();
     server.close();

@@ -543,4 +543,11 @@ begin
   if n > 0 then raise notice 'Locked % test account(s) that still used a published password.', n; end if;
 end $$;
 
+-- ##### 20261027090000_admin_assign_tasks.sql #####
+
+-- Admins can add a task for someone else (any week); everyone else only for themselves.
+drop policy if exists tasks_insert on public.tasks;
+create policy tasks_insert on public.tasks for insert to authenticated
+  with check ((created_by = (select auth.uid()) or (select public.is_admin())) and public.on_project(project_id));
+
 select 'ACS Project Tracker setup complete' as result;

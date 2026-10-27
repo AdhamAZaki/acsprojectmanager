@@ -160,6 +160,20 @@ select test.ok(
   'project save removes only the unticked person and keeps someone who joined meanwhile');
 select test.ok(public.admin_save_project(jsonb_build_object('name', 'Brand new'), '{}', '{}') ->> 'id' = 'PRJ-0006', 'new project gets the next id');
 
+-- Admins can add a task for someone else; members cannot
+insert into public.tasks (project_id, week, title, created_by, assignee_ids)
+  values ('PRJ-0001', '2026-W47', 'admin planned task', test.uid('mona.test@advcontrolsys.com'), array[test.uid('mona.test@advcontrolsys.com')]);
+select test.ok(test.n($$select * from public.tasks where title = 'admin planned task' and created_by = test.uid('mona.test@advcontrolsys.com')$$) = 1,
+  'admin can add a task for someone else in any week');
+reset role;
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+select test.fails($$insert into public.tasks (project_id, week, title, created_by) values ('PRJ-0001', '2026-W45', 'for mona', test.uid('mona.test@advcontrolsys.com'))$$,
+  'row-level security', 'member cannot add a task in someone else''s name');
+reset role;
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+
 -- Saved minutes: one per week, replaced on a second save, readable by members
 select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 1}');
 select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 2}');
