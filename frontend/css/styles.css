@@ -449,3 +449,16 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .mtg-note.editing { background: var(--brand-soft); color: var(--brand-2); }
 @media (min-width: 900px) { .wk2 { gap: 14px; } }
 @media print { .settings-btn, .fold, .board-tools { display: none !important; } .board-card.folded .board-body { display: block; } }
+
+/* Who is on the project: one tag per person */
+.name-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 2px; }
+.name-tag { white-space: nowrap; }
+.name-tag { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border-radius: 999px;
+  background: var(--surface-2, #f3f1ee); border: 1px solid var(--border, #e7e2dc); font-size: 13.5px; font-weight: 600; line-height: 1.2; max-width: 100%; }
+.name-tag small { font-weight: 400; color: var(--muted, #6b6862); }
+.name-tag .avatar.xs { width: 22px; height: 22px; min-width: 22px; font-size: 10px; border-radius: 50%; display: inline-grid; place-items: center; background: #fff; color: var(--text, #191919); }
+.name-tag.team-plc .avatar.xs { background: #FDE7D6; color: #B4560F; }
+.name-tag.team-dev .avatar.xs { background: #F8DDE5; color: #CB2150; }
+.name-tag.me { border-color: #CB2150; background: #FCEEF2; }
+.name-tag.helping { background: transparent; border-style: dashed; font-weight: 500; }
+@media print { .name-tag { border: 1px solid #ccc; background: none; } }

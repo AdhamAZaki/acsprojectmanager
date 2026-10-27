@@ -164,7 +164,8 @@ async function memberView(browser, url) {
   await page.waitForSelector('[data-board="mine"].on');
   ok(true, 'a member can join a project in one tap');
   ok((await page.$$eval('[data-board]', bs => bs.map(b => b.dataset.board + '=' + b.className))).join() === 'me=,mine=on,all=', 'after joining, the board shows My projects (members get no By person view)');
-  ok(/Team:.*Adham Admin.*Omar Dev/.test(await page.textContent('.board-card .team-line')), 'project cards list the team by full name');
+  const tags = await page.locator('.board-card').first().locator('.name-tag').allTextContents();
+  ok(tags.length >= 2 && /Omar Dev\s*\(You\)/.test(tags[0]) && tags.some(t => /Adham Admin/.test(t)), 'project cards show everyone on the project as name tags, you first');
   await page.click('[data-board="all"]');
   ok(await page.locator('.board-card').count() >= 1, 'All projects lists every open project');
   // Omar adds a task to his project from the board, in last week (forgot to log it)

@@ -591,11 +591,18 @@
     keys.forEach(k => { if (on) c[k] = true; else delete c[k]; });
     remember.set('collapsed', JSON.stringify(c));
   }
-  /** "Ahmed Hamdy, Tarek Khaled" — everyone on the project, full names. */
-  const teamLine = pid => {
-    const team = projectTeam(pid).map(m => m.name).sort((a, b) => a.localeCompare(b));
-    return team.length ? `<p class="team-line"><span class="muted">Team:</span> ${team.map(esc).join(', ')}</p>` : '<p class="team-line muted">Nobody on this project yet</p>';
-  };
+  /**
+   * Who is on the project, as name tags: everyone who joined, then (dashed) anyone with a task
+   * on it this week or next who hasn't joined. Your own tag is marked "You".
+   */
+  function teamTags(pid, r) {
+    const team = projectTeam(pid).filter(m => m.active !== false).sort((a, b) => (b.id === me().id) - (a.id === me().id) || a.name.localeCompare(b.name));
+    const helping = (r ? r.people : []).filter(pp => pp.id && !team.some(m => m.id === pp.id)).map(pp => member(pp.id));
+    const tag = (m, extra) => `<span class="name-tag${m.id === me().id ? ' me' : ''}${extra ? ' helping' : ''}${m.team ? ' team-' + slug(m.team) : ''}" title="${esc(m.name)}${m.team ? ' · ' + esc(m.team) + ' team' : ''}${extra ? ' · has tasks here, not on the project' : ''}">
+      <span class="avatar xs">${esc(initials(m.name))}</span>${esc(m.name)}${m.id === me().id ? ' <small>(You)</small>' : ''}</span>`;
+    if (!team.length && !helping.length) return '<p class="team-line muted">Nobody on this project yet</p>';
+    return `<div class="name-tags" aria-label="People on this project">${team.map(m => tag(m)).join('')}${helping.map(m => tag(m, true)).join('')}</div>`;
+  }
   const chevron = (key, label) => `<button type="button" class="icon-btn fold" data-fold="${esc(key)}" aria-expanded="${!collapsed()[key]}" aria-label="${collapsed()[key] ? 'Expand' : 'Collapse'} ${esc(label)}">${icon(collapsed()[key] ? 'chevron' : 'down')}</button>`;
 
   /**
@@ -650,10 +657,10 @@
           ${chevron(key, p.name)}
           <div class="board-name">
             ${isReal ? `<button type="button" class="board-title" data-project="${esc(p.id)}">` : '<span class="board-title">'}<strong>${esc(p.name)}</strong> <span class="badge ${typeClass(p.type)}">${esc(p.type)}</span><span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>${isReal ? '</button>' : '</span>'}
-            ${isReal ? teamLine(p.id) : ''}
           </div>
           ${isReal ? `<span class="board-actions no-print">${on ? '' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}${open ? `<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button>` : ''}</span>` : ''}
         </div>
+        ${isReal ? teamTags(p.id, r) : ''}
         <div class="board-body">
           ${live && S.addFor === p.id ? `<div class="no-print">${addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1)), week)}</div>` : ''}
           ${r ? weekGrid(r, week, live, mode === 'me' ? me().id : null) : `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}
