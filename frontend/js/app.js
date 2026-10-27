@@ -649,7 +649,8 @@
     }
     const card = ({ r, p }) => {
       const key = 'p:' + p.id;
-      const isReal = live && project(p.id).id === p.id;
+      const exists = project(p.id).id === p.id;   // saved minutes may name a project that was removed since
+      const isReal = live && exists;
       const on = mineIds.indexOf(p.id) !== -1;
       const open = CLOSED.indexOf(p.status) === -1;
       return `<section class="card board-card${collapsed()[key] ? ' folded' : ''}">
@@ -660,7 +661,7 @@
           </div>
           ${isReal ? `<span class="board-actions no-print">${on ? '' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}${open ? `<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button>` : ''}</span>` : ''}
         </div>
-        ${isReal ? teamTags(p.id, r) : ''}
+        ${exists ? teamTags(p.id, r) : ''}
         <div class="board-body">
           ${live && S.addFor === p.id ? `<div class="no-print">${addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1)), week)}</div>` : ''}
           ${r ? weekGrid(r, week, live, mode === 'me' ? me().id : null) : `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}

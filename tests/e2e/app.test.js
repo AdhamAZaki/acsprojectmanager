@@ -122,6 +122,7 @@ async function mainFlow(browser, url) {
   await sleep(800);
   ok(await page.isVisible(`.mtg-person >> text=${T2}`) && !(await page.isVisible('text=RENAMED after the meeting')), 'saved minutes don’t change when a task changes');
   ok(!(await page.isVisible('[data-done]')), 'saved minutes are read-only');
+  ok(await page.locator('.board-card .name-tag').count() > 0, 'saved minutes still show who is on each project');
   await page.click('#mtgEdit');
   ok(await page.isVisible('text=RENAMED after the meeting') && await page.isVisible('[data-done]'), '"Edit" shows the live, editable tasks');
   await page.click('#mtgCancel');
