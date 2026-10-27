@@ -286,18 +286,20 @@
 
     // ----- Joining projects -----
 
-    async joinProject(projectId) { return write(() => Api._joinProject(projectId)); },
-    async _joinProject(projectId) {
-      check(await sb.from('assignments').insert({ project_id: projectId, user_id: data.me.id }));
-      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id))
-        .concat({ projectId: projectId, userId: data.me.id });
+    /** Puts a person on a project (yourself by default; admins can add anyone). */
+    async joinProject(projectId, userId) { return write(() => Api._joinProject(projectId, userId || data.me.id)); },
+    async _joinProject(projectId, userId) {
+      check(await sb.from('assignments').insert({ project_id: projectId, user_id: userId }));
+      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === userId))
+        .concat({ projectId: projectId, userId: userId });
       writeCache();
     },
 
-    async leaveProject(projectId) { return write(() => Api._leaveProject(projectId)); },
-    async _leaveProject(projectId) {
-      check(await sb.from('assignments').delete().eq('project_id', projectId).eq('user_id', data.me.id));
-      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === data.me.id));
+    /** Takes a person off a project (yourself by default; admins can remove anyone). Their tasks stay. */
+    async leaveProject(projectId, userId) { return write(() => Api._leaveProject(projectId, userId || data.me.id)); },
+    async _leaveProject(projectId, userId) {
+      check(await sb.from('assignments').delete().eq('project_id', projectId).eq('user_id', userId));
+      data.assignments = data.assignments.filter(a => !(a.projectId === projectId && a.userId === userId));
       writeCache();
     },
 

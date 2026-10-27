@@ -69,14 +69,18 @@ reset role;
 select test.login('ahmed.test@advcontrolsys.com');
 set role authenticated;
 select test.ok(test.n('select * from public.projects') = 5, 'member sees every project (to join one)');
-select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) = 0, 'member does not see tasks of a project they are not on');
 select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0001'$$) > 0, 'member sees tasks of their project');
-select test.fails($$insert into public.tasks (project_id, week, title) values ('PRJ-0003', '2026-W44', 'sneaky')$$,
-  'row-level security', 'member cannot add a task to a project they are not on');
+insert into public.tasks (project_id, week, title) values ('PRJ-0003', '2026-W44', 'helping on another project');
+select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003' and created_by = auth.uid()$$) = 1, 'member can add a task to a project they are not on');
+select test.fails($$insert into public.tasks (project_id, week, title, created_by) values ('PRJ-0003', '2026-W44', 'in mona''s name', test.uid('mona.test@advcontrolsys.com'))$$,
+  'row-level security', 'member cannot add a task in someone else''s name (any project)');
 select test.fails($$update public.tasks set created_by = test.uid('mona.test@advcontrolsys.com') where title like 'Build main%'$$,
   'creator of a task cannot be changed', 'member cannot change who created a task');
-select test.fails($$update public.tasks set project_id = 'PRJ-0003' where title like 'Build main%'$$,
-  'only move a task to a project you are on', 'member cannot move a task into a project they are not on');
+update public.tasks set title = 'helping on another project (edited)' where title = 'helping on another project';
+select test.ok(test.n($$select * from public.tasks where title = 'helping on another project (edited)'$$) = 1, 'member can edit their own task on a project they are not on');
+select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%'$$) = 1, 'member sees tasks of every project (the meeting board)');
+update public.tasks set notes = 'not mine' where title like 'Start PLC%';
+select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%' and notes = 'not mine'$$) = 0, 'member cannot edit someone else''s task on a project they are not on');
 update public.tasks set project_id = 'PRJ-0002' where title like 'Build main%';
 select test.ok(test.n($$select * from public.tasks where title like 'Build main%' and project_id = 'PRJ-0002'$$) = 1,
   'member can move a task between their own projects');
@@ -94,10 +98,10 @@ select test.fails($$select public.admin_save_minutes('2026-W44', '{}')$$, 'admin
 select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0003', test.uid('omar.test@advcontrolsys.com'))$$,
   'row-level security', 'member cannot add someone else to a project');
 insert into public.assignments (project_id, user_id) values ('PRJ-0003', auth.uid());
-select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) > 0, 'member can join a project and then sees its tasks');
+select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) > 0, 'member can join a project and sees its tasks');
 delete from public.assignments where project_id = 'PRJ-0003' and user_id = auth.uid();
 
--- An assignee who is not on the project can edit the task but not move it to a project they are not on
+-- An assignee who is not on the project can edit the task and move it
 reset role;
 select test.login('mona.test@advcontrolsys.com');
 set role authenticated;
@@ -107,8 +111,8 @@ select test.login('ahmed.test@advcontrolsys.com');
 set role authenticated;
 update public.tasks set notes = 'checked' where title like 'Review IO%';
 select test.ok(test.n($$select * from public.tasks where title like 'Review IO%' and notes = 'checked'$$) = 1, 'assignee can edit a task on a project they are not on');
-select test.fails($$update public.tasks set project_id = 'PRJ-0005' where title like 'Review IO%'$$,
-  'only move a task to a project you are on', 'assignee cannot move it into a project they are not on');
+update public.tasks set project_id = 'PRJ-0005' where title like 'Review IO%';
+select test.ok(test.n($$select * from public.tasks where title like 'Review IO%' and project_id = 'PRJ-0005'$$) = 1, 'assignee can move a task to any project');
 
 -- Two people saving the same task: the second save, based on the old version, changes nothing
 reset role;

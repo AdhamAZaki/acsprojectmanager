@@ -435,3 +435,19 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .addbar .admin-row select { flex: 1; min-width: 0; }
 @media (min-width: 720px) { .wk2 { grid-auto-flow: row; grid-template-columns: 1fr 1fr; overflow: visible; margin: 10px 0 0; padding: 0; } }
 @media print { .wk2 { grid-auto-flow: row; grid-template-columns: 1fr 1fr; overflow: visible; } }
+
+/* Projects = the weekly meeting board */
+.board-seg { margin: 0 0 12px; }
+.board-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.board-title { all: unset; cursor: pointer; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 17px; min-width: 0; }
+.board-title:focus-visible { outline: 2px solid #CB2150; outline-offset: 2px; border-radius: 6px; }
+.board-actions { display: flex; gap: 6px; flex: none; }
+.board-card .addbar { margin: 10px 0 0; box-shadow: none; border: 1px solid var(--line, #e7e2dc); }
+.addbar-row { flex-wrap: wrap; }
+.addbar-row select[name=project] { flex: 1 1 140px; min-width: 0; }
+.addbar-row select[name=week] { flex: 1 1 150px; min-width: 0; }
+.team-edit { display: grid; gap: 8px; }
+.team-edit select { width: 100%; }
+.chip-x { all: unset; cursor: pointer; margin-left: 6px; padding: 0 4px; font-weight: 700; color: #6b6862; }
+.chip-x:hover { color: #CB2150; }
+@media print { .no-print, .board-seg { display: none !important; } }

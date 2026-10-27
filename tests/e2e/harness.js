@@ -29,12 +29,13 @@ async function newApp(browser, opts) {
   return ctx;
 }
 
+// Opens My tasks unless the url names a screen (the app itself starts on Projects).
 async function signIn(page, url, username) {
-  await page.goto(url);
+  await page.goto(url.indexOf('#') === -1 ? url + '#/tasks' : url);
   await page.fill('input[name=username]', username);
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
-  await page.waitForSelector('.week-seg');
+  await page.waitForSelector('.week-seg, .board-seg');
 }
 
 // PW_CHANNEL=chrome uses an installed Google Chrome instead of Playwright's Chromium (CI does this).

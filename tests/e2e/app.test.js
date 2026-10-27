@@ -159,6 +159,22 @@ async function memberView(browser, url) {
   await page.click('[data-join="PRJ-0001"]');
   await page.waitForSelector('[data-project="PRJ-0001"]');
   ok(true, 'a member can join a project in one tap');
+  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.className))).join() === 'on,', 'after joining, the board shows My projects');
+  await page.click('[data-board="all"]');
+  ok(await page.locator('.board-card').count() >= 1, 'All projects lists every open project');
+  // Omar adds a task to his project from the board, in last week (forgot to log it)
+  await page.click('[data-addto="PRJ-0001"]');
+  const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.textContent));
+  ok(weeks.length === 3 && /last week/.test(weeks[0]) && /next week/.test(weeks[2]), 'members pick last, this or next week');
+  ok(await page.locator('#addForm select[name=person]').count() === 0, 'members can only add tasks for themselves');
+  await page.fill('#addForm input[name=title]', 'Checked the alarm list with the client');
+  await page.selectOption('#addForm select[name=week]', { index: 1 });
+  await page.click('#addForm button[type=submit]');
+  await page.waitForSelector('.board-card >> text=Checked the alarm list with the client');
+  ok(true, 'a task added on the board shows straight away in the board');
+  await page.click('[data-project="PRJ-0001"]');
+  await page.waitForSelector('#backBtn');
+  ok(await page.locator('#assignSel').count() === 0, 'members can’t change who is on a project');
   await page.goto(url + '#/meeting');
   await page.waitForSelector('.weekbar');
   ok(!(await page.isVisible('#saveMins')), 'members can’t save minutes');
@@ -194,7 +210,10 @@ async function adminNudges(browser, url) {
 
   const c2 = await newApp(browser);
   const p2 = await c2.newPage();
-  await signIn(p2, url, 'mona');
+  await signIn(p2, url + '#/', 'mona');
+  ok(await p2.locator('.board-seg').count() === 1, 'the app opens on Projects (the meeting board)');
+  await p2.goto(url + '#/tasks');
+  await p2.waitForSelector('#addForm');
   await p2.goto(url + '#/meeting');
   await p2.waitForSelector('.weekbar');
   ok(!(await p2.isVisible('.card.quiet')), 'members don’t see the no-update list');
@@ -281,6 +300,18 @@ async function adminPlans(browser, url) {
   ok(scrolls, 'meeting: on a phone the two weeks scroll sideways');
   await page.setViewportSize({ width: 1000, height: 900 });
   ok(await page.$eval('.wk2', el => el.scrollWidth <= el.clientWidth + 1), 'meeting: on a wide screen both weeks fit');
+  // Admin puts Omar on the project from the project page, then takes him off again
+  await page.click('[data-project="PRJ-0001"]');
+  await page.waitForSelector('#assignSel');
+  await page.selectOption('#assignSel', { label: 'Omar Dev · Dev' });
+  await page.waitForSelector('[data-unassign]:near(:text("Omar"))');
+  const omar = await page.evaluate(() => window.__db.get().users.omar.id);
+  const onIt = async () => (await page.evaluate(() => window.__db.get().assignments.map(a => a.project_id + ':' + a.user_id))).indexOf('PRJ-0001:' + omar) !== -1;
+  ok(await onIt(), 'admin adds a person to a project');
+  page.once('dialog', d => d.accept());
+  await page.click(`[data-unassign="${omar}"]`);
+  await sleep(500);
+  ok(!(await onIt()), 'admin takes a person off a project');
   await ctx.close();
 
   const ctx2 = await newApp(browser);
