@@ -22,8 +22,9 @@ function serve() {
   return new Promise(resolve => server.listen(0, '127.0.0.1', () => resolve({ server, url: `http://127.0.0.1:${server.address().port}/` })));
 }
 
+// Desktop size by default; phone tests pass their own viewport.
 async function newApp(browser, opts) {
-  const ctx = await browser.newContext(Object.assign({ serviceWorkers: 'block', viewport: { width: 420, height: 900 } }, opts || {}));
+  const ctx = await browser.newContext(Object.assign({ serviceWorkers: 'block', viewport: { width: 1100, height: 900 } }, opts || {}));
   await ctx.route(/cdn\.jsdelivr\.net/, r => r.fulfill({ contentType: 'application/javascript', body: FAKE }));
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
   return ctx;

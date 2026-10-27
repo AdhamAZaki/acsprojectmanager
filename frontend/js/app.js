@@ -35,6 +35,8 @@
     addFor: null,        // project whose own add box is open
     addWeek: null,       // week picked in the add box (e.g. by "Plan next week")
     collapsed: null,     // card key ('p:<project id>' / 'u:<user id>') -> true; remembered per device
+    sheetTask: null,     // phone: task open in the bottom sheet
+    fold: { blocked: true, quiet: true },   // phone: Blocked / No-update lists folded to one line
   };
 
   // ---------- Helpers ----------
@@ -60,6 +62,8 @@
     NEXT = shiftWeek(THIS, 1);
     return true;
   }
+  /** Phone layout (narrower than 720px): tasks open in a bottom sheet, extras fold away. Desktop is unchanged. */
+  const isPhone = () => window.matchMedia('(max-width: 719px)').matches;
   const typeClass = t => 'type-' + slug(t === 'AVEVA + PLC' ? 'aveva' : t);
   const isAdmin = () => S.data && S.data.me.role === 'Admin';
   const me = () => S.data.me;
@@ -175,8 +179,8 @@
 
   // ---------- Task rows (My tasks and project pages) ----------
 
-  function taskHtml(t, showOwner) {
-    const open = !!S.open[t.id];
+  function taskHtml(t, showOwner, inSheet) {
+    const open = !!S.open[t.id] && (inSheet || !isPhone());
     const subDone = t.subtasks.filter(s => s.done).length;
     const team = projectTeam(t.projectId);
     const extra = t.assigneeIds.filter(id => !team.some(m => m.id === id)).map(member);
@@ -216,6 +220,34 @@
       </div>`;
   }
 
+  /** Phone: the open task, in a bottom sheet over the board. Redrawn with the board. */
+  function renderTaskSheet() {
+    const dlg = $('#dialog');
+    const t = S.sheetTask && findTask(S.sheetTask);
+    if (!t || !isPhone()) {
+      if (dlg.dataset.mode === 'task') { delete dlg.dataset.mode; if (dlg.open) dlg.close(); }
+      if (S.sheetTask && !t) S.sheetTask = null;
+      return;
+    }
+    const body = $('.sheet-body', dlg);
+    const scroll = dlg.dataset.mode === 'task' && body ? body.scrollTop : 0;
+    dlg.dataset.mode = 'task';
+    dlg.innerHTML = `<div class="sheet task-sheet">
+      <header class="sheet-head"><span></span><h3>${esc(project(t.projectId).name)} · week ${wnum(t.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+      <div class="sheet-body">${taskHtml(t, false, true)}</div></div>`;
+    $('[data-close]', dlg).onclick = () => dlg.close();
+    dlg.onclose = () => {
+      if (dlg.dataset.mode !== 'task') return;
+      delete dlg.dataset.mode; S.open[S.sheetTask] = false; S.sheetTask = null; render();
+    };
+    // The title row toggles the task closed again in the sheet
+    $$('[data-toggle]', dlg).forEach(b => b.setAttribute('aria-expanded', 'true'));
+    bindTasks(dlg);
+    $$('[data-toggle]', dlg).forEach(b => b.onclick = () => dlg.close());
+    if (!dlg.open) dlg.showModal();
+    const nb = $('.sheet-body', dlg); if (nb) nb.scrollTop = scroll;
+  }
+
   function bindTasks(root) {
     const pair = v => v.split(':');
     $$('[data-done]', root).forEach(b => b.onclick = () => {
@@ -224,7 +256,11 @@
       updateTask(t, x => done ? { status: 'Done', week: x.week < THIS ? THIS : x.week } : { status: 'To Do' });
       if (done) toast('Done ✔ — it goes into this week’s meeting');
     });
-    $$('[data-toggle]', root).forEach(b => b.onclick = () => { S.open[b.dataset.toggle] = !S.open[b.dataset.toggle]; render(); });
+    $$('[data-toggle]', root).forEach(b => b.onclick = () => {
+      const id = b.dataset.toggle;
+      if (isPhone() && !root.closest('dialog')) { S.open[id] = true; S.sheetTask = id; render(); return; }
+      S.open[id] = !S.open[id]; render();
+    });
     $$('[data-sub]', root).forEach(c => c.onchange = () => {
       const [tid, i] = pair(c.dataset.sub); const t = findTask(tid);
       const text = t.subtasks[Number(i)].t; const done = c.checked;
@@ -303,6 +339,7 @@
       if (!confirm('Delete this task?')) return;
       S.lastWrite = Date.now();
       try { await Api.deleteTask(b.dataset.del); toast('Task deleted'); } catch (e) { toast(e.message, true); }
+      if (S.sheetTask === b.dataset.del) S.sheetTask = null;
       render();
     });
   }
@@ -345,7 +382,7 @@
     week = S.addWeek || week || (S.which === 'next' ? NEXT : THIS);
     if (week < shiftWeek(THIS, isAdmin() ? -4 : -1) || week > shiftWeek(THIS, isAdmin() ? 8 : 1)) week = THIS;
     return `
-      <form class="card addbar" id="addForm">
+      <form class="card addbar${S.addWeek || fixedProject ? ' expanded' : ''}" id="addForm">
         <input name="title" data-keep="add-title" placeholder="${week === NEXT ? 'What will you do next week?' : week < THIS ? 'What did you do that week?' : 'What are you working on this week?'}" autocomplete="off" required>
         <div class="addbar-row">
           ${fixedProject ? '' : `<select name="project" aria-label="Project">${projectChoices()}</select>`}
@@ -358,6 +395,7 @@
   function bindAddBar(root, fixedProject) {
     const f = $('#addForm', root);
     if (!f) return;
+    f.elements.title.addEventListener('focus', () => f.classList.add('expanded'));
     f.onsubmit = async e => {
       e.preventDefault();
       const title = f.elements.title.value.trim();
@@ -631,7 +669,8 @@
       return `<div class="wk-col${isNext ? ' next' : ''}"><h4>Week ${wnum(w)} <span>${isNext ? 'plan' : 'done & in progress'}</span></h4>
         ${blocks.join('') || `<p class="muted small">${isNext ? 'Nothing planned yet' : 'Nothing this week'}</p>`}</div>`;
     };
-    return `<div class="wk2">${column(false)}${column(true)}</div>`;
+    const tabs = `<div class="wk-tabs" aria-hidden="true"><button type="button" class="on">Week ${wnum(week)}</button><button type="button">Week ${wnum(shiftWeek(week, 1))} · plan</button></div>`;
+    return `${tabs}<div class="wk2">${column(false)}${column(true)}</div>`;
   }
 
   /** One card per project (My tasks / My projects / All projects views). */
@@ -726,7 +765,7 @@
     const mode = live ? boardMode() : 'all';
     // Admins, live view of this week or an earlier one: who hasn't touched their tasks.
     const quiet = isAdmin() && live && week <= THIS ? quietPeople(week) : [];
-    const quietCard = quiet.length ? `<section class="card quiet"><h3 class="card-title">No update ${week === THIS ? 'yet' : ''} (${quiet.length})</h3>
+    const quietCard = quiet.length ? `<section class="card quiet foldable${S.fold.quiet ? ' shut' : ''}"><h3 class="card-title" data-extra="quiet">No update ${week === THIS ? 'yet' : ''} (${quiet.length})</h3>
       <p class="muted small" style="margin:0 0 8px">On an open project, but none of their tasks was added or changed in week ${wnum(week)}.</p>
       <div class="avatars-row">${quiet.map(m => `<span class="person-chip"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(m.name)}${m.team ? ` <small class="muted">${esc(m.team)}</small>` : ''}</span>`).join('')}</div>
       ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}</section>` : '';
@@ -749,13 +788,30 @@
       ${live && !S.addFor && S.data.projects.some(p => CLOSED.indexOf(p.status) === -1) ? addBar(undefined, undefined, week <= THIS ? THIS : week) : ''}
       ${quietCard}
       ${rows.length ? `<div class="mtg-sum"><span><b>${summary.moved}</b> ${summary.moved === 1 ? 'project' : 'projects'} with progress</span><span><b>${summary.done}</b> done</span><span class="${summary.blocked ? 'bad' : ''}"><b>${summary.blocked}</b> blocked</span><span class="${summary.delayed ? 'warn' : ''}"><b>${summary.delayed}</b> delayed</span></div>` : ''}
-      ${blocked.length ? `<section class="card warn"><h3 class="card-title">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
+      ${blocked.length ? `<section class="card warn foldable${S.fold.blocked ? ' shut' : ''}"><h3 class="card-title" data-extra="blocked">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
       <div class="board-tools no-print">
         ${live ? `<div class="seg board-seg">${views.map(v => `<button type="button" data-board="${v[0]}" class="${mode === v[0] ? 'on' : ''}">${v[1]}</button>`).join('')}</div>` : ''}
         <span class="fold-all"><button type="button" class="text-btn" id="unfoldAll">Expand all</button><button type="button" class="text-btn" id="foldAll">Collapse all</button></span>
       </div>
       ${cards.html}`;
     $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); S.addFor = null; S.addWeek = null; render(); });
+    // Phone: the Blocked and No-update lists fold to one line (tap the title)
+    $$('[data-extra]', root).forEach(h => h.onclick = () => { if (!isPhone()) return; S.fold[h.dataset.extra] = !S.fold[h.dataset.extra]; render(); });
+    // Phone: tabs above each project's two weeks jump between them; the tab follows a swipe
+    $$('.wk2', root).forEach(g => {
+      const tabs = g.previousElementSibling && g.previousElementSibling.classList.contains('wk-tabs') ? $$('button', g.previousElementSibling) : [];
+      if (!tabs.length) return;
+      // Mark the week in view and fit the row to it, so a short week leaves no gap below.
+      const mark = () => {
+        const i = g.scrollLeft > g.scrollWidth / 4 ? 1 : 0;
+        tabs.forEach((b, k) => b.classList.toggle('on', k === i));
+        const col = g.children[i];
+        if (col) g.style.height = col.offsetHeight + 'px';
+      };
+      tabs.forEach((b, k) => b.onclick = () => { g.scrollTo({ left: k ? g.scrollWidth : 0, behavior: 'smooth' }); });
+      g.addEventListener('scroll', mark, { passive: true });
+      mark();
+    });
     $('#printMom', root).onclick = () => window.print();
     $('#copyEmail', root).onclick = () => copyEmail(m);
     $('#archiveBtn', root).onclick = minutesArchive;
@@ -1126,9 +1182,12 @@
     document.body.dataset.tab = tab.id;
     // Text half-typed into an "add" box survives the redraw (e.g. ticking a task meanwhile).
     const kept = {};
-    $$('#view [data-keep]').forEach(i => { if (i.value) kept[i.dataset.keep] = i.value; });
+    const keepSel = '#view [data-keep], #dialog[data-mode="task"] [data-keep]';
+    $$(keepSel).forEach(i => { if (i.value) kept[i.dataset.keep] = i.value; });
     tab.view($('#view'));
-    $$('#view [data-keep]').forEach(i => { if (kept[i.dataset.keep] && !i.value) i.value = kept[i.dataset.keep]; });
+    renderTaskSheet();
+    $$(keepSel).forEach(i => { if (kept[i.dataset.keep] && !i.value) i.value = kept[i.dataset.keep]; });
+    if (kept['add-title']) { const f = $('#addForm'); if (f) f.classList.add('expanded'); }
   }
 
   function showLogin(message) {
@@ -1151,7 +1210,7 @@
     render();
   }
 
-  const editing = () => $('#dialog').open || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
+  const editing = () => ($('#dialog').open && $('#dialog').dataset.mode !== 'task') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName));
   /** Redraw now, or once the person stops typing. */
   function softRender() { if (!S.data) return; if (editing()) S.pendingRender = true; else render(); }
 

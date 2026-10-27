@@ -311,6 +311,8 @@ async function adminPlans(browser, url) {
   await page.waitForSelector('.wk2');
   ok(await page.locator('.wk2').first().locator('.wk-col').count() === 2, 'meeting: this week and next week side by side');
   ok(/Download the PLC program/.test(await page.textContent('.wk-col.next')), 'meeting: next week’s plan is in the second column');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await sleep(200);
   const scrolls = await page.$eval('.wk2', el => el.scrollWidth > el.clientWidth + 20);
   ok(scrolls, 'meeting: on a phone the two weeks scroll sideways');
   await page.setViewportSize({ width: 1000, height: 900 });
@@ -363,6 +365,34 @@ async function adminPlans(browser, url) {
   await ctx2.close();
 }
 
+// Phone layout: tasks open in a bottom sheet; the add box, Blocked list and weeks are compact.
+async function phoneLayout(browser, url) {
+  const ctx = await newApp(browser, { viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  const errors = []; page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/', 'adham');
+  await page.click('[data-board="all"]');
+  ok(!(await page.isVisible('#addForm select[name=week]')), 'phone: the add box starts as one line');
+  await page.click('#addForm input[name=title]');
+  ok(await page.isVisible('#addForm select[name=week]'), 'phone: tapping it shows project and week');
+  ok(await page.locator('.wk-tabs').first().isVisible(), 'phone: week tabs above each project');
+  await page.locator('.wk-tabs').first().locator('button').nth(1).click();
+  await sleep(600);
+  ok((await page.locator('.wk-tabs').first().locator('button').nth(1).getAttribute('class')).includes('on'), 'phone: tapping a week tab shows that week');
+  await page.locator('[data-toggle]').first().click();
+  await page.waitForSelector('dialog[data-mode="task"][open]');
+  ok(await page.locator('#view .t-open').count() === 0, 'phone: a task opens in a bottom sheet, not inside the board');
+  await page.fill('dialog [data-newsub]', 'Check the cabinet heaters');
+  await page.press('dialog [data-newsub]', 'Enter');
+  await sleep(400);
+  ok(await page.isVisible('dialog >> text=Check the cabinet heaters') && await page.isVisible('dialog[data-mode="task"][open]'), 'phone: editing in the sheet saves and keeps it open');
+  await page.click('dialog [data-close]');
+  await sleep(200);
+  ok(!(await page.isVisible('dialog[open]')), 'phone: Done closes the sheet');
+  ok(errors.length === 0, 'phone: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -373,6 +403,7 @@ async function adminPlans(browser, url) {
     await planNudge(browser, url);
     await weekRollover(browser, url);
     await adminPlans(browser, url);
+    await phoneLayout(browser, url);
   } finally {
     await browser.close();
     server.close();

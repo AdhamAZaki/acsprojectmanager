@@ -462,3 +462,74 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .name-tag.me { border-color: #CB2150; background: #FCEEF2; }
 .name-tag.helping { background: transparent; border-style: dashed; font-weight: 500; }
 @media print { .name-tag { border: 1px solid #ccc; background: none; } }
+
+/* ---------- Phone layout (under 720px): calmer, more organized. Desktop is not affected. ---------- */
+.wk-tabs { display: none; }
+@media (max-width: 719px) {
+  main { padding: 8px 12px calc(var(--safe-b) + 28px); }
+  .card { padding: 12px; margin-bottom: 10px; border-radius: 14px; }
+
+  /* Meeting buttons on one line that scrolls sideways */
+  .actions-row { flex-wrap: nowrap; overflow-x: auto; gap: 6px; margin: 0 -12px 10px; padding: 0 12px; scrollbar-width: none; }
+  .actions-row button { min-height: 36px; padding: 6px 12px; font-size: 14px; flex: none; }
+
+  /* Add box: one line until tapped */
+  .addbar { padding: 8px; gap: 6px; }
+  .addbar:not(.expanded) .addbar-row { display: none; }
+  .addbar input[name=title] { min-height: 44px; }
+
+  /* Summary: one compact line */
+  .mtg-sum { flex-wrap: nowrap; overflow-x: auto; gap: 6px; margin: 0 -12px 10px; padding: 0 12px; scrollbar-width: none; }
+  .mtg-sum span { flex: none; padding: 4px 10px; font-size: 13px; }
+
+  /* Blocked / No update: fold to one line */
+  .foldable > .card-title { cursor: pointer; margin-bottom: 8px; }
+  .foldable > .card-title::after { content: "▾"; margin-left: auto; color: var(--muted); transition: transform .15s; }
+  .foldable.shut > .card-title { margin-bottom: 0; }
+  .foldable.shut > .card-title::after { transform: rotate(-90deg); }
+  .foldable.shut > :not(.card-title) { display: none !important; }
+
+  /* View switch: compact pills that scroll; fold buttons small */
+  .board-tools { flex-direction: column; align-items: stretch; gap: 2px; margin: 2px 0 8px; }
+  .board-tools .board-seg { flex: none; width: 100%; overflow-x: auto; scrollbar-width: none; padding: 3px; }
+  .board-seg button { flex: 1 0 auto; min-height: 34px; padding: 4px 8px; font-size: 13.5px; }
+  .wk2 { overflow-y: hidden; transition: height .2s; }
+  .fold-all { justify-content: flex-end; gap: 2px; }
+  .fold-all .text-btn { min-height: 30px; font-size: 13px; padding: 0 6px; }
+
+  /* Project cards */
+  .board-title { font-size: 16px; gap: 4px 6px; }
+  .board-title .badge, .board-title .pstatus { font-size: 11.5px; }
+  .board-actions .small-btn { min-height: 34px; padding: 4px 10px; font-size: 13.5px; }
+  .name-tags { gap: 4px; margin: 8px 0 0; }
+  .name-tag { font-size: 12.5px; padding: 2px 8px 2px 2px; gap: 4px; }
+  .name-tag .avatar.xs { width: 20px; height: 20px; min-width: 20px; font-size: 9px; }
+
+  /* Two weeks: tabs to jump, full-width columns, less nesting */
+  .wk-tabs { display: flex; gap: 6px; margin: 10px 0 0; }
+  .wk-tabs button { flex: 1; min-height: 32px; padding: 4px 8px; font-size: 13px; font-weight: 700; border-radius: 999px;
+    background: var(--surface-2); border: 1px solid var(--border); color: var(--muted); }
+  .wk-tabs button.on { background: var(--brand-soft); border-color: transparent; color: var(--brand-2); }
+  .wk2 { grid-auto-columns: 100%; gap: 12px; margin: 6px 0 0; padding: 0; align-items: start; }
+  .wk-col { border: 0; padding: 0; background: none; }
+  .wk-col.next { background: none; border: 0; }
+  .wk-col h4 { display: none; }
+  .wk-col .mtg-person, .mtg-person { background: none; border-radius: 0; padding: 8px 0 2px; margin-top: 0; border-top: 1px solid var(--border); }
+  .wk-col .mtg-person:first-of-type { border-top: 0; }
+  .mtg-person > strong { font-size: 13.5px; color: var(--muted); font-weight: 700; }
+  .mtg-person > strong .avatar.sm { width: 22px; height: 22px; font-size: 9.5px; }
+  .wk-col .t { border-top: 0; margin: 0; }
+
+  /* Task rows: lighter */
+  .t-row { gap: 10px; padding: 7px 0; }
+  .t-check { width: 26px; height: 26px; min-height: 26px; }
+  .t-title { font-size: 15px; font-weight: 600; }
+  .t-meta { font-size: 12px; gap: 4px; }
+
+  /* Task sheet (bottom sheet) */
+  dialog[data-mode="task"] { top: auto; bottom: 0; height: auto; max-height: 88vh; border-radius: 18px 18px 0 0; }
+  dialog[data-mode="task"] .sheet { height: auto; max-height: 88vh; }
+  .task-sheet .t { border-top: 0; }
+  .task-sheet .t-title { font-size: 17px; }
+  .task-sheet .t-open { padding-left: 0; }
+}

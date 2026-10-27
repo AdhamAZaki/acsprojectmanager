@@ -65,10 +65,11 @@ function demo() {
 
   await signIn(page, url, 'adham');
   await page.click('[data-board="mine"]');
-  await page.click('[data-toggle] >> text=Build the filter overview');
   await page.screenshot({ path: path.join(OUT, '2-board.png'), fullPage: true });
-
   await page.click('[data-toggle] >> text=Build the filter overview');
+  await page.waitForSelector('dialog[data-mode="task"][open]');
+  await page.screenshot({ path: path.join(OUT, '2b-task-sheet.png') });
+  await page.click('dialog [data-close]');
   await page.click('[data-board="people"]');
   await page.waitForSelector('.person-project');
   await page.screenshot({ path: path.join(OUT, '3-by-person.png'), fullPage: true });
