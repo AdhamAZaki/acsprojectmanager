@@ -46,6 +46,19 @@ async function mainFlow(browser, url) {
   await page.fill('#addForm input[name=title]', '');
   await sleep(300);
 
+  // ---- The title of a task can be changed ----
+  await page.click('[data-toggle] >> text=Test the duty and standby pump logic');
+  await page.fill('[data-title]', 'Test the duty / standby pump logic on site');
+  await page.press('[data-title]', 'Enter');
+  await sleep(600);
+  ok((await task('Test the duty / standby pump logic on site')) !== undefined, 'a task’s title can be edited after it was created');
+  await page.fill('[data-title]', '   ');
+  await page.press('[data-title]', 'Enter');
+  await sleep(600);
+  ok((await task('Test the duty / standby pump logic on site')) !== undefined && await page.inputValue('[data-title]') === 'Test the duty / standby pump logic on site', 'an empty title is not saved');
+  await page.click('[data-toggle] >> text=Test the duty / standby pump logic on site');
+  await sleep(200);
+
   // ---- A teammate's change is not overwritten ----
   await page.evaluate(t => {
     const d = window.__db.get(); const k = d.tasks.find(x => x.title === t);
@@ -386,9 +399,13 @@ async function phoneLayout(browser, url) {
   await page.press('dialog [data-newsub]', 'Enter');
   await sleep(400);
   ok(await page.isVisible('dialog >> text=Check the cabinet heaters') && await page.isVisible('dialog[data-mode="task"][open]'), 'phone: editing in the sheet saves and keeps it open');
+  const sheetId = await page.getAttribute('dialog [data-title]', 'data-title');
+  await page.fill('dialog [data-title]', 'Renamed from the phone sheet');
   await page.click('dialog [data-close]');
-  await sleep(200);
+  await sleep(600);
   ok(!(await page.isVisible('dialog[open]')), 'phone: Done closes the sheet');
+  ok((await page.evaluate(i => window.__db.get().tasks.find(t => t.id === i).title, sheetId)) === 'Renamed from the phone sheet' &&
+    await page.isVisible('#view >> text=Renamed from the phone sheet'), 'phone: a title edited in the sheet is saved and shown on the board');
   ok(errors.length === 0, 'phone: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
   await ctx.close();
 }

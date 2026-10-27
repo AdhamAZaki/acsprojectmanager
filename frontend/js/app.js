@@ -201,6 +201,7 @@
         </div>
         ${open ? `
         <div class="t-open">
+          <label class="title-edit"><span class="muted small">Task</span><textarea rows="2" data-title="${t.id}" maxlength="300" aria-label="Task title">${esc(t.title)}</textarea></label>
           <div class="subs">
             ${t.subtasks.map((s, i) => `<label class="sub"><input type="checkbox" data-sub="${t.id}:${i}"${s.done ? ' checked' : ''}><span class="${s.done ? 'done' : ''}">${esc(s.t)}</span><button type="button" data-subdel="${t.id}:${i}" aria-label="Remove sub-task">×</button></label>`).join('')}
             <div class="inline"><input placeholder="Add a sub-task" data-newsub="${t.id}" data-keep="sub-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addsub="${t.id}">Add</button></div>
@@ -309,6 +310,26 @@
       const t = findTask(b.dataset.block);
       updateTask(t, { status: isBlocked(t) ? 'To Do' : 'Blocked' });
       const n = $(`[data-blocknote="${t.id}"]`); if (n) n.focus();
+    });
+    // The title saves like the note below: shortly after typing stops, and when leaving the box.
+    // An empty title is not saved (the old one comes back when you leave the box).
+    $$('[data-title]', root).forEach(i => {
+      const id = i.dataset.title;
+      i._saved = i.value.trim();
+      const save = final => {
+        clearTimeout(i._t);
+        const v = i.value.replace(/\s+/g, ' ').trim();
+        if (!v) { if (final) { const t = findTask(id); i.value = t ? t.title : i._saved; } return; }
+        if (v === i._saved) return;
+        i._saved = v;
+        const t = findTask(id); if (t) t.title = v;
+        S.lastWrite = Date.now();
+        Api.patchTask(id, () => ({ title: v })).then(() => { if (final) softRender(); }, e => toast(e.message, true));
+      };
+      i.oninput = () => { clearTimeout(i._t); i._t = setTimeout(() => save(false), 700); };
+      i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); i.blur(); } };
+      i.onchange = () => save(true);
+      i.onblur = () => save(true);
     });
     // The note saves what is in the box (not a copy in memory), shortly after typing stops
     // and again when leaving the box, so a refresh arriving mid-typing can't lose it.
