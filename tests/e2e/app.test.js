@@ -157,7 +157,8 @@ async function memberView(browser, url) {
   ok(!(await page.isVisible('nav >> text=Manage')), 'members don’t see the Manage tab');
   await page.goto(url + '#/projects');
   await page.click('[data-join="PRJ-0001"]');
-  await page.waitForSelector('[data-project="PRJ-0001"]');
+  await page.waitForSelector('[data-join="PRJ-0001"]', { state: 'detached' });
+  await page.waitForSelector('[data-board="mine"].on');
   ok(true, 'a member can join a project in one tap');
   ok((await page.$$eval('[data-board]', bs => bs.map(b => b.className))).join() === 'on,', 'after joining, the board shows My projects');
   await page.click('[data-board="all"]');
