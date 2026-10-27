@@ -640,7 +640,9 @@
     const mineIds = myProjectIds();
     const mineHas = r => r && r.people.some(pp => pp.id === me().id);
     let list;
-    if (!live) list = rows.map(r => ({ r: r, p: (r.id && project(r.id).id) ? project(r.id) : { id: r.id || r.name, name: r.name, type: r.type, status: r.status } }));
+    // Saved minutes: find each project again by id, or by name for minutes saved before ids were kept.
+    const savedProject = r => S.data.projects.find(x => x.id === r.id) || S.data.projects.find(x => x.name === r.name);
+    if (!live) list = rows.map(r => ({ r: r, p: savedProject(r) || { id: r.id || r.name, name: r.name, type: r.type, status: r.status } }));
     else {
       const shown = p => mode === 'me' ? mineHas(byId[p.id]) : mode === 'mine' ? mineIds.indexOf(p.id) !== -1 : (CLOSED.indexOf(p.status) === -1 || byId[p.id]);
       list = S.data.projects.filter(shown).sort((a, b) =>

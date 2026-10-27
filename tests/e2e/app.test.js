@@ -123,6 +123,14 @@ async function mainFlow(browser, url) {
   ok(await page.isVisible(`.mtg-person >> text=${T2}`) && !(await page.isVisible('text=RENAMED after the meeting')), 'saved minutes don’t change when a task changes');
   ok(!(await page.isVisible('[data-done]')), 'saved minutes are read-only');
   ok(await page.locator('.board-card .name-tag').count() > 0, 'saved minutes still show who is on each project');
+  // Minutes saved by an older version have no project ids: still matched by name
+  await page.evaluate(() => {
+    const d = window.__db.get(); const m = d.meetings[0];
+    m.snapshot.rows.forEach(r => { delete r.id; r.people.forEach(pp => delete pp.id); }); window.__db.save();
+  });
+  await page.reload();
+  await page.waitForSelector('.mtg-note.saved');
+  ok(await page.locator('.board-card .name-tag').count() > 0, 'older saved minutes (no project ids) also show who is on each project');
   await page.click('#mtgEdit');
   ok(await page.isVisible('text=RENAMED after the meeting') && await page.isVisible('[data-done]'), '"Edit" shows the live, editable tasks');
   await page.click('#mtgCancel');
