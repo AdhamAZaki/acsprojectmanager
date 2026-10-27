@@ -6,14 +6,14 @@ Each engineer signs in with a **username and password** and:
 
 - sees every project on one board, **this week and next week side by side** (the weekly meeting), and **joins** projects in one tap
 - adds **tasks** (with sub-tasks) to **any project** for **last, this or next week**; unfinished tasks roll over automatically
-- sees all their own tasks across projects under **My tasks**
+- does everything on **one page**: switch between *My tasks*, *My projects* and *All projects*, tick and edit tasks right on the board
 - marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-The **Projects** tab is the meeting: it builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins can add tasks for anyone in any week and set who is on each project. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
+The board is the meeting: it builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins also get a **By person** view (each employee's tasks, grouped by project), can add tasks for anyone in any week, set who is on each project, and open **Manage** from the ⚙ settings button. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
 
 | My tasks | Project | Meeting |
 |---|---|---|
-| ![My tasks](docs/screenshots/2-my-tasks.png) | ![Project page](docs/screenshots/3-project.png) | ![Meeting](docs/screenshots/4-meeting.png) |
+| ![Weekly board](docs/screenshots/2-board.png) | ![By person](docs/screenshots/3-by-person.png) | ![Wide screen](docs/screenshots/4-board-wide.png) |
 
 *(Screenshots use made-up demo data.)*
 

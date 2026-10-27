@@ -24,7 +24,7 @@ async function mainFlow(browser, url) {
   await page.waitForSelector('#loginError:not([hidden])');
   ok((await page.textContent('#loginError')).includes('Wrong username or password'), 'unknown user gets a clear sign-in error');
   await signIn(page, url, 'adham');
-  ok(await page.isVisible(`text=${T1}`), 'signed in; My tasks shows this week’s tasks');
+  ok(await page.isVisible(`text=${T1}`), 'signed in; the board shows this week’s tasks');
 
   // ---- Add a task ----
   await page.fill('#addForm input[name=title]', 'Panels');
@@ -87,7 +87,7 @@ async function mainFlow(browser, url) {
   k = await task(T1);
   ok(k.status === 'Blocked' && k.block_note === 'Waiting for the client tag list', 'blocked note saved in full despite live refreshes');
   ok(await page.inputValue('[data-blocknote]') === 'Waiting for the client tag list', 'note box keeps what was typed');
-  await page.click('.page-head h2');
+  await page.click('.weekbar-label');
   await sleep(500);
 
   // ---- A failed save is undone on screen ----
@@ -104,7 +104,7 @@ async function mainFlow(browser, url) {
   await page.waitForSelector('.mtg-person');
   const people = await page.$$eval('.mtg-person', els => els.map(e =>
     e.querySelector('strong').textContent.trim().replace(/^[A-Z]{1,2}(?=[A-Z][a-z])/, '') + ' :: ' +
-    Array.from(e.querySelectorAll('li')).map(l => l.textContent.trim()).join(' | ')));
+    Array.from(e.querySelectorAll('li, .t-title')).map(l => l.textContent.trim()).join(' | ')));
   ok(people.some(p => p.startsWith('Mona PLC') && p.includes(T2)), 'meeting: task created by Adham but assigned to Mona shows under Mona');
   ok(!people.some(p => p.startsWith('Adham Admin') && p.includes(T2)), 'meeting: ...and not under Adham');
   ok(people.some(p => p.startsWith('Omar Dev') && p.includes(T1)), 'meeting: a shared task shows under each assigned person');
@@ -121,9 +121,11 @@ async function mainFlow(browser, url) {
   await page.evaluate(() => window.__db.emit('tasks'));
   await sleep(800);
   ok(await page.isVisible(`.mtg-person >> text=${T2}`) && !(await page.isVisible('text=RENAMED after the meeting')), 'saved minutes don’t change when a task changes');
-  await page.click('#mtgLive');
-  ok(await page.isVisible('text=RENAMED after the meeting'), '"Show live tasks" shows the change');
-  await page.click('#mtgSaved');
+  ok(!(await page.isVisible('[data-done]')), 'saved minutes are read-only');
+  await page.click('#mtgEdit');
+  ok(await page.isVisible('text=RENAMED after the meeting') && await page.isVisible('[data-done]'), '"Edit" shows the live, editable tasks');
+  await page.click('#mtgCancel');
+  ok(await page.isVisible('.mtg-note.saved'), '"Cancel edit" goes back to the saved minutes');
   await page.click('[data-mw="-1"]');
   await page.waitForSelector('.mtg-note.warn, .empty');
   ok(await page.isVisible('.mtg-note.warn'), 'an unsaved past week warns it is rebuilt from today’s tasks');
@@ -154,13 +156,15 @@ async function memberView(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
   await signIn(page, url, 'omar');
-  ok(!(await page.isVisible('nav >> text=Manage')), 'members don’t see the Manage tab');
+  ok(!(await page.isVisible('#settingsBtn')), 'members don’t see the settings (Manage) button');
+  ok(await page.locator('nav').count() === 0, 'one page: no tabs');
   await page.goto(url + '#/projects');
   await page.click('[data-join="PRJ-0001"]');
   await page.waitForSelector('[data-join="PRJ-0001"]', { state: 'detached' });
   await page.waitForSelector('[data-board="mine"].on');
   ok(true, 'a member can join a project in one tap');
-  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.className))).join() === 'on,', 'after joining, the board shows My projects');
+  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.dataset.board + '=' + b.className))).join() === 'me=,mine=on,all=', 'after joining, the board shows My projects (members get no By person view)');
+  ok(/Team:.*Adham Admin.*Omar Dev/.test(await page.textContent('.board-card .team-line')), 'project cards list the team by full name');
   await page.click('[data-board="all"]');
   ok(await page.locator('.board-card').count() >= 1, 'All projects lists every open project');
   // Omar adds a task to his project from the board, in last week (forgot to log it)
@@ -228,11 +232,10 @@ async function planNudge(browser, url) {
   await signIn(page, url, 'adham');
   ok(await page.isVisible('#planNudge'), 'Thursday with nothing planned for next week: nudge shown');
   await page.click('#planNext');
-  ok((await page.getAttribute('[data-which="next"]', 'class')).includes('on'), 'the nudge opens Next week');
+  ok(/next week/.test(await page.$eval('#addForm select[name=week]', s => s.options[s.selectedIndex].textContent)), 'the nudge sets the add box to next week');
   await page.fill('#addForm input[name=title]', 'Prepare the site acceptance test documents');
   await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('text=Prepare the site acceptance test documents');
-  await page.click('[data-which="this"]');
+  await page.waitForSelector('.wk-col.next >> text=Prepare the site acceptance test documents');
   ok(!(await page.isVisible('#planNudge')), 'nudge gone once something is planned');
   await ctx.close();
 
@@ -244,7 +247,7 @@ async function planNudge(browser, url) {
   await p2.click('#planLater');
   ok(!(await p2.isVisible('#planNudge')), '"Later" hides it');
   await p2.reload();
-  await p2.waitForSelector('.week-seg');
+  await p2.waitForSelector('.board-seg');
   ok(!(await p2.isVisible('#planNudge')), '...and it stays hidden for that week');
   await c2.close();
 
@@ -261,12 +264,13 @@ async function weekRollover(browser, url) {
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-11-01T23:58:00') });   // Sunday night, week 44
   await signIn(page, url, 'adham');
-  const before = await page.textContent('.week-seg');
+  const before = await page.textContent('.weekbar-label');
   await page.clock.runFor(5 * 60 * 1000);                                // Monday, week 45
   await page.waitForTimeout(500);
-  const after = await page.textContent('.week-seg');
-  ok(/· 44 ·/.test(before) && /This week\s*· 45/.test(after) && /Next week\s*· 46/.test(after), 'the week moves on by itself while the app stays open');
-  ok(/This week\s*· 45\s*· 2/.test(after), 'unfinished tasks roll over into the new week');
+  const after = await page.textContent('.weekbar-label');
+  ok(/Week 44 · this week/.test(before) && /Week 45 · this week/.test(after) && /next to week 46/.test(after), 'the week moves on by itself while the app stays open');
+  const carried = await page.$$eval('.wk-col:not(.next) .tag-carry', els => els.length);
+  ok(carried >= 2, 'unfinished tasks roll over into the new week (' + carried + ' carried)');
   await ctx.close();
 }
 
@@ -301,6 +305,33 @@ async function adminPlans(browser, url) {
   ok(scrolls, 'meeting: on a phone the two weeks scroll sideways');
   await page.setViewportSize({ width: 1000, height: 900 });
   ok(await page.$eval('.wk2', el => el.scrollWidth <= el.clientWidth + 1), 'meeting: on a wide screen both weeks fit');
+  // By person: each employee, their tasks grouped by project
+  await page.click('[data-board="people"]');
+  await page.waitForSelector('.person-project');
+  const monaCard = await page.locator('.board-card', { hasText: 'Mona PLC' }).first().textContent();
+  ok(/Alpha Plant/.test(monaCard) && /Download the PLC program/.test(monaCard) && /Prepare the FAT/.test(monaCard) === false, 'admin By person: Mona’s tasks under their project (this and next week)');
+  // Collapse all / expand all, and one card on its own
+  await page.click('#foldAll');
+  ok(await page.locator('.board-card.folded').count() === await page.locator('.board-card').count(), 'Collapse all folds every card');
+  await page.locator('[data-fold]').first().click();
+  ok(await page.locator('.board-card.folded').count() === await page.locator('.board-card').count() - 1, 'one card can be opened on its own');
+  await page.click('#unfoldAll');
+  ok(await page.locator('.board-card.folded').count() === 0, 'Expand all opens every card');
+  // Tick a task straight on the board
+  await page.click('[data-board="all"]');
+  const first = page.locator('.board-card [data-done]').first();
+  const id = await first.getAttribute('data-done');
+  await first.click();
+  await sleep(400);
+  ok((await page.evaluate(i => window.__db.get().tasks.find(t => t.id === i).status, id)) === 'Done', 'a task can be ticked done right on the board');
+  // Settings button opens Manage and leads back
+  await page.click('#settingsBtn');
+  await page.waitForSelector('.back');
+  ok(/#\/manage$/.test(page.url()), 'admin settings button opens Manage');
+  await page.click('.back');
+  await page.waitForSelector('.board-seg');
+  ok(true, 'Manage leads back to the board');
+
   // Admin puts Omar on the project from the project page, then takes him off again
   await page.click('[data-project="PRJ-0001"]');
   await page.waitForSelector('#assignSel');

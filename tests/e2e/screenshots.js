@@ -64,17 +64,18 @@ function demo() {
   await page.screenshot({ path: path.join(OUT, '1-login.png') });
 
   await signIn(page, url, 'adham');
+  await page.click('[data-board="mine"]');
   await page.click('[data-toggle] >> text=Build the filter overview');
-  await page.screenshot({ path: path.join(OUT, '2-my-tasks.png') });
+  await page.screenshot({ path: path.join(OUT, '2-board.png'), fullPage: true });
 
-  await page.goto(url + '#/projects');
-  await page.click('[data-project="PRJ-0001"]');
-  await page.waitForSelector('#backBtn');
-  await page.screenshot({ path: path.join(OUT, '3-project.png') });
+  await page.click('[data-toggle] >> text=Build the filter overview');
+  await page.click('[data-board="people"]');
+  await page.waitForSelector('.person-project');
+  await page.screenshot({ path: path.join(OUT, '3-by-person.png'), fullPage: true });
 
-  await page.goto(url + '#/meeting');
-  await page.waitForSelector('.mtg-person');
-  await page.screenshot({ path: path.join(OUT, '4-meeting.png') });
+  await page.setViewportSize({ width: 1100, height: 900 });
+  await page.click('[data-board="all"]');
+  await page.screenshot({ path: path.join(OUT, '4-board-wide.png'), fullPage: true });
 
   await browser.close();
   server.close();
