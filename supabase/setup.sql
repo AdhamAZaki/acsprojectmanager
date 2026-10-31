@@ -89,7 +89,10 @@ update public.projects set status = case status
   when 'Completed' then 'Done' when 'Closed' then 'Canceled' else status end
 where status in ('Active', 'On Hold', 'Completed', 'Closed');
 alter table public.projects alter column status set default 'In Progress';
-alter table public.projects add constraint projects_type_check check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'Other'));
+-- Widened in place (Oct 2026) for the BMS department's service lines (GRMS, CRS, Service): this line runs on
+-- every deploy before later migrations, so a narrower list here would reject those projects. Only ever widen it.
+alter table public.projects add constraint projects_type_check
+  check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'GRMS', 'CRS', 'Service', 'Other'));
 alter table public.projects add constraint projects_status_check
   check (status in ('Backlog', 'Planning', 'In Progress', 'Paused', 'Done', 'Canceled'));
 alter table public.projects add constraint projects_priority_check check (priority in ('Low', 'Medium', 'High'));
@@ -610,7 +613,7 @@ create table if not exists public.departments (
 );
 insert into public.departments (id, name, teams, project_types, sort) values
   ('AUTO', 'Automation', array['PLC', 'Dev'], array['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'], 1),
-  ('BMS', 'BMS', array['BMS'], array['BMS', 'Other'], 2)
+  ('BMS', 'BMS', array['BMS'], array['BMS', 'GRMS', 'CRS', 'Service', 'Other'], 2)
 on conflict (id) do nothing;
 
 -- ---------- Department of people, projects and saved minutes ----------
@@ -637,7 +640,8 @@ drop index if exists public.meetings_week_minutes_key;
 create unique index if not exists meetings_dept_week_minutes_key on public.meetings (department_id, week) where snapshot is not null;
 
 -- Note: profiles.team / tasks.team stay limited to PLC / Dev, and projects.type to the
--- baseline list (the baseline re-adds those checks on every deploy). A department with
+-- baseline list (the baseline re-adds those checks on every deploy; BMS service lines
+-- GRMS, CRS and Service were added there). A department with
 -- one column (like BMS) needs no team: its people keep team empty. Giving a department
 -- new sub-teams or project types needs a migration that widens those checks.
 

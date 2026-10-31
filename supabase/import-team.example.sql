@@ -34,7 +34,7 @@ declare
   ];
 
   -- project name, type, status, team (comma-separated full names), department
-  --   type: PLC, AVEVA, AVEVA + PLC or Other for Automation; BMS or Other for BMS
+  --   type: PLC, AVEVA, AVEVA + PLC or Other for Automation; BMS, GRMS, CRS, Service or Other for BMS
   v_projects text[][] := array[
     ['Example Plant SCADA',   'AVEVA + PLC', 'In Progress', 'Sara Ali,Omar Hassan', 'AUTO'],
     ['Example Pump Station',  'PLC',         'Planning',    'Omar Hassan',          'AUTO'],

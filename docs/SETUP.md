@@ -53,7 +53,7 @@ The database has two departments: **Automation** (PLC / AVEVA, everything that e
 3. Make the BMS team lead a **Dept admin**: they can then manage BMS projects, people, tasks and minutes, but nothing in Automation. **Admins** still manage everything.
 4. **Manage** → **BMS** → **Projects** → **+ Project** for each BMS project.
 
-Departments are rows in the `departments` table (Supabase Table Editor). Another team can be added there later; giving a department its own PLC/Dev-style sub-teams or new project types needs a small migration, because those values are checked by the database.
+Departments are rows in the `departments` table (Supabase Table Editor). Another team can be added there later; BMS projects can be typed BMS, GRMS, CRS or Service (its service lines). Giving a department its own PLC/Dev-style sub-teams or new project types needs a small migration, because those values are checked by the database.
 
 ## 5. Connect the website
 

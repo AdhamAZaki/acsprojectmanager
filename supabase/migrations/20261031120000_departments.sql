@@ -24,7 +24,7 @@ create table if not exists public.departments (
 );
 insert into public.departments (id, name, teams, project_types, sort) values
   ('AUTO', 'Automation', array['PLC', 'Dev'], array['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'], 1),
-  ('BMS', 'BMS', array['BMS'], array['BMS', 'Other'], 2)
+  ('BMS', 'BMS', array['BMS'], array['BMS', 'GRMS', 'CRS', 'Service', 'Other'], 2)
 on conflict (id) do nothing;
 
 -- ---------- Department of people, projects and saved minutes ----------
@@ -51,7 +51,8 @@ drop index if exists public.meetings_week_minutes_key;
 create unique index if not exists meetings_dept_week_minutes_key on public.meetings (department_id, week) where snapshot is not null;
 
 -- Note: profiles.team / tasks.team stay limited to PLC / Dev, and projects.type to the
--- baseline list (the baseline re-adds those checks on every deploy). A department with
+-- baseline list (the baseline re-adds those checks on every deploy; BMS service lines
+-- GRMS, CRS and Service were added there). A department with
 -- one column (like BMS) needs no team: its people keep team empty. Giving a department
 -- new sub-teams or project types needs a migration that widens those checks.
 

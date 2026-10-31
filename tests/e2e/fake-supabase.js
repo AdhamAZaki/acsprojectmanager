@@ -26,7 +26,7 @@
       profiles: Object.values(users),
       departments: [
         { id: 'AUTO', name: 'Automation', teams: ['PLC', 'Dev'], project_types: ['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'], sort: 1 },
-        { id: 'BMS', name: 'BMS', teams: ['BMS'], project_types: ['BMS', 'Other'], sort: 2 },
+        { id: 'BMS', name: 'BMS', teams: ['BMS'], project_types: ['BMS', 'GRMS', 'CRS', 'Service', 'Other'], sort: 2 },
       ],
       projects: [
         { id: 'PRJ-0001', name: 'Alpha Plant', type: 'AVEVA + PLC', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'AUTO' },
