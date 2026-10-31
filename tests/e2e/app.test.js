@@ -305,7 +305,7 @@ async function adminPlans(browser, url) {
   const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.value));
   const later = weeks[weeks.length - 1 - 5];   // three weeks ahead
   await page.fill('#addForm input[name=title]', 'Prepare the FAT procedure for the client');
-  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC' });
+  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC — PLC Engineer' });
   await page.selectOption('#addForm select[name=week]', later);
   await page.click('#addForm button[type=submit]');
   await sleep(500);
@@ -316,7 +316,7 @@ async function adminPlans(browser, url) {
   ok(/Added for Mona/.test(await page.textContent('#toast').catch(() => '')), 'admin is told who and which week it was added for');
 
   await page.fill('#addForm input[name=title]', 'Download the PLC program to site');
-  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC' });
+  await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC — PLC Engineer' });
   await page.selectOption('#addForm select[name=week]', weeks[5]);   // next week
   await page.click('#addForm button[type=submit]');
   await sleep(500);
@@ -360,7 +360,7 @@ async function adminPlans(browser, url) {
   // Admin puts Omar on the project from the project page, then takes him off again
   await page.click('[data-project="PRJ-0001"]');
   await page.waitForSelector('#assignSel');
-  await page.selectOption('#assignSel', { label: 'Omar Dev · Dev' });
+  await page.selectOption('#assignSel', { label: 'Omar Dev — Software Engineer' });
   await page.waitForSelector('[data-unassign]:near(:text("Omar"))');
   const omar = await page.evaluate(() => window.__db.get().users.omar.id);
   const onIt = async () => (await page.evaluate(() => window.__db.get().assignments.map(a => a.project_id + ':' + a.user_id))).indexOf('PRJ-0001:' + omar) !== -1;
@@ -459,6 +459,8 @@ async function departments(browser, url) {
   await p2.click('#manageBody >> text=Laila BMS');
   await p2.waitForSelector('dialog[open]');
   const roles = await p2.$$eval('dialog input[name=role]', is => is.map(i => i.value));
+  ok(await p2.inputValue('dialog input[name=title]') === 'BMS Engineer' && await p2.inputValue('dialog input[name=unit]') === 'B.A Execution Team B',
+    'people: the member form shows title and org-chart team');
   ok(roles.join() === 'Member,Dept admin' && await p2.locator('dialog input[name=team]').count() === 0 && await p2.locator('dialog select[name=departmentId]').count() === 0,
     'BMS admin: can make someone a Dept admin (not Admin); BMS needs no PLC/Dev team');
   await c2.close();
@@ -485,6 +487,122 @@ async function departments(browser, url) {
   await c3.close();
 }
 
+async function cardsLayout(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/', 'adham');
+  await page.click('[data-layout="cards"]');
+  await page.click('[data-board="all"]');
+  await page.waitForSelector('.lanes');
+  ok(await page.inputValue('#groupBy') === 'status', 'cards: grouped by status by default');
+  const lane = page.locator('.lane[data-lane="In Progress"]');
+  const card = lane.locator('.pcard', { hasText: 'Alpha Plant' });
+  ok(await card.count() === 1 && /2 in progress/.test(await card.textContent()) && (await card.textContent()).includes('Commission the pump station panels'),
+    'cards: a project card sits in its status column with this week’s numbers and tasks');
+  ok(await page.locator('.lane[data-lane="Paused"]').count() === 1, 'cards: admins see empty status columns to drop into');
+  ok(!(await page.isVisible('.lanes >> text=Tower BMS Retrofit')), 'cards: only the department’s projects');
+  // Group by person: each person's column shows only their tasks on the project
+  await page.selectOption('#groupBy', 'person');
+  await page.waitForSelector('.lanes[data-group="person"]');
+  const monaCard = await page.locator('.lane', { hasText: 'Mona PLC' }).locator('.pcard').first().textContent();
+  ok(monaCard.includes('Wire the remote IO cabinet') && !monaCard.includes('Commission the pump'), 'cards by person: a card shows that person’s tasks');
+  const groups = await page.$$eval('#groupBy option', os => os.map(o => o.value));
+  ok(groups.join() === 'status,person,type,priority,none', 'cards: Client / Project manager are only offered when projects have them');
+  // Filter
+  await page.fill('#cardFilter', 'zzz');
+  await page.waitForSelector('text=No projects match');
+  ok(true, 'cards: the filter box narrows the projects');
+  await page.fill('#cardFilter', 'alpha');
+  await page.waitForSelector('.pcard');
+  ok(await page.locator('.pcard').count() >= 1, 'cards: filter by name finds the project');
+  await page.fill('#cardFilter', '');
+  // Drag a card to another status (admins)
+  await page.selectOption('#groupBy', 'status');
+  await page.waitForSelector('.lanes[data-group="status"]');
+  await page.dragAndDrop('.lane[data-lane="In Progress"] .pcard', '.lane[data-lane="Paused"]');
+  await page.waitForSelector('.lane[data-lane="Paused"] .pcard');
+  await sleep(300);
+  ok((await page.evaluate(() => window.__db.get().projects.find(p => p.id === 'PRJ-0001').status)) === 'Paused', 'cards: an admin drags a card to change the project’s status');
+  // Tapping a card opens the project
+  await page.click('.pcard .pc-open');
+  await page.waitForSelector('#backBtn');
+  ok(true, 'cards: tapping a card opens the project page');
+  await page.click('#backBtn');
+  await page.reload();
+  await page.waitForSelector('.lanes');
+  ok(await page.inputValue('#groupBy') === 'status', 'cards: layout and grouping are remembered');
+  await ctx.close();
+
+  // Members can't drag; BMS groups by service
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  p2.on('pageerror', e => errors.push(e.message));
+  await signIn(p2, url + '#/', 'laila');
+  await p2.click('[data-layout="cards"]');
+  await p2.waitForSelector('.lanes');
+  ok(await p2.locator('.pcard[draggable]').count() === 0, 'cards: members can’t drag cards');
+  ok((await p2.$$eval('#groupBy option', os => os.map(o => o.textContent))).includes('Service'), 'cards: BMS groups by service line');
+  await c2.close();
+
+  // Phone: columns scroll sideways, the page itself doesn't
+  const c3 = await newApp(browser, { viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
+  const p3 = await c3.newPage();
+  p3.on('pageerror', e => errors.push(e.message));
+  await signIn(p3, url + '#/', 'adham');
+  await p3.click('[data-layout="cards"]');
+  await p3.waitForSelector('.lanes');
+  ok(await p3.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'cards on a phone: no sideways page scroll');
+  ok(errors.length === 0, 'cards: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await c3.close();
+}
+
+async function peopleDetails(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/', 'hany');
+  // Team page: grouped by org-chart team, with titles
+  await page.goto(url + '#/manage');
+  await page.click('[data-tab="team"]');
+  await page.waitForSelector('.team-group');
+  const groups = await page.$$eval('.team-group', hs => hs.map(h => h.firstChild.textContent.trim()));
+  ok(groups.join() === 'B.A Execution Team B,Building Technical Staff', 'people: Team page lists people by org-chart team');
+  ok(await page.isVisible('.member >> text=BMS Team Leader Engineer'), 'people: Team page shows each person’s job title');
+  await page.fill('#teamSearch', 'technician');
+  await page.waitForTimeout(100);
+  ok(await page.locator('.member').count() === 1 && await page.isVisible('.member >> text=Tamer Tech'), 'people: search people by title');
+  // Assigning: pickers grouped by org-chart team
+  await page.goto(url + '#/');
+  await page.waitForSelector('.board-seg');
+  await page.click('[data-project="PRJ-0002"]');
+  await page.waitForSelector('#assignSel');
+  const optgroups = await page.$$eval('#assignSel optgroup', gs => gs.map(g => g.label));
+  ok(optgroups[0] === 'Building Technical Staff' && optgroups.some(g => /· Automation$/.test(g)),
+    'people: “Add a person” is grouped by org-chart team, own department first');
+  await page.goto(url + '#/manage');
+  await page.click('[data-tab="projects"]');
+  await page.click('[data-edit="PRJ-0002"]');
+  await page.waitForSelector('dialog[open]');
+  const heads = await page.$$eval('dialog .check-group', hs => hs.map(h => h.textContent));
+  ok(heads[0] === 'B.A Execution Team B' && heads.includes('Building Technical Staff') && await page.isVisible('dialog .check-label >> text=Technician'),
+    'people: the project team checklist is grouped, with titles');
+  await page.click('dialog [data-cancel]');
+  // By person: only people on a project
+  await page.goto(url + '#/');
+  await page.waitForSelector('.board-seg');
+  await page.click('[data-board="people"]');
+  await page.waitForSelector('.board-card');
+  const names = await page.$$eval('.board-card .board-title strong', ss => ss.map(s => s.textContent));
+  ok(names.includes('Hany BMS Lead') && names.includes('Laila BMS') && !names.includes('Tamer Tech'),
+    'By person: only people assigned to a project (the technician with no project is not listed)');
+  ok(await page.isVisible('.board-card .person-info >> text=BMS Team Leader Engineer · B.A Execution Team B'), 'By person: shows title and org-chart team');
+  ok(errors.length === 0, 'people: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -497,6 +615,8 @@ async function departments(browser, url) {
     await adminPlans(browser, url);
     await phoneLayout(browser, url);
     await departments(browser, url);
+    await cardsLayout(browser, url);
+    await peopleDetails(browser, url);
   } finally {
     await browser.close();
     server.close();
