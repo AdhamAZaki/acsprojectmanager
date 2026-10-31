@@ -67,6 +67,7 @@
   const mapMember = r => ({
     id: r.id, username: toUsername(r.email), email: r.email, name: r.name || toUsername(r.email),
     role: ROLE_NAMES[r.role] || 'Member', active: r.active, team: r.team || '', departmentId: r.department_id || 'AUTO',
+    title: r.title || '', unit: r.unit || '',   // job title and org-chart team
   });
   const mapProject = r => ({
     id: r.id, name: r.name, type: r.type, status: r.status, priority: r.priority || 'Medium',
@@ -380,14 +381,14 @@
         const id = check(await sb.rpc('admin_create_user', {
           p_email: toEmail(p.username), p_password: password, p_name: p.name || '', p_role: role, p_department: dept,
         }));
-        check(await sb.from('profiles').update({ active: p.active !== false, team: p.team || null }).eq('id', id));
+        check(await sb.from('profiles').update({ active: p.active !== false, team: p.team || null, title: p.title || '', unit: p.unit || '' }).eq('id', id));
       } else {
-        const rows = check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false, team: p.team || null, department_id: dept })
+        const rows = check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false, team: p.team || null, department_id: dept, title: p.title || '', unit: p.unit || '' })
           .eq('id', p.id).select('id'));
         if (!rows.length) throw new ApiError('You are not allowed to change this person.', 403);
         if (password) check(await sb.rpc('admin_set_password', { p_user_id: p.id, p_password: password }));
       }
-      data.team = check(await sb.from('profiles').select('id,email,name,role,active,team,department_id').order('name')).map(mapMember);
+      data.team = check(await sb.from('profiles').select('id,email,name,role,active,team,department_id,title,unit').order('name')).map(mapMember);
       writeCache();
     },
 

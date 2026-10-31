@@ -275,4 +275,17 @@ select public.admin_create_user('bms.lead2@advcontrolsys.com', 'Password1', 'BMS
 select test.ok((select role = 'lead' and department_id = 'BMS' from public.profiles where id = :'lead2'), 'admin can create a department admin');
 reset role;
 
+-- ---------- People details (title, org-chart team) ----------
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+update public.profiles set title = 'BMS Engineer', unit = 'B.A Execution Team B' where email = 'laila.test@advcontrolsys.com';
+select test.ok((select count(*) from json_array_elements(public.app_bootstrap() -> 'team') t
+  where t ->> 'title' = 'BMS Engineer' and t ->> 'unit' = 'B.A Execution Team B') = 1, 'admins set a title and org-chart team; startup data includes them');
+reset role;
+select test.login('laila.test@advcontrolsys.com');
+set role authenticated;
+update public.profiles set title = 'CEO' where id = auth.uid();
+reset role;
+select test.ok((select title from public.profiles where email = 'laila.test@advcontrolsys.com') = 'BMS Engineer', 'members cannot change their own title');
+
 select 'All database checks passed' as result;

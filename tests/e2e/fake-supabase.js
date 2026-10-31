@@ -14,11 +14,12 @@
   function seed() {
     const W = isoWeek(new Date());
     const users = {
-      adm: { id: uid(), email: 'adham@advcontrolsys.com', name: 'Adham Admin', role: 'admin', active: true, team: 'Dev', department_id: 'AUTO' },
-      mona: { id: uid(), email: 'mona@advcontrolsys.com', name: 'Mona PLC', role: 'member', active: true, team: 'PLC', department_id: 'AUTO' },
-      omar: { id: uid(), email: 'omar@advcontrolsys.com', name: 'Omar Dev', role: 'member', active: true, team: 'Dev', department_id: 'AUTO' },
-      hany: { id: uid(), email: 'hany@advcontrolsys.com', name: 'Hany BMS Lead', role: 'lead', active: true, team: null, department_id: 'BMS' },
-      laila: { id: uid(), email: 'laila@advcontrolsys.com', name: 'Laila BMS', role: 'member', active: true, team: null, department_id: 'BMS' },
+      adm: { id: uid(), email: 'adham@advcontrolsys.com', name: 'Adham Admin', role: 'admin', active: true, team: 'Dev', department_id: 'AUTO', title: 'Engineering Manager', unit: 'Management' },
+      mona: { id: uid(), email: 'mona@advcontrolsys.com', name: 'Mona PLC', role: 'member', active: true, team: 'PLC', department_id: 'AUTO', title: 'PLC Engineer', unit: 'PLC' },
+      omar: { id: uid(), email: 'omar@advcontrolsys.com', name: 'Omar Dev', role: 'member', active: true, team: 'Dev', department_id: 'AUTO', title: 'Software Engineer', unit: 'Development' },
+      hany: { id: uid(), email: 'hany@advcontrolsys.com', name: 'Hany BMS Lead', role: 'lead', active: true, team: null, department_id: 'BMS', title: 'BMS Team Leader Engineer', unit: 'B.A Execution Team B' },
+      laila: { id: uid(), email: 'laila@advcontrolsys.com', name: 'Laila BMS', role: 'member', active: true, team: null, department_id: 'BMS', title: 'BMS Engineer', unit: 'B.A Execution Team B' },
+      tamer: { id: uid(), email: 'tamer@advcontrolsys.com', name: 'Tamer Tech', role: 'member', active: true, team: null, department_id: 'BMS', title: 'Technician', unit: 'Building Technical Staff' },
     };
     const t0 = ts();
     return {

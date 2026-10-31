@@ -27,6 +27,9 @@ async function newApp(browser, opts) {
   const ctx = await browser.newContext(Object.assign({ serviceWorkers: 'block', viewport: { width: 1100, height: 900 } }, opts || {}));
   await ctx.route(/cdn\.jsdelivr\.net/, r => r.fulfill({ contentType: 'application/javascript', body: FAKE }));
   await ctx.route(/fonts\.(googleapis|gstatic)\.com/, r => r.abort());
+  // The board opens in the Cards layout; most tests check the detailed List layout, so start
+  // there (a test switches to Cards by tapping it, which the app then remembers).
+  await ctx.addInitScript(() => { try { if (!localStorage.getItem('acs-layout')) localStorage.setItem('acs-layout', 'list'); } catch (e) { /* blocked */ } });
   return ctx;
 }
 
