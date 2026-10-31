@@ -543,10 +543,23 @@
 
   // ---------- Projects ----------
 
+  /**
+   * The board, plus the selected project in a side panel (Notion-style side peek): its tasks for
+   * this or next week, its team, and an add box. Full screen on a phone. Esc or × closes it.
+   */
   function viewProjects(root) {
-    if (S.project) return viewProject(root, project(S.project));
-    return viewBoard(root);
+    if (S.project && !S.data.projects.some(x => x.id === S.project)) S.project = null;   // removed meanwhile
+    const old = $('.side-panel .sp-body');
+    const top = old ? old.scrollTop : 0;
+    viewBoard(root);
+    document.body.classList.toggle('panel-open', !!S.project);
+    if (!S.project) return;
+    root.insertAdjacentHTML('beforeend', '<aside class="side-panel" aria-label="Project"><div class="sp-body"></div></aside>');
+    const body = $('.side-panel .sp-body', root);
+    viewProject(body, project(S.project));
+    body.scrollTop = top;
   }
+  function closePanel() { S.project = null; render(); }
 
   function viewProject(root, p) {
     const cur = S.data.tasks.filter(t => t.projectId === p.id && inView(t, S.which));
@@ -555,21 +568,28 @@
     const onIt = myProjectIds().indexOf(p.id) !== -1;
     const order = Object.keys(byPerson).sort((a, b) => (a === me().id ? -1 : b === me().id ? 1 : member(a).name.localeCompare(member(b).name)));
     root.innerHTML = `
-      <button type="button" class="back" id="backBtn">${icon('left')} Projects</button>
-      <div class="page-head"><h2>${esc(p.name)}</h2>${onIt ? '<button type="button" class="ghost small-btn" id="leaveBtn">Leave</button>' : '<button type="button" class="primary small" id="joinBtn">Join</button>'}</div>
-      <p class="muted small" style="margin:-8px 0 12px">${manyDepts() ? esc(dept(p.departmentId).name) + ' · ' : ''}${esc(p.type)} · ${esc(p.status)} · ${projectTeam(p.id).map(m => esc(shortName(m.name))).join(', ') || 'nobody yet'}</p>
+      <div class="sp-head">
+        <div class="sp-tags"><span class="badge ${typeClass(p.type)}">${esc(p.type)}</span><span class="prio prio-${slug(p.priority)}">${esc(p.priority || 'Medium')}</span><span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span></div>
+        <span class="sp-actions">${onIt ? '<button type="button" class="ghost small-btn" id="leaveBtn">Leave</button>' : '<button type="button" class="primary small" id="joinBtn">Join</button>'}
+          <button type="button" class="icon-btn sp-close" id="backBtn" aria-label="Close">×</button></span>
+      </div>
+      <h2 class="sp-title">${esc(p.name)}</h2>
+      <p class="muted small sp-meta">${[manyDepts() ? dept(p.departmentId).name : '', p.id, p.client, p.manager ? 'PM: ' + p.manager : '',
+        p.startDate || p.endDate ? (p.startDate || '…') + ' → ' + (p.endDate || '…') : ''].filter(Boolean).map(esc).join(' · ')}</p>
+      ${canManage(p.departmentId) ? '' : teamTags(p.id, { people: order.map(id => ({ id: id })) })}
+      ${p.notes ? `<p class="sp-notes">${esc(p.notes)}</p>` : ''}
       ${weekSwitch(S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length, S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'next')).length)}
       ${canManage(p.departmentId) ? teamEditor(p) : ''}
       ${CLOSED.indexOf(p.status) === -1 ? addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1))) : ''}
       ${order.map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</h3>
         ${byPerson[id].sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t, true)).join('')}</section>`).join('')
         || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}`;
-    $('#backBtn', root).onclick = () => { S.project = null; render(); };
+    $('#backBtn', root).onclick = closePanel;
     const leave = $('#leaveBtn', root);
     if (leave) leave.onclick = async () => {
       if (!confirm('Leave ' + p.name + '? Your tasks stay on the project.')) return;
       S.lastWrite = Date.now();
-      await guard(() => Api.leaveProject(p.id)); S.project = null; render();
+      await guard(() => Api.leaveProject(p.id)); render();
     };
     const join = $('#joinBtn', root);
     if (join) join.onclick = async () => { S.lastWrite = Date.now(); await guard(() => Api.joinProject(p.id)); render(); };
@@ -822,7 +842,7 @@
     const mark = it => it.kind === 'done' ? '✔' : it.kind === 'next' ? '→' : it.blocked ? '⛔' : '•';
     const team = projectTeam(p.id).filter(m => m.active !== false);
     const stat = (v, cls, label) => v ? `<span class="pc-stat ${cls}" title="${label}">${v} ${label}</span>` : '';
-    return `<article class="pcard${opts.drag ? ' draggable' : ''}" data-pid="${esc(p.id)}"${opts.drag ? ' draggable="true"' : ''}>
+    return `<article class="pcard${opts.drag ? ' draggable' : ''}${S.project === p.id ? ' selected' : ''}" data-pid="${esc(p.id)}"${opts.drag ? ' draggable="true"' : ''}>
       <div class="pc-top"><span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${opts.group !== 'priority' ? `<span class="prio prio-${slug(p.priority)}">${esc(p.priority || 'Medium')}</span>` : ''}${opts.group !== 'status' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}</div>
       <button type="button" class="pc-open" data-project="${esc(p.id)}">${esc(p.name)}</button>
       ${items.length ? `<div class="pc-stats">${stat(blocked, 'bad', 'blocked')}${stat(doing, '', 'in progress')}${stat(done, 'ok', 'done')}${stat(next, 'next', 'next week')}</div>
@@ -920,7 +940,7 @@
       const isReal = live && exists;
       const on = mineIds.indexOf(p.id) !== -1;
       const open = CLOSED.indexOf(p.status) === -1;
-      return `<section class="card board-card${collapsed()[key] ? ' folded' : ''}">
+      return `<section class="card board-card${collapsed()[key] ? ' folded' : ''}${S.project === p.id ? ' selected' : ''}">
         <div class="board-head">
           ${chevron(key, p.name)}
           <div class="board-name">
@@ -968,7 +988,13 @@
     $$('[data-fold]', root).forEach(b => b.onclick = () => { setCollapsed([b.dataset.fold], !collapsed()[b.dataset.fold]); render(); });
     const fold = $('#foldAll', root); if (fold) fold.onclick = () => { setCollapsed(keys, true); render(); };
     const unfold = $('#unfoldAll', root); if (unfold) unfold.onclick = () => { setCollapsed(keys, false); render(); };
-    $$('[data-project]', root).forEach(b => b.onclick = () => { S.project = b.dataset.project; S.which = S.mtgWeek > THIS ? 'next' : 'this'; render(); window.scrollTo(0, 0); });
+    // Opens the project in the side panel; the board stays where it is.
+    $$('[data-project]', root).forEach(b => b.onclick = () => {
+      const same = S.project === b.dataset.project;
+      S.project = same ? null : b.dataset.project; S.addFor = null;
+      if (!same) { S.which = S.mtgWeek > THIS ? 'next' : 'this'; const o = $('.side-panel .sp-body'); if (o) o.scrollTop = 0; }
+      render();
+    });
     $$('[data-addto]', root).forEach(b => b.onclick = () => {
       S.addFor = S.addFor === b.dataset.addto ? null : b.dataset.addto;
       if (S.addFor) setCollapsed(['p:' + S.addFor], false);
@@ -1024,7 +1050,7 @@
       <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${manager && live && week <= THIS ? `<button type="button" class="secondary" id="saveMins">Save minutes</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
       ${note}
       ${live ? planNudge() : ''}
-      ${live && !S.addFor && deptProjects().some(p => CLOSED.indexOf(p.status) === -1) ? addBar(undefined, undefined, week <= THIS ? THIS : week) : ''}
+      ${live && !S.addFor && !S.project && deptProjects().some(p => CLOSED.indexOf(p.status) === -1) ? addBar(undefined, undefined, week <= THIS ? THIS : week) : ''}
       ${quietCard}
       ${rows.length ? `<div class="mtg-sum"><span><b>${summary.moved}</b> ${summary.moved === 1 ? 'project' : 'projects'} with progress</span><span><b>${summary.done}</b> done</span><span class="${summary.blocked ? 'bad' : ''}"><b>${summary.blocked}</b> blocked</span><span class="${summary.delayed ? 'warn' : ''}"><b>${summary.delayed}</b> delayed</span></div>` : ''}
       ${blocked.length ? `<section class="card warn foldable${S.fold.blocked ? ' shut' : ''}"><h3 class="card-title" data-extra="blocked">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
@@ -1570,6 +1596,10 @@
     $('#avatarBtn').addEventListener('click', accountSheet);
     window.addEventListener('session-expired', e => { S.data = null; showLogin(e.detail); });
     window.addEventListener('hashchange', () => { S.project = null; S.minutes = {}; render(); window.scrollTo(0, 0); });
+    // Esc closes the project panel (unless a form or sheet is open over it).
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && S.project && !$('#dialog').open) { e.preventDefault(); closePanel(); }
+    });
     document.addEventListener('focusout', () => setTimeout(() => { if (S.pendingRender && !editing()) { S.pendingRender = false; render(); } }, 300));
     window.addEventListener('focus', () => { if (S.data && Date.now() - (S.data.loadedAt || 0) > 60000) refresh(true); });
     // A new week started while the app was open: move to it and fetch fresh data.

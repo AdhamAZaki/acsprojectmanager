@@ -603,6 +603,38 @@ async function peopleDetails(browser, url) {
   await ctx.close();
 }
 
+async function sidePanel(browser, url) {
+  const ctx = await newApp(browser, { viewport: { width: 1600, height: 900 } });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/', 'mona');
+  await page.click('[data-layout="cards"]');
+  await page.click('.pcard >> text=Alpha Plant');
+  await page.waitForSelector('.side-panel');
+  ok(await page.isVisible('.lanes') && await page.isVisible('.pcard.selected'), 'side panel: the project opens beside the board, its card highlighted');
+  ok(await page.isVisible('.side-panel >> text=Wire the remote IO cabinet') && await page.locator('#addForm').count() === 1,
+    'side panel: shows the project’s tasks and one add box (the board’s add box steps aside)');
+  ok(await page.isVisible('.side-panel .name-tag >> text=Adham Admin'), 'side panel: shows who is on the project');
+  await page.fill('.side-panel #addForm input[name=title]', 'Check the panel wiring diagrams with the client');
+  await page.click('.side-panel #addForm button[type=submit]');
+  await page.waitForSelector('.side-panel >> text=Check the panel wiring diagrams with the client');
+  const t = await page.evaluate(() => window.__db.get().tasks.find(x => x.title === 'Check the panel wiring diagrams with the client'));
+  ok(t && t.project_id === 'PRJ-0001', 'side panel: a task added there is saved to that project');
+  await page.click('.side-panel [data-which="next"]');
+  ok(await page.isVisible('.side-panel >> text=No tasks planned for next week'), 'side panel: switches to next week');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('.side-panel', { state: 'detached' });
+  ok(await page.locator('#addForm').count() === 1, 'side panel: Esc closes it and the board’s add box is back');
+  await page.click('.pcard >> text=Alpha Plant');
+  await page.waitForSelector('.side-panel');
+  await page.click('.pcard >> text=Alpha Plant');
+  await page.waitForSelector('.side-panel', { state: 'detached' });
+  ok(true, 'side panel: tapping the selected card again closes it');
+  ok(errors.length === 0, 'side panel: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -617,6 +649,7 @@ async function peopleDetails(browser, url) {
     await departments(browser, url);
     await cardsLayout(browser, url);
     await peopleDetails(browser, url);
+    await sidePanel(browser, url);
   } finally {
     await browser.close();
     server.close();
