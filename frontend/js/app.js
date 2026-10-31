@@ -1034,7 +1034,7 @@
         ${layout === 'list' ? '<span class="fold-all"><button type="button" class="text-btn" id="unfoldAll">Expand all</button><button type="button" class="text-btn" id="foldAll">Collapse all</button></span>' : ''}
       </div>
       ${cards.tools || ''}
-      ${cards.html}`;
+      ${layout === 'cards' ? cards.html : `<div class="board-grid">${cards.html}</div>`}`;
     $$('[data-dept]', root).forEach(b => b.onclick = () => { S.dept = b.dataset.dept; S.addFor = null; S.addWeek = null; render(); });
     $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); S.addFor = null; S.addWeek = null; render(); });
     // Phone: the Blocked and No-update lists fold to one line (tap the title)

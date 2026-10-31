@@ -129,8 +129,8 @@ body:not(.signed-in) .topbar { display: none; }
   color: var(--brand-2); font-weight: 700; font-size: .85rem; border: 0;
 }
 
-main { max-width: 1100px; margin: 0 auto; padding: 12px 16px calc(var(--safe-b) + 32px); }
-body[data-tab="manage"] main, body[data-tab="report"] main { max-width: 1100px; }
+main { max-width: 1920px; margin: 0 auto;   /* full HD wide */ padding: 12px 16px calc(var(--safe-b) + 32px); }
+@media (min-width: 1200px) { main { padding-left: 24px; padding-right: 24px; } .weekbar { margin-left: -24px; margin-right: -24px; padding-left: 24px; padding-right: 24px; } }
 
 /* ---------- Login ---------- */
 .login { min-height: 92vh; min-height: 92dvh; display: grid; place-items: center; }
@@ -544,7 +544,6 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .title-edit textarea:focus { outline: 2px solid var(--brand-2); outline-offset: 0; border-color: transparent; }
 
 /* ---------- Cards layout: Trello-style columns of compact project cards ---------- */
-body[data-layout="cards"][data-tab="projects"] main { max-width: 1440px; }
 .layout-seg { flex: 0 0 auto; }
 .layout-seg button { min-width: 72px; }
 .cards-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 12px; }
@@ -552,7 +551,7 @@ body[data-layout="cards"][data-tab="projects"] main { max-width: 1440px; }
 .group-by { display: inline-flex; align-items: center; gap: 8px; font-size: .88rem; font-weight: 600; color: var(--muted); }
 .group-by select { width: auto; min-height: 40px; padding: 8px 10px; }
 .lanes { display: flex; gap: 12px; align-items: flex-start; overflow-x: auto; padding: 2px 2px 12px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
-.lane { flex: 0 0 290px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; scroll-snap-align: start; max-height: calc(100vh - 140px); display: flex; flex-direction: column; }
+.lane { flex: 1 0 290px; max-width: 440px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px; scroll-snap-align: start; max-height: calc(100vh - 140px); display: flex; flex-direction: column; }
 .lane.drop { outline: 2px dashed var(--brand-2); outline-offset: -2px; }
 .lane-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 8px; font-weight: 700; font-size: .92rem; }
 .lane-title { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -563,7 +562,7 @@ body[data-layout="cards"][data-tab="projects"] main { max-width: 1440px; }
 .lane-empty { margin: 0; padding: 14px 8px; text-align: center; font-size: .82rem; color: var(--muted); border: 1px dashed var(--border); border-radius: 10px; }
 /* No grouping: one responsive grid */
 .lanes.grid-mode { display: block; overflow: visible; }
-.lane.wide { background: none; border: 0; padding: 0; max-height: none; }
+.lane.wide { background: none; border: 0; padding: 0; max-height: none; max-width: none; }
 .lane.wide .lane-body { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); overflow: visible; }
 
 .pcard { position: relative; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); padding: 10px 12px; display: grid; gap: 6px; transition: box-shadow .15s, transform .15s; }
@@ -615,3 +614,11 @@ body[data-layout="cards"][data-tab="projects"] main { max-width: 1440px; }
 .check-label { display: flex; flex-direction: column; line-height: 1.25; }
 .check-label small { font-weight: 400; color: var(--muted); font-size: .78rem; }
 .person-info { font-size: 13px; color: var(--brand-2); font-weight: 600; }
+
+/* Full HD screens: List and By person show two project / person cards per row */
+@media (min-width: 1500px) {
+  .board-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  .board-grid > .card { margin: 0; }
+  .board-grid > .empty { grid-column: 1 / -1; }
+}
+@media print { .board-grid { display: block; } }
