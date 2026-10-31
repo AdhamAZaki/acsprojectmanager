@@ -1,15 +1,15 @@
 # ACS Project Tracker (acsprojectmanager)
 
-A weekly task tool for the ACS PLC / AVEVA development team. It replaces typing up the weekly meeting by hand.
+A weekly task tool for the ACS teams: **Automation** (PLC / AVEVA) and **BMS**. It replaces typing up the weekly meeting by hand. Each department has its own weekly board, saved minutes and meeting email, in one shared database.
 
 Each engineer signs in with a **username and password** and:
 
-- sees every project on one board, **this week and next week side by side** (the weekly meeting), and **joins** projects in one tap
+- sees every project of their **department** on one board, **this week and next week side by side** (the weekly meeting), and **joins** projects in one tap; a switch at the top shows the other department's board
 - adds **tasks** (with sub-tasks) to **any project** for **last, this or next week**; unfinished tasks roll over automatically
 - does everything on **one page**: switch between *My tasks*, *My projects* and *All projects*, tick and edit tasks right on the board
 - marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-The board is the meeting: it builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins also get a **By person** view (each employee's tasks, grouped by project), can add tasks for anyone in any week, set who is on each project, and open **Manage** from the ⚙ settings button. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's PLC / Dev team) and 3rd parties.
+The board is the meeting: it builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins also get a **By person** view (each employee's tasks, grouped by project), can add tasks for anyone in any week, set who is on each project, and open **Manage** from the ⚙ settings button. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's department and PLC / Dev team) and 3rd parties. A **Dept admin** (e.g. the BMS lead) has the same admin tools, but only for their own department; the email for BMS has one *BMS Team Action Plan* column.
 
 | Phone | Task (phone) | By person | Desktop |
 |---|---|---|---|
@@ -25,7 +25,7 @@ The board is the meeting: it builds the minutes automatically from everyone's ta
  │ frontend/  HTML/CSS/JS │ ─────────▶ │ Auth: usernames + hashed passwords      │
  │  supabase-js           │            │ Postgres: profiles, projects,           │
  │  no build step         │ ◀───────── │   assignments, tasks, contacts,         │
- └────────────────────────┘  live      │   meetings (saved minutes)              │
+ └────────────────────────┘  live      │   meetings (saved minutes), departments │
                              updates   │ Row Level Security = who can do what    │
                                        └────────────────────────────────────────┘
 ```
@@ -33,7 +33,9 @@ The board is the meeting: it builds the minutes automatically from everyone's ta
 - **No server of our own**: the website talks to Supabase directly. Everything the app needs loads in one request, and the last data is kept on the device so the app opens instantly.
 - **Security is enforced in the database** (`supabase/migrations/`):
   - **Members** see every project and can join one. They see and edit the tasks on their projects, and tasks assigned to them. They can't change who created a task or move one into a project they're not on.
-  - **Admins** manage projects, the team, assignments, 3rd parties and saved minutes.
+  - **Admins** manage projects, the team, assignments, 3rd parties and saved minutes, in every department.
+  - **Dept admins** do the same for their own department only (they can't touch another department or create admins).
+  - **Departments** (Automation, BMS) share the database: people and projects each belong to one, every department's board is visible to everyone, and saved minutes are kept per department and week.
   - **Signed-out visitors** see nothing.
   - **New accounts start inactive** unless an admin created them from the app, so a stray sign-up can't see anything.
 - **No lost edits**: a save only changes the fields that person changed, and if a teammate saved the same task first, the change is applied on top of theirs.

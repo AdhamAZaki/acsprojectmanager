@@ -193,6 +193,9 @@ body[data-tab="manage"] main, body[data-tab="report"] main { max-width: 1100px; 
   position: sticky; top: calc(57px + env(safe-area-inset-top, 0px)); z-index: 5; display: flex; align-items: center; gap: 8px;
   margin: -12px -16px 12px; padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--border);
 }
+/* Department switcher (Automation / BMS) above the week bar and in Manage */
+.dept-seg { margin: 0 0 12px; }
+.dept-seg + .weekbar { margin-top: 0; }
 .weekbar-label { flex: 1; display: flex; flex-direction: column; align-items: center; line-height: 1.2; }
 .weekbar-label span { font-size: .82rem; color: var(--muted); }
 .summary { display: flex; flex-direction: column; gap: 6px; font-size: .88rem; color: var(--muted); font-weight: 600; margin: 2px 2px 14px; }

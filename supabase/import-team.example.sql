@@ -21,24 +21,31 @@ declare
   v_password     text    := 'CHANGE-ME';   -- <-- temporary password for every new account
   v_remove_dummy boolean := true;
 
-  -- username, full name, role, team (PLC or Dev: decides the meeting column)
+  -- username, full name, role, team, department
+  --   role:       member | lead (department admin: manages only their department) | admin (everything)
+  --   team:       PLC or Dev for Automation (decides the meeting column); leave '' for BMS
+  --   department: AUTO (Automation: PLC / AVEVA) or BMS
   v_people text[][] := array[
-    ['sara_ali',     'Sara Ali',     'admin',  'Dev'],
-    ['omar_hassan',  'Omar Hassan',  'member', 'PLC'],
-    ['nour_khalil',  'Nour Khalil',  'member', 'Dev']
+    ['sara_ali',     'Sara Ali',     'admin',  'Dev', 'AUTO'],
+    ['omar_hassan',  'Omar Hassan',  'member', 'PLC', 'AUTO'],
+    ['nour_khalil',  'Nour Khalil',  'member', 'Dev', 'AUTO'],
+    ['hany_fathy',   'Hany Fathy',   'lead',   '',    'BMS'],
+    ['laila_samir',  'Laila Samir',  'member', '',    'BMS']
   ];
 
-  -- project name, type, status, team (comma-separated full names)
+  -- project name, type, status, team (comma-separated full names), department
+  --   type: PLC, AVEVA, AVEVA + PLC or Other for Automation; BMS, GRMS, CRS, Service or Other for BMS
   v_projects text[][] := array[
-    ['Example Plant SCADA', 'AVEVA + PLC', 'In Progress', 'Sara Ali,Omar Hassan'],
-    ['Example Pump Station', 'PLC',        'Planning',    'Omar Hassan'],
-    ['Example Historian',   'AVEVA',       'In Progress', 'Nour Khalil']
+    ['Example Plant SCADA',   'AVEVA + PLC', 'In Progress', 'Sara Ali,Omar Hassan', 'AUTO'],
+    ['Example Pump Station',  'PLC',         'Planning',    'Omar Hassan',          'AUTO'],
+    ['Example Historian',     'AVEVA',       'In Progress', 'Nour Khalil',          'AUTO'],
+    ['Example Tower BMS',     'BMS',         'In Progress', 'Hany Fathy,Laila Samir', 'BMS']
   ];
 
   v_domain text := 'advcontrolsys.com';
   i int; v_email text; v_id uuid; v_pid text; v_name text; v_next int;
 begin
-  if to_regclass('public.tasks') is null
+  if to_regclass('public.tasks') is null or to_regclass('public.departments') is null
      or not exists (select 1 from pg_constraint where conname = 'projects_type_check'
                     and pg_get_constraintdef(oid) like '%AVEVA + PLC%') then
     raise exception 'Run the latest supabase/setup.sql first, then run this import again.';
@@ -65,8 +72,9 @@ begin
       v_id := public._create_login(v_email, v_password, v_people[i][2], v_people[i][3]);
     end if;
     update public.profiles set name = v_people[i][2], active = true,
-      role = case when v_people[i][3] = 'admin' then 'admin' else role end,
-      team = coalesce(team, nullif(v_people[i][4], ''))
+      role = case when v_people[i][3] in ('admin', 'lead') then v_people[i][3] else role end,
+      team = coalesce(team, nullif(v_people[i][4], '')),
+      department_id = coalesce(nullif(v_people[i][5], ''), 'AUTO')
     where id = v_id;
   end loop;
 
@@ -77,8 +85,9 @@ begin
     if v_pid is null then
       v_next := v_next + 1;
       v_pid := 'PRJ-' || lpad(v_next::text, 4, '0');
-      insert into public.projects (id, name, type, status, priority, manager)
-      values (v_pid, v_projects[i][1], v_projects[i][2], v_projects[i][3], 'Medium', '');
+      insert into public.projects (id, name, type, status, priority, manager, department_id)
+      values (v_pid, v_projects[i][1], v_projects[i][2], v_projects[i][3], 'Medium', '',
+              coalesce(nullif(v_projects[i][5], ''), 'AUTO'));
     end if;
     foreach v_name in array coalesce(string_to_array(nullif(v_projects[i][4], ''), ','), '{}'::text[]) loop
       insert into public.assignments (project_id, user_id)
@@ -90,8 +99,8 @@ begin
   raise notice 'Imported % people and % projects.', array_length(v_people, 1), array_length(v_projects, 1);
 end $$;
 
-select p.name as project, p.type, p.status, string_agg(pr.name, ', ' order by pr.name) as team
+select p.department_id as department, p.name as project, p.type, p.status, string_agg(pr.name, ', ' order by pr.name) as team
 from public.projects p
 left join public.assignments a on a.project_id = p.id
 left join public.profiles pr on pr.id = a.user_id
-group by p.id, p.name, p.type, p.status order by p.id;
+group by p.id, p.department_id, p.name, p.type, p.status order by p.department_id, p.id;

@@ -75,7 +75,10 @@ update public.projects set status = case status
   when 'Completed' then 'Done' when 'Closed' then 'Canceled' else status end
 where status in ('Active', 'On Hold', 'Completed', 'Closed');
 alter table public.projects alter column status set default 'In Progress';
-alter table public.projects add constraint projects_type_check check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'Other'));
+-- Widened in place (Oct 2026) for the BMS department's service lines (GRMS, CRS, Service): this line runs on
+-- every deploy before later migrations, so a narrower list here would reject those projects. Only ever widen it.
+alter table public.projects add constraint projects_type_check
+  check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'GRMS', 'CRS', 'Service', 'Other'));
 alter table public.projects add constraint projects_status_check
   check (status in ('Backlog', 'Planning', 'In Progress', 'Paused', 'Done', 'Canceled'));
 alter table public.projects add constraint projects_priority_check check (priority in ('Low', 'Medium', 'High'));

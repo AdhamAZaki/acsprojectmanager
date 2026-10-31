@@ -40,6 +40,7 @@ grant execute on all functions in schema test to anon, authenticated;
 
 -- Seeded data (supabase/seed-test-data.sql):
 --   admin.test (admin) · ahmed.test on PRJ-0001, 0002, 0004 · mona.test on 0001, 0003 · omar.test on 0002, 0003
+--   BMS department: hany.test (department admin) and laila.test on PRJ-0006; everything else is Automation
 
 -- ---------- Signed-out visitors ----------
 set role anon;
@@ -68,7 +69,7 @@ reset role;
 -- ---------- Members ----------
 select test.login('ahmed.test@advcontrolsys.com');
 set role authenticated;
-select test.ok(test.n('select * from public.projects') = 5, 'member sees every project (to join one)');
+select test.ok(test.n('select * from public.projects') = 6, 'member sees every project, in every department (to join one)');
 select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0001'$$) > 0, 'member sees tasks of their project');
 insert into public.tasks (project_id, week, title) values ('PRJ-0003', '2026-W44', 'helping on another project');
 select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003' and created_by = auth.uid()$$) = 1, 'member can add a task to a project they are not on');
@@ -162,7 +163,7 @@ select test.ok(
   (select array_agg(p.email order by p.email) from public.assignments a join public.profiles p on p.id = a.user_id where a.project_id = 'PRJ-0001')
   = array['ahmed.test@advcontrolsys.com', 'omar.test@advcontrolsys.com'],
   'project save removes only the unticked person and keeps someone who joined meanwhile');
-select test.ok(public.admin_save_project(jsonb_build_object('name', 'Brand new'), '{}', '{}') ->> 'id' = 'PRJ-0006', 'new project gets the next id');
+select test.ok(public.admin_save_project(jsonb_build_object('name', 'Brand new'), '{}', '{}') ->> 'id' = 'PRJ-0007', 'new project gets the next id');
 
 -- Admins can add a task for someone else; members cannot
 insert into public.tasks (project_id, week, title, created_by, assignee_ids)
@@ -187,6 +188,91 @@ reset role;
 select test.login('mona.test@advcontrolsys.com');
 set role authenticated;
 select test.ok(test.n($$select * from public.meetings where week = '2026-W44' and snapshot is not null$$) = 1, 'members can read saved minutes');
+reset role;
+
+-- ---------- Departments ----------
+select test.ok((select array_agg(id order by sort) from public.departments) = array['AUTO', 'BMS'], 'Automation and BMS departments exist');
+select test.ok((select department_id from public.projects where id = 'PRJ-0001') = 'AUTO', 'existing projects belong to Automation');
+select test.ok((select department_id from public.profiles where email = 'hany.test@advcontrolsys.com') = 'BMS', 'BMS people belong to BMS');
+
+-- Department admin (BMS): manages BMS only
+select test.login('hany.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n('select * from public.projects') = 7, 'department admin sees every department''s projects');
+select test.ok(public.admin_save_project(jsonb_build_object('name', 'BMS lead project', 'type', 'BMS'), '{}', '{}') ->> 'department_id' = 'BMS',
+  'department admin creates a project in their own department');
+select test.fails($$select public.admin_save_project(jsonb_build_object('name', 'Sneaky', 'department_id', 'AUTO'), '{}', '{}')$$,
+  'admin access required', 'department admin cannot create a project in another department');
+select test.fails($$select public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Taken over', 'department_id', 'BMS'), '{}', '{}')$$,
+  'admin access required', 'department admin cannot take over another department''s project');
+update public.projects set name = 'hacked' where id = 'PRJ-0002';
+select test.fails($$update public.projects set department_id = 'AUTO' where id = 'PRJ-0006'$$,
+  'row-level security', 'department admin cannot move a project out of their department');
+reset role;
+select test.ok((select name from public.projects where id = 'PRJ-0002') <> 'hacked', 'department admin cannot edit another department''s project');
+select test.login('hany.test@advcontrolsys.com');
+set role authenticated;
+insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'));
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('ahmed.test@advcontrolsys.com')$$) = 1,
+  'department admin can put anyone on their department''s project');
+select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'))$$,
+  'row-level security', 'department admin cannot staff another department''s project');
+insert into public.tasks (project_id, week, title, created_by, assignee_ids)
+  values ('PRJ-0006', '2026-W45', 'lead planned task', test.uid('laila.test@advcontrolsys.com'), array[test.uid('laila.test@advcontrolsys.com')]);
+select test.ok(test.n($$select * from public.tasks where title = 'lead planned task'$$) = 1, 'department admin can add a task for someone in their department');
+select test.fails($$insert into public.tasks (project_id, week, title, created_by) values ('PRJ-0002', '2026-W45', 'for omar', test.uid('omar.test@advcontrolsys.com'))$$,
+  'row-level security', 'department admin cannot add a task for someone on another department''s project');
+delete from public.tasks where title like 'Migrate conveyor%';
+select test.ok(test.n($$select * from public.tasks where title like 'Migrate conveyor%'$$) = 1, 'department admin cannot delete another department''s tasks');
+-- People
+select public.admin_create_user('bms.new@advcontrolsys.com', 'Password1', 'BMS New') as bms_new \gset
+select test.ok((select department_id = 'BMS' and role = 'member' and active from public.profiles where id = :'bms_new'),
+  'department admin creates accounts in their own department');
+select test.fails($$select public.admin_create_user('x2@advcontrolsys.com', 'Password1', 'X', 'member', 'AUTO')$$,
+  'admin access required', 'department admin cannot create accounts in another department');
+select test.fails($$select public.admin_create_user('x3@advcontrolsys.com', 'Password1', 'X', 'admin')$$,
+  'only an admin', 'department admin cannot create an admin');
+update public.profiles set name = 'Laila Renamed' where email = 'laila.test@advcontrolsys.com';
+select test.ok(test.n($$select * from public.profiles where name = 'Laila Renamed'$$) = 1, 'department admin can edit people in their department');
+select public.admin_set_password(test.uid('laila.test@advcontrolsys.com'), 'Password2');
+select test.ok(true, 'department admin can reset a password in their department');
+select test.fails($$select public.admin_set_password(test.uid('ahmed.test@advcontrolsys.com'), 'Password2')$$,
+  'admin access required', 'department admin cannot reset a password in another department');
+update public.profiles set name = 'hacked' where email = 'ahmed.test@advcontrolsys.com';
+select test.fails($$update public.profiles set department_id = 'AUTO' where email = 'laila.test@advcontrolsys.com'$$,
+  'row-level security', 'department admin cannot move someone to another department');
+select test.fails($$update public.profiles set role = 'admin' where id = auth.uid()$$,
+  'row-level security', 'department admin cannot make themselves admin');
+reset role;
+select test.ok((select name from public.profiles where email = 'ahmed.test@advcontrolsys.com') <> 'hacked', 'department admin cannot edit people in another department');
+-- Saved minutes: one copy per department per week
+select test.login('hany.test@advcontrolsys.com');
+set role authenticated;
+select public.admin_save_minutes('2026-W44', '{"v": 1, "dept": "BMS"}');
+select test.ok((select count(*) = 2 from public.meetings where week = '2026-W44' and snapshot is not null), 'each department keeps its own minutes for the same week');
+select test.ok((select snapshot ->> 'n' from public.meetings where week = '2026-W44' and department_id = 'AUTO') = '2', 'saving BMS minutes leaves Automation''s alone');
+select test.fails($$select public.admin_save_minutes('2026-W44', '{}', 'AUTO')$$, 'admin access required', 'department admin cannot save another department''s minutes');
+select test.ok((select public.app_bootstrap() -> 'me' ->> 'department_id') = 'BMS'
+  and json_array_length(public.app_bootstrap() -> 'departments') = 2, 'startup data includes your department and the department list');
+reset role;
+
+-- A member cannot change departments
+select test.login('laila.test@advcontrolsys.com');
+set role authenticated;
+update public.departments set name = 'hacked';
+update public.profiles set department_id = 'AUTO' where id = auth.uid();
+select test.fails($$select public.admin_save_minutes('2026-W45', '{}')$$, 'admin access required', 'BMS member cannot save minutes');
+reset role;
+select test.ok((select count(*) from public.departments where name = 'hacked') = 0, 'members cannot rename a department');
+select test.ok((select department_id from public.profiles where email = 'laila.test@advcontrolsys.com') = 'BMS', 'members cannot change their own department');
+
+-- Admins manage every department
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(public.admin_save_project(jsonb_build_object('id', 'PRJ-0006', 'name', 'Hospital BMS Upgrade', 'type', 'BMS', 'department_id', 'BMS'), '{}', '{}') ->> 'name' = 'Hospital BMS Upgrade',
+  'admin can edit a BMS project');
+select public.admin_create_user('bms.lead2@advcontrolsys.com', 'Password1', 'BMS Lead 2', 'lead', 'BMS') as lead2 \gset
+select test.ok((select role = 'lead' and department_id = 'BMS' from public.profiles where id = :'lead2'), 'admin can create a department admin');
 reset role;
 
 select 'All database checks passed' as result;

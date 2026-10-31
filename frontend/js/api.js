@@ -10,7 +10,7 @@
     auth: { persistSession: true, autoRefreshToken: true },
   });
   const DOMAIN = String(cfg.EMAIL_DOMAIN || '').toLowerCase();
-  const CACHE_KEY = 'acs-tracker-cache-v4';
+  const CACHE_KEY = 'acs-tracker-cache-v5';
   const HISTORY_WEEKS = 26;
 
   // ---------- Usernames <-> emails ----------
@@ -59,15 +59,21 @@
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }
 
+  // Roles: 'admin' manages every department, 'lead' only their own ("Dept admin").
+  const ROLE_NAMES = { admin: 'Admin', lead: 'Dept admin', member: 'Member' };
+  const ROLE_IDS = { 'Admin': 'admin', 'Dept admin': 'lead', 'Member': 'member' };
+  // Used until the database has the departments table (older setup.sql).
+  const DEFAULT_DEPARTMENTS = [{ id: 'AUTO', name: 'Automation', teams: ['PLC', 'Dev'], projectTypes: ['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'] }];
   const mapMember = r => ({
     id: r.id, username: toUsername(r.email), email: r.email, name: r.name || toUsername(r.email),
-    role: r.role === 'admin' ? 'Admin' : 'Member', active: r.active, team: r.team || '',
+    role: ROLE_NAMES[r.role] || 'Member', active: r.active, team: r.team || '', departmentId: r.department_id || 'AUTO',
   });
   const mapProject = r => ({
     id: r.id, name: r.name, type: r.type, status: r.status, priority: r.priority || 'Medium',
     client: r.client || '', manager: r.manager || '', notes: r.notes || '',
-    startDate: r.start_date || '', endDate: r.end_date || '',
+    startDate: r.start_date || '', endDate: r.end_date || '', departmentId: r.department_id || 'AUTO',
   });
+  const mapDepartment = r => ({ id: r.id, name: r.name, teams: r.teams || [], projectTypes: r.project_types || [] });
   const mapTask = r => ({
     id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
@@ -77,7 +83,7 @@
   });
   const mapContact = r => ({ id: r.id, name: r.name, org: r.org || '' });
   const mapMinutes = r => ({
-    id: r.id, week: r.week, savedAt: stamp(r.updated_at), savedBy: r.created_by, snapshot: r.snapshot,
+    id: r.id, week: r.week, departmentId: r.department_id || 'AUTO', savedAt: stamp(r.updated_at), savedBy: r.created_by, snapshot: r.snapshot,
   });
   function sinceWeek() {
     const d = new Date(Date.now() - HISTORY_WEEKS * 7 * 86400000);
@@ -177,6 +183,7 @@
       data = {
         me: mapMember(res.me),
         team: res.team.map(mapMember),
+        departments: res.departments && res.departments.length ? res.departments.map(mapDepartment) : DEFAULT_DEPARTMENTS,
         projects: res.projects.map(mapProject),
         assignments: res.assignments.map(a => ({ projectId: a.project_id, userId: a.user_id })),
         tasks: (res.tasks || []).map(mapTask),
@@ -328,7 +335,7 @@
           p: {
             id: p.id || '', name: p.name, type: p.type, status: p.status, priority: p.priority,
             client: p.client || '', manager: p.manager || '', notes: p.notes || '',
-            start_date: p.startDate || '', end_date: p.endDate || '',
+            start_date: p.startDate || '', end_date: p.endDate || '', department_id: p.departmentId || '',
           },
           p_add_ids: add,
           p_remove_ids: remove,
@@ -345,38 +352,42 @@
 
     // ----- Saved minutes -----
 
-    /** The saved minutes for a week, or null. */
-    async minutes(week) {
-      const rows = check(await sb.from('meetings').select('id,week,updated_at,created_by,snapshot')
-        .eq('week', week).not('snapshot', 'is', null).limit(1));
+    /** A department's saved minutes for a week, or null. */
+    async minutes(week, departmentId) {
+      const rows = check(await sb.from('meetings').select('id,week,department_id,updated_at,created_by,snapshot')
+        .eq('week', week).eq('department_id', departmentId).not('snapshot', 'is', null).limit(1));
       return rows.length ? mapMinutes(rows[0]) : null;
     },
 
-    /** Every week with saved minutes (without their content), newest first. */
-    async minutesList() {
-      return check(await sb.from('meetings').select('id,week,updated_at,created_by')
-        .not('snapshot', 'is', null).order('week', { ascending: false }).limit(500)).map(mapMinutes);
+    /** Every week with saved minutes for a department (without their content), newest first. */
+    async minutesList(departmentId) {
+      return check(await sb.from('meetings').select('id,week,department_id,updated_at,created_by')
+        .eq('department_id', departmentId).not('snapshot', 'is', null).order('week', { ascending: false }).limit(500)).map(mapMinutes);
     },
 
-    /** Saves (or replaces) the week's minutes. Admins only. */
-    async saveMinutes(week, snapshot) {
-      return write(async () => mapMinutes(check(await sb.rpc('admin_save_minutes', { p_week: week, p_snapshot: snapshot }))));
+    /** Saves (or replaces) a department's minutes for the week. Its admins only. */
+    async saveMinutes(week, snapshot, departmentId) {
+      return write(async () => mapMinutes(check(await sb.rpc('admin_save_minutes', {
+        p_week: week, p_snapshot: snapshot, p_department: departmentId }))));
     },
 
     async saveMember(p) { return write(() => Api._saveMember(p)); },
     async _saveMember(p) {
-      const role = p.role === 'Admin' ? 'admin' : 'member';
+      const role = ROLE_IDS[p.role] || 'member';
       const password = String(p.password || '');
+      const dept = p.departmentId || data.me.departmentId;
       if (p.isNew) {
         const id = check(await sb.rpc('admin_create_user', {
-          p_email: toEmail(p.username), p_password: password, p_name: p.name || '', p_role: role,
+          p_email: toEmail(p.username), p_password: password, p_name: p.name || '', p_role: role, p_department: dept,
         }));
         check(await sb.from('profiles').update({ active: p.active !== false, team: p.team || null }).eq('id', id));
       } else {
-        check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false, team: p.team || null }).eq('id', p.id));
+        const rows = check(await sb.from('profiles').update({ name: p.name, role: role, active: p.active !== false, team: p.team || null, department_id: dept })
+          .eq('id', p.id).select('id'));
+        if (!rows.length) throw new ApiError('You are not allowed to change this person.', 403);
         if (password) check(await sb.rpc('admin_set_password', { p_user_id: p.id, p_password: password }));
       }
-      data.team = check(await sb.from('profiles').select('id,email,name,role,active,team').order('name')).map(mapMember);
+      data.team = check(await sb.from('profiles').select('id,email,name,role,active,team,department_id').order('name')).map(mapMember);
       writeCache();
     },
 
