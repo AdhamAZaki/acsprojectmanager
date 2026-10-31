@@ -14,22 +14,34 @@
   function seed() {
     const W = isoWeek(new Date());
     const users = {
-      adm: { id: uid(), email: 'adham@advcontrolsys.com', name: 'Adham Admin', role: 'admin', active: true, team: 'Dev' },
-      mona: { id: uid(), email: 'mona@advcontrolsys.com', name: 'Mona PLC', role: 'member', active: true, team: 'PLC' },
-      omar: { id: uid(), email: 'omar@advcontrolsys.com', name: 'Omar Dev', role: 'member', active: true, team: 'Dev' },
+      adm: { id: uid(), email: 'adham@advcontrolsys.com', name: 'Adham Admin', role: 'admin', active: true, team: 'Dev', department_id: 'AUTO' },
+      mona: { id: uid(), email: 'mona@advcontrolsys.com', name: 'Mona PLC', role: 'member', active: true, team: 'PLC', department_id: 'AUTO' },
+      omar: { id: uid(), email: 'omar@advcontrolsys.com', name: 'Omar Dev', role: 'member', active: true, team: 'Dev', department_id: 'AUTO' },
+      hany: { id: uid(), email: 'hany@advcontrolsys.com', name: 'Hany BMS Lead', role: 'lead', active: true, team: null, department_id: 'BMS' },
+      laila: { id: uid(), email: 'laila@advcontrolsys.com', name: 'Laila BMS', role: 'member', active: true, team: null, department_id: 'BMS' },
     };
     const t0 = ts();
     return {
       W, users,
       profiles: Object.values(users),
-      projects: [{ id: 'PRJ-0001', name: 'Alpha Plant', type: 'AVEVA + PLC', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null }],
-      assignments: [{ project_id: 'PRJ-0001', user_id: users.adm.id }, { project_id: 'PRJ-0001', user_id: users.mona.id }],
+      departments: [
+        { id: 'AUTO', name: 'Automation', teams: ['PLC', 'Dev'], project_types: ['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'], sort: 1 },
+        { id: 'BMS', name: 'BMS', teams: ['BMS'], project_types: ['BMS', 'Other'], sort: 2 },
+      ],
+      projects: [
+        { id: 'PRJ-0001', name: 'Alpha Plant', type: 'AVEVA + PLC', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'AUTO' },
+        { id: 'PRJ-0002', name: 'Tower BMS Retrofit', type: 'BMS', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'BMS' },
+      ],
+      assignments: [{ project_id: 'PRJ-0001', user_id: users.adm.id }, { project_id: 'PRJ-0001', user_id: users.mona.id },
+        { project_id: 'PRJ-0002', user_id: users.hany.id }, { project_id: 'PRJ-0002', user_id: users.laila.id }],
       tasks: [
         { id: uid(), project_id: 'PRJ-0001', week: W, title: 'Commission the pump station panels', notes: '', status: 'To Do', team: 'Dev', block_note: '',
           assignee_ids: [users.adm.id], contact_ids: [], subtasks: [{ t: 'Panel A', done: false }, { t: 'Panel B', done: false }],
           created_by: users.adm.id, created_at: t0, updated_at: t0 },
         { id: uid(), project_id: 'PRJ-0001', week: W, title: 'Wire the remote IO cabinet', notes: '', status: 'To Do', team: 'Dev', block_note: '',
           assignee_ids: [users.mona.id], contact_ids: [], subtasks: [], created_by: users.adm.id, created_at: t0, updated_at: t0 },
+        { id: uid(), project_id: 'PRJ-0002', week: W, title: 'Survey the AHU controllers on every floor', notes: '', status: 'To Do', team: null, block_note: '',
+          assignee_ids: [users.laila.id], contact_ids: [], subtasks: [], created_by: users.laila.id, created_at: t0, updated_at: t0 },
       ],
       contacts: [],
       meetings: [],
@@ -93,21 +105,22 @@
     db.log.push({ rpc: name, args: clone(a) });
     const me = sessionUser();
     if (name === 'app_bootstrap') {
-      const r = { me, team: db.profiles, projects: db.projects, assignments: db.assignments, updates: [],
+      const r = { me, team: db.profiles, departments: db.departments, projects: db.projects, assignments: db.assignments, updates: [],
         tasks: db.tasks.filter(t => !a.p_since || t.week >= a.p_since || t.status !== 'Done'), contacts: db.contacts };
       save(); return { data: clone(r), error: null };
     }
     if (name === 'admin_save_project') {
       const p = a.p; let pr = db.projects.find(x => x.id === p.id);
       if (!pr) { pr = { id: p.id || 'PRJ-' + String(db.projects.length + 1).padStart(4, '0') }; db.projects.push(pr); }
-      Object.assign(pr, { name: p.name, type: p.type, status: p.status, priority: p.priority, client: p.client, manager: p.manager, notes: p.notes, start_date: p.start_date || null, end_date: p.end_date || null });
+      Object.assign(pr, { department_id: p.department_id || pr.department_id || me.department_id, name: p.name, type: p.type, status: p.status, priority: p.priority, client: p.client, manager: p.manager, notes: p.notes, start_date: p.start_date || null, end_date: p.end_date || null });
       db.assignments = db.assignments.filter(x => !(x.project_id === pr.id && a.p_remove_ids.indexOf(x.user_id) !== -1));
       a.p_add_ids.forEach(id => { if (!db.assignments.some(x => x.project_id === pr.id && x.user_id === id)) db.assignments.push({ project_id: pr.id, user_id: id }); });
       save(); return { data: clone(pr), error: null };
     }
     if (name === 'admin_save_minutes') {
-      let m = db.meetings.find(x => x.week === a.p_week && x.snapshot);
-      if (!m) { m = { id: uid(), week: a.p_week }; db.meetings.push(m); }
+      const dept = a.p_department || me.department_id;
+      let m = db.meetings.find(x => x.week === a.p_week && x.department_id === dept && x.snapshot);
+      if (!m) { m = { id: uid(), week: a.p_week, department_id: dept }; db.meetings.push(m); }
       Object.assign(m, { snapshot: clone(a.p_snapshot), created_by: me.id, updated_at: ts() });
       save(); return { data: clone(m), error: null };
     }

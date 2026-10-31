@@ -410,6 +410,81 @@ async function phoneLayout(browser, url) {
   await ctx.close();
 }
 
+async function departments(browser, url) {
+  // An Automation member opens on the Automation board and can look at BMS.
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/', 'omar');
+  ok(await page.isVisible('[data-dept="AUTO"].on'), 'departments: a member opens on their own department’s board');
+  await page.click('[data-board="all"]');
+  ok(await page.isVisible('.board-card >> text=Alpha Plant') && !(await page.isVisible('text=Tower BMS Retrofit')), 'departments: the Automation board shows only Automation projects');
+  await page.click('[data-dept="BMS"]');
+  await page.waitForSelector('[data-dept="BMS"].on');
+  ok(await page.isVisible('.board-card >> text=Tower BMS Retrofit') && await page.isVisible('text=Survey the AHU controllers') && !(await page.isVisible('.board-card >> text=Alpha Plant')),
+    'departments: switching to BMS shows the BMS board');
+  ok(!(await page.isVisible('#saveMins')) && await page.locator('[data-board="people"]').count() === 0, 'departments: a member can’t manage the other department');
+  await ctx.close();
+
+  // A BMS department admin manages BMS only.
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  p2.on('pageerror', e => errors.push(e.message));
+  await signIn(p2, url + '#/', 'hany');
+  ok(await p2.isVisible('[data-dept="BMS"].on') && await p2.isVisible('#settingsBtn'), 'BMS admin: opens on BMS and gets the settings button');
+  await c2.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await p2.click('#copyEmail');
+  await sleep(300);
+  const text = await p2.evaluate(() => navigator.clipboard.readText());
+  ok(/^Weekly Progress Check & Action Plan — BMS/.test(text) && text.includes('BMS team:') && text.includes('Survey the AHU') && !text.includes('PLC team:') && !text.includes('Alpha Plant'),
+    'BMS email: one "BMS team" column with only BMS projects');
+  await p2.click('[data-addto="PRJ-0002"]');
+  ok(await p2.locator('#addForm select[name=person]').count() === 1, 'BMS admin: can add a task for someone on a BMS project');
+  await p2.click('[data-addto="PRJ-0002"]');
+  await p2.click('#saveMins');
+  await p2.waitForSelector('.mtg-note.saved');
+  const mins = await p2.evaluate(() => window.__db.get().meetings);
+  ok(mins.length === 1 && mins[0].department_id === 'BMS' && mins[0].snapshot.teams.join() === 'BMS', 'BMS admin: saves the BMS minutes');
+  await p2.click('[data-dept="AUTO"]');
+  await p2.waitForSelector('[data-dept="AUTO"].on');
+  ok(!(await p2.isVisible('.mtg-note.saved')) && !(await p2.isVisible('#saveMins')) && await p2.locator('[data-board="people"]').count() === 0,
+    'BMS admin: Automation has its own minutes and can’t be managed by them');
+  await p2.goto(url + '#/manage');
+  await p2.waitForSelector('[data-edit]');
+  ok(await p2.locator('[data-edit="PRJ-0002"]').count() === 1 && await p2.locator('[data-edit="PRJ-0001"]').count() === 0, 'BMS admin: Manage lists only BMS projects');
+  await p2.click('[data-tab="team"]');
+  await p2.waitForSelector('#manageBody >> text=Laila BMS');
+  ok(!(await p2.isVisible('#manageBody >> text=Mona PLC')), 'BMS admin: Manage lists only BMS people');
+  await p2.click('#manageBody >> text=Laila BMS');
+  await p2.waitForSelector('dialog[open]');
+  const roles = await p2.$$eval('dialog input[name=role]', is => is.map(i => i.value));
+  ok(roles.join() === 'Member,Dept admin' && await p2.locator('dialog input[name=team]').count() === 0 && await p2.locator('dialog select[name=departmentId]').count() === 0,
+    'BMS admin: can make someone a Dept admin (not Admin); BMS needs no PLC/Dev team');
+  await c2.close();
+
+  // Admins manage every department.
+  const c3 = await newApp(browser);
+  const p3 = await c3.newPage();
+  p3.on('pageerror', e => errors.push(e.message));
+  await signIn(p3, url + '#/', 'adham');
+  await p3.goto(url + '#/manage');
+  await p3.waitForSelector('[data-edit="PRJ-0001"]');
+  await p3.click('.dept-seg [data-dept="BMS"]');
+  await p3.waitForSelector('[data-edit="PRJ-0002"]');
+  ok(await p3.locator('[data-edit="PRJ-0001"]').count() === 0, 'admin: Manage switches between departments');
+  await p3.click('#addBtn');
+  await p3.waitForSelector('dialog[open]');
+  ok(await p3.inputValue('dialog select[name=departmentId]') === 'BMS' && await p3.inputValue('dialog select[name=type]') === 'BMS', 'admin: a new project defaults to the department in view');
+  await p3.fill('dialog input[name=name]', 'Mall BMS Commissioning');
+  await p3.click('dialog button[type=submit]');
+  await p3.waitForFunction(() => !document.querySelector('#dialog').open);
+  const pr = await p3.evaluate(() => window.__db.get().projects.find(x => x.name === 'Mall BMS Commissioning'));
+  ok(pr && pr.department_id === 'BMS', 'admin: creates a BMS project');
+  ok(errors.length === 0, 'departments: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await c3.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -421,6 +496,7 @@ async function phoneLayout(browser, url) {
     await weekRollover(browser, url);
     await adminPlans(browser, url);
     await phoneLayout(browser, url);
+    await departments(browser, url);
   } finally {
     await browser.close();
     server.close();

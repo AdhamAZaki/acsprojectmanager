@@ -26,10 +26,10 @@ If you add someone in **Authentication → Users → Add user** instead of the a
 
 ## 3. Import the real team and projects
 
-`supabase/import-team.example.sql` creates an account for each person, sets their PLC / Dev team, creates the projects and assigns people to them. The file only holds example rows, so the real names stay out of this public repository.
+`supabase/import-team.example.sql` creates an account for each person, sets their department (Automation or BMS), role and PLC / Dev team, creates the projects in their department and assigns people to them. The file only holds example rows, so the real names stay out of this public repository.
 
 1. Open <https://raw.githubusercontent.com/AdhamAZaki/acsprojectmanager/main/supabase/import-team.example.sql> and copy it into the SQL Editor.
-2. Replace the example people (username, full name, role, team) and projects with the real ones. The script refuses to run while the examples are still there.
+2. Replace the example people (username, full name, role, team, department) and projects (name, type, status, team, department) with the real ones. Use role `lead` for a department admin (e.g. the BMS team lead). The script refuses to run while the examples are still there.
 3. Change `v_password := 'CHANGE-ME'` to a temporary password. Leave `v_remove_dummy := true` to delete any test data.
 4. Click **Run**. A table of every project and its team is shown at the end.
 5. Tell each engineer their username (e.g. `firstname_lastname`) and the temporary password. They should change it right away: **avatar → Change password**.
@@ -40,9 +40,20 @@ To keep your filled-in copy for next time, save it as `supabase/import-team.loca
 
 ## 4. Optional: test data
 
-`supabase/seed-test-data.sql` adds 4 test logins (`admin.test`, `ahmed.test`, `mona.test`, `omar.test`), 5 dummy projects and a few tasks for this week and next week. It only runs on a database with no projects yet.
+`supabase/seed-test-data.sql` adds 6 test logins (`admin.test`, `ahmed.test`, `mona.test`, `omar.test` in Automation; `hany.test`, the BMS department admin, and `laila.test` in BMS), 6 dummy projects (one of them BMS) and a few tasks for this week and next week. It only runs on a database with no projects yet.
 
-Set `v_password` at the top to a password of your choice (it is used for all 4 logins), then run it. Remove the test data later with the import script (`v_remove_dummy := true`).
+Set `v_password` at the top to a password of your choice (it is used for all 6 logins), then run it. Remove the test data later with the import script (`v_remove_dummy := true`).
+
+## Adding the BMS team (or another department)
+
+The database has two departments: **Automation** (PLC / AVEVA, everything that existed before) and **BMS**. Each has its own weekly board, saved minutes and *Copy as email* (Automation: PLC | Dev columns; BMS: one column). Everyone opens on their own department's board and can switch to the other one to look.
+
+1. Run the latest `setup.sql` (or let the deploy do it). Existing people and projects stay in Automation; any project of type *BMS* moves to BMS.
+2. **Manage** → pick **BMS** at the top → **Team** → **+ Member** for each BMS engineer. Or import them with the import script (department `BMS`).
+3. Make the BMS team lead a **Dept admin**: they can then manage BMS projects, people, tasks and minutes, but nothing in Automation. **Admins** still manage everything.
+4. **Manage** → **BMS** → **Projects** → **+ Project** for each BMS project.
+
+Departments are rows in the `departments` table (Supabase Table Editor). Another team can be added there later; giving a department its own PLC/Dev-style sub-teams or new project types needs a small migration, because those values are checked by the database.
 
 ## 5. Connect the website
 
