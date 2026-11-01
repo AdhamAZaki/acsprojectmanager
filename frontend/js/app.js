@@ -33,8 +33,7 @@
     lastProject: null,
     lastWrite: 0,
     minutes: {},         // saved minutes per week: record, null (none saved) or undefined (loading)
-    mtgEdit: {},         // week -> true while editing a week that has saved minutes
-    board: null,         // 'me' | 'mine' | 'all' | 'people' (admins); remembered per device
+    board: null,         // 'mine' | 'all' | 'people' (admins); remembered per device
     addFor: null,        // project whose own add box is open
     addWeek: null,       // week picked in the add box (e.g. by "Plan next week")
     collapsed: null,     // card key ('p:<project id>' / 'u:<user id>') -> true; remembered per device
@@ -238,6 +237,8 @@
     return Api.patchTask(t.id, fn).then(softRender, e => { toast(e.message, true); render(); });
   }
   const findTask = id => S.data.tasks.find(t => t.id === id);
+  /** Own tasks only: you change tasks you created or are on; admins of the project's department change any. */
+  const canEditTask = t => canManage(project(t.projectId).departmentId) || t.createdBy === me().id || t.assigneeIds.indexOf(me().id) !== -1;
   /** Where sub-task i (with this text) is now; it may have moved if a teammate changed the list. */
   function subIndex(t, i, text) {
     return t.subtasks[i] && t.subtasks[i].t === text ? i : t.subtasks.findIndex(s => s.t === text);
@@ -251,10 +252,12 @@
     const subDone = t.subtasks.filter(s => s.done).length;
     const team = projectTeam(t.projectId);
     const extra = t.assigneeIds.filter(id => !team.some(m => m.id === id)).map(member);
+    const edit = canEditTask(t), admin = canManage(project(t.projectId).departmentId);
+    const owners = ownersOf(t).map(id => member(id).name).join(', ');
     return `
-      <div class="t ${isDone(t) ? 'done' : ''}">
+      <div class="t ${isDone(t) ? 'done' : ''}${edit ? '' : ' ro'}">
         <div class="t-row">
-          <button type="button" class="t-check ${isDone(t) ? 'on' : ''}" data-done="${t.id}" aria-label="${isDone(t) ? 'Mark as not done' : 'Mark as done'}">${isDone(t) ? icon('check') : ''}</button>
+          <button type="button" class="t-check ${isDone(t) ? 'on' : ''}" data-done="${t.id}"${edit ? '' : ` disabled title="${esc(owners)}’s task"`} aria-label="${isDone(t) ? 'Mark as not done' : 'Mark as done'}">${isDone(t) ? icon('check') : ''}</button>
           <button type="button" class="t-body" data-toggle="${t.id}" aria-expanded="${open}">
             <span class="t-title">${esc(t.title)}</span>
             <span class="t-meta">
@@ -266,7 +269,14 @@
             </span>
           </button>
         </div>
-        ${open ? `
+        ${open && !edit ? `
+        <div class="t-open read-only">
+          ${t.subtasks.length ? `<ul class="plain subs-ro">${t.subtasks.map(x => `<li class="${x.done ? 'done' : ''}">${x.done ? '✔' : '○'} ${esc(x.t)}</li>`).join('')}</ul>` : ''}
+          <p class="small"><span class="muted">On it:</span> ${esc(who(t) || owners)}</p>
+          ${isBlocked(t) ? `<p class="small tag-block-note">Blocked: ${esc(t.blockNote || 'no reason given')}</p>` : ''}
+          <p class="muted small ro-note">This is ${esc(owners)}’s task. Only they or an admin can change it.</p>
+        </div>` : ''}
+        ${open && edit ? `
         <div class="t-open">
           <label class="title-edit"><span class="muted small">Task</span><textarea rows="2" data-title="${t.id}" maxlength="300" aria-label="Task title">${esc(t.title)}</textarea></label>
           <div class="subs">
@@ -274,7 +284,9 @@
             <div class="inline"><input placeholder="Add a sub-task" data-newsub="${t.id}" data-keep="sub-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addsub="${t.id}">Add</button></div>
           </div>
           <div class="people">
-            ${team.concat(extra).map(m => `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assigneeIds.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`).join('')}
+            ${team.concat(extra).filter(m => admin || m.id === me().id || t.assigneeIds.indexOf(m.id) !== -1).map(m => admin || m.id === me().id
+              ? `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assigneeIds.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`
+              : `<span class="person-chip" title="Only an admin can change who is on a task"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</span>`).join('')}
             ${S.data.contacts.map(c => `<label class="ext"><input type="checkbox" data-ext="${t.id}:${c.id}"${t.contactIds.indexOf(c.id) !== -1 ? ' checked' : ''}>${esc(c.name)}</label>`).join('')}
           </div>
           <div class="inline"><input placeholder="Add someone outside the team" data-newext="${t.id}" data-keep="ext-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
@@ -282,7 +294,7 @@
           <div class="t-actions">
             <button type="button" class="${isBlocked(t) ? 'danger' : 'secondary'}" data-block="${t.id}">${isBlocked(t) ? 'Unblock' : 'Blocked?'}</button>
             <button type="button" class="secondary" data-move="${t.id}">${t.week === NEXT ? 'Move to this week' : 'Move to next week'}</button>
-            ${canManage(project(t.projectId).departmentId) || t.createdBy === me().id ? `<button type="button" class="ghost danger-text" data-del="${t.id}">Delete</button>` : ''}
+            ${admin || t.createdBy === me().id ? `<button type="button" class="ghost danger-text" data-del="${t.id}">Delete</button>` : ''}
           </div>
         </div>` : ''}
       </div>`;
@@ -712,8 +724,30 @@
         <span class="muted small">Saved ${esc(r.savedAt)}${r.savedBy ? ' by ' + esc(member(r.savedBy).name) : ''}</span></span>${icon('chevron')}</button>`).join('')}</div>`
       : '<div class="empty"><h3>No saved minutes yet</h3><p>An admin can save them from the Projects tab after each meeting.</p></div>';
     $$('[data-week]', body).forEach(b => b.onclick = () => {
-      S.mtgWeek = b.dataset.week; S.mtgEdit = {}; S.project = null; dlg.close(); location.hash = '#/'; render(); window.scrollTo(0, 0);
+      const week = b.dataset.week;
+      guard(() => Api.minutes(week, curDept())).then(rec => { if (rec && rec.snapshot) savedMinutesSheet(rec); });
     });
+  }
+
+  /** A saved copy of the minutes, read-only, exactly as saved; it can be copied as an email. */
+  function savedMinutesSheet(rec) {
+    const dlg = $('#dialog');
+    const m = rec.snapshot;
+    const draw = () => {
+      const cards = projectCards(m.rows || [], rec.week, false, 'all');
+      dlg.innerHTML = `<div class="sheet saved-sheet"><header class="sheet-head"><span></span><h3>Saved minutes · week ${wnum(rec.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+        <div class="sheet-body">
+          <p class="muted small" style="margin:0 0 10px">${esc(weekRange(rec.week))} ${weekMonday(rec.week).getUTCFullYear()} · saved ${esc(rec.savedAt)}${rec.savedBy ? ' by ' + esc(member(rec.savedBy).name) : ''}. This copy does not change when tasks change.</p>
+          <div class="actions-row"><button type="button" class="primary" id="copySaved">Copy as email</button></div>
+          ${(m.blocked || []).length ? `<section class="card warn"><h3 class="card-title">Blocked (${m.blocked.length})</h3><ul class="plain">${m.blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
+          ${cards.html}</div></div>`;
+      $('[data-close]', dlg).onclick = () => dlg.close();
+      $('#copySaved', dlg).onclick = () => copyEmail(m);
+      $$('[data-fold]', dlg).forEach(b => b.onclick = () => { setCollapsed([b.dataset.fold], !collapsed()[b.dataset.fold]); draw(); });
+    };
+    delete dlg.dataset.mode;
+    draw();
+    if (!dlg.open) dlg.showModal();
   }
 
   /** Loads the saved minutes for a week once, then redraws. */
@@ -724,11 +758,14 @@
       .then(() => { if (currentTab().id === 'projects' && !S.project && S.mtgWeek === week && curDept() === d) softRender(); });
   }
 
-  const VIEWS = [['me', 'My tasks'], ['mine', 'My projects'], ['all', 'All projects'], ['people', 'By person']];
+  // Mine: the projects I'm on or have tasks on, showing my tasks.
+  const VIEWS = [['mine', 'Mine'], ['all', 'All projects'], ['people', 'By person']];
   function boardMode() {
     if (!S.board) S.board = remember.get('board') || 'mine';
+    if (S.board === 'me') S.board = 'mine';   // "My tasks" and "My projects" are now one view
     if (S.board === 'people' && !canManage(curDept())) S.board = 'mine';
-    if (S.board === 'mine' && !deptProjects().some(p => myProjectIds().indexOf(p.id) !== -1)) return 'all';   // nothing to show under "My projects" yet
+    if (S.board === 'mine' && !deptProjects().some(p => myProjectIds().indexOf(p.id) !== -1) &&
+        !S.data.tasks.some(t => isMine(t) && inDept(project(t.projectId)))) return 'all';   // nothing of mine yet   // nothing to show under "My projects" yet
     return S.board;
   }
   function collapsed() {
@@ -791,7 +828,7 @@
   function boardProjects(byId, mode) {
     const mineIds = myProjectIds();
     const mineHas = r => r && r.people.some(pp => pp.id === me().id);
-    const shown = p => mode === 'me' ? mineHas(byId[p.id]) : mode === 'mine' ? mineIds.indexOf(p.id) !== -1 : (CLOSED.indexOf(p.status) === -1 || byId[p.id]);
+    const shown = p => mode === 'mine' ? mineIds.indexOf(p.id) !== -1 || mineHas(byId[p.id]) : (CLOSED.indexOf(p.status) === -1 || byId[p.id]);
     return deptProjects().filter(shown).sort((a, b) =>
       (mineIds.indexOf(b.id) !== -1) - (mineIds.indexOf(a.id) !== -1) || !!byId[b.id] - !!byId[a.id] || a.name.localeCompare(b.name));
   }
@@ -876,12 +913,12 @@
       : g.id === 'status' ? `<span class="pstatus ps-${slug(k)}">${esc(k)}</span>`
       : g.id === 'priority' ? `<span class="prio prio-${slug(k)}">${esc(k)}</span>` : esc(title(k) || 'All projects');
     // In a person's column (and in My tasks) a card shows only that person's tasks.
-    const cardOpts = k => ({ group: g.id, drag: drag, onlyId: g.id === 'person' ? k : mode === 'me' ? me().id : null });
+    const cardOpts = k => ({ group: g.id, drag: drag, onlyId: g.id === 'person' ? k : mode === 'mine' ? me().id : null });
     const columns = keys.map(k => `<section class="lane${g.id === 'none' ? ' wide' : ''}" data-lane="${esc(k)}">
         ${g.id === 'none' ? '' : `<header class="lane-head"><span class="lane-title">${head(k)}</span><span class="lane-count">${(cols[k] || []).length}</span></header>`}
         <div class="lane-body">${(cols[k] || []).map(p => projectCardHtml(p, byId[p.id], cardOpts(k))).join('') || '<p class="lane-empty">Drop a project here</p>'}</div>
       </section>`).join('');
-    const empty = !projects.length ? `<div class="empty"><h3>${q ? 'No projects match “' + esc(S.cardFilter) + '”' : mode === 'me' ? `No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet` : 'No projects to show'}</h3></div>` : '';
+    const empty = !projects.length ? `<div class="empty"><h3>${q ? 'No projects match “' + esc(S.cardFilter) + '”' : mode === 'mine' ? `Nothing of yours in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet` : 'No projects to show'}</h3>${mode === 'mine' && !q ? '<p>Add a task above, or join a project from <b>All projects</b>.</p>' : ''}</div>` : '';
     return {
       tools: `<div class="cards-tools no-print">
           <label class="group-by">Group by <select id="groupBy">${groups.map(x => `<option value="${x.id}"${x.id === g.id ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>
@@ -951,11 +988,11 @@
         ${exists ? teamTags(p.id, r) : ''}
         <div class="board-body">
           ${live && S.addFor === p.id ? `<div class="no-print">${addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1)), week)}</div>` : ''}
-          ${r ? weekGrid(r, week, live, mode === 'me' ? me().id : null) : `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}
+          ${r ? weekGrid(r, week, live, mode === 'mine' ? me().id : null) : `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}
         </div>
       </section>`;
     };
-    const empty = mode === 'me'
+    const empty = mode === 'mine'
       ? `<div class="empty"><h3>No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet</h3><p>Add one above, on any project.</p></div>`
       : '<div class="empty"><h3>No projects to show</h3></div>';
     return { html: list.map(card).join('') || empty, keys: list.map(x => 'p:' + x.p.id) };
@@ -1017,11 +1054,12 @@
     if (!(key in S.minutes)) loadMinutes(week);
     const saved = S.minutes[key];
     const hasSaved = !!(saved && saved.snapshot);
-    const live = !hasSaved || !!S.mtgEdit[key];
+    // The board is always live (tasks editable). A saved copy of the minutes opens read-only in a sheet.
+    const live = true;
     const manager = canManage(curDept());
-    const m = live ? buildMinutes(week) : saved.snapshot;
+    const m = buildMinutes(week);
     const { rows, blocked, summary } = m;
-    const mode = live ? boardMode() : 'all';
+    const mode = boardMode();
     // Admins, live view of this week or an earlier one: who hasn't touched their tasks.
     const quiet = manager && live && week <= THIS ? quietPeople(week) : [];
     const quietCard = quiet.length ? `<section class="card quiet foldable${S.fold.quiet ? ' shut' : ''}"><h3 class="card-title" data-extra="quiet">No update ${week === THIS ? 'yet' : ''} (${quiet.length})</h3>
@@ -1029,9 +1067,8 @@
       <div class="avatars-row">${quiet.map(m => `<span class="person-chip"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(m.name)}${m.team ? ` <small class="muted">${esc(m.team)}</small>` : ''}</span>`).join('')}</div>
       ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}</section>` : '';
     const savedBy = hasSaved ? `${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}` : '';
-    const note = !live
-      ? `<div class="mtg-note saved"><span>Saved minutes · ${savedBy}</span><button type="button" class="secondary small-btn" id="mtgEdit">Edit</button></div>`
-      : hasSaved ? `<div class="mtg-note editing"><span><strong>Edit mode.</strong> Changes save to the tasks straight away.${manager ? ' Tap <b>Save minutes</b> to update the saved copy.' : ''}</span><button type="button" class="ghost small-btn" id="mtgCancel">Cancel edit</button></div>`
+    const note = hasSaved
+      ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${savedBy}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
       : week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : '';
     const layout = live && mode !== 'people' ? boardLayout() : 'list';
     const cards = mode === 'people' ? personCards(rows, week, live)
@@ -1047,7 +1084,7 @@
         <div class="weekbar-label"><strong>Week ${wnum(week)}${week === THIS ? ' · this week' : ''}</strong><span>${manyDepts() ? esc(dept(curDept()).name) + ' · ' : ''}${esc(weekRange(week))} · next to week ${wnum(shiftWeek(week, 1))}</span></div>
         <button type="button" class="icon-btn" data-mw="1" aria-label="Next week"${week >= shiftWeek(THIS, 8) ? ' disabled' : ''}>${icon('chevron')}</button>
       </div>
-      <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${manager && live && week <= THIS ? `<button type="button" class="secondary" id="saveMins">Save minutes</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
+      <div class="actions-row"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${manager && week <= THIS ? `<button type="button" class="secondary" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
       ${note}
       ${live ? planNudge() : ''}
       ${live && !S.addFor && !S.project && deptProjects().some(p => CLOSED.indexOf(p.status) === -1) ? addBar(undefined, undefined, week <= THIS ? THIS : week) : ''}
@@ -1095,15 +1132,14 @@
       'Hi ' + quiet.map(x => x.name.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0]).join(', ') +
       ' — please add your tasks for week ' + wnum(week) + ' in Weekly Tasks before the meeting: ' + location.origin + location.pathname,
       'Reminder copied — paste it into your team chat');
-    const edit = $('#mtgEdit', root); if (edit) edit.onclick = () => { S.mtgEdit[key] = true; render(); };
-    const cancel = $('#mtgCancel', root); if (cancel) cancel.onclick = () => { S.mtgEdit[key] = false; S.addFor = null; render(); };
+    const view = $('#viewSaved', root); if (view) view.onclick = () => savedMinutesSheet(saved);
     const save = $('#saveMins', root);
     if (save) save.onclick = async () => {
       if (hasSaved && !confirm('Replace the saved minutes for week ' + wnum(week) + ' with today’s tasks?')) return;
       save.disabled = true;
       const rec = await guard(() => Api.saveMinutes(week, buildMinutes(week), curDept()));
       save.disabled = false;
-      if (rec) { S.minutes[key] = rec; S.mtgEdit[key] = false; toast('Minutes saved'); render(); }
+      if (rec) { S.minutes[key] = rec; toast('Minutes saved'); render(); }
     };
   }
 

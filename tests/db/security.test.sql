@@ -102,11 +102,35 @@ insert into public.assignments (project_id, user_id) values ('PRJ-0003', auth.ui
 select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) > 0, 'member can join a project and sees its tasks');
 delete from public.assignments where project_id = 'PRJ-0003' and user_id = auth.uid();
 
--- An assignee who is not on the project can edit the task and move it
+-- Own tasks only: members change only tasks they created or are assigned to
 reset role;
 select test.login('mona.test@advcontrolsys.com');
 set role authenticated;
+select test.fails($$update public.tasks set assignee_ids = assignee_ids || test.uid('ahmed.test@advcontrolsys.com') where title like 'Review IO%'$$,
+  'only an admin can add or remove other people', 'member cannot put a colleague on their task');
+select test.fails($$insert into public.tasks (project_id, week, title, assignee_ids) values ('PRJ-0003', '2026-W45', 'for both of us', array[auth.uid(), test.uid('omar.test@advcontrolsys.com')])$$,
+  'row-level security', 'member cannot add a task that includes a colleague');
+insert into public.tasks (project_id, week, title, assignee_ids) values ('PRJ-0003', '2026-W45', 'mona own task', array[auth.uid()]);
+select test.ok(test.n($$select * from public.tasks where title = 'mona own task'$$) = 1, 'member can add their own task');
+reset role;
+-- Omar is on PRJ-0003 with Mona, but Mona's tasks are hers
+select test.login('omar.test@advcontrolsys.com');
+set role authenticated;
+update public.tasks set notes = 'omar was here', status = 'Done' where title = 'mona own task';
+delete from public.tasks where title = 'mona own task';
+reset role;
+select test.ok((select notes = '' and status <> 'Done' from public.tasks where title = 'mona own task'), 'teammate on the same project cannot change someone else''s task');
+select test.ok(test.n($$select * from public.tasks where title = 'mona own task'$$) = 1, 'teammate cannot delete someone else''s task');
+-- An admin shares the task with Ahmed; Ahmed (assignee, not on the project) can then edit it
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
 update public.tasks set assignee_ids = assignee_ids || test.uid('ahmed.test@advcontrolsys.com') where title like 'Review IO%';
+select test.ok(test.n($$select * from public.tasks where title like 'Review IO%' and test.uid('ahmed.test@advcontrolsys.com') = any (assignee_ids)$$) = 1, 'admin can put anyone on a task');
+reset role;
+select test.login('ahmed.test@advcontrolsys.com');
+set role authenticated;
+select test.fails($$update public.tasks set assignee_ids = array[auth.uid()] where title like 'Review IO%'$$,
+  'only an admin can add or remove other people', 'assignee cannot take a colleague off a shared task');
 reset role;
 select test.login('ahmed.test@advcontrolsys.com');
 set role authenticated;

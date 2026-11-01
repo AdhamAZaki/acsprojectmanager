@@ -650,3 +650,11 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
   body.panel-open { overflow: hidden; }
 }
 @media print { .side-panel { display: none; } }
+
+/* Someone else's task: read-only */
+.t.ro .t-check { opacity: .45; cursor: not-allowed; }
+.t-open.read-only { padding: 4px 0 8px 40px; }
+.subs-ro li { padding: 2px 0; font-size: .9rem; }
+.subs-ro li.done { color: var(--muted); text-decoration: line-through; }
+.tag-block-note { color: var(--bad); }
+.ro-note { font-style: italic; }

@@ -114,6 +114,7 @@ async function mainFlow(browser, url) {
 
   // ---- Meeting: tasks under the person assigned, in that person's column ----
   await page.goto(url + '#/meeting');
+  await page.click('[data-board="all"]');
   await page.waitForSelector('.mtg-person');
   const people = await page.$$eval('.mtg-person', els => els.map(e =>
     e.querySelector('strong').textContent.trim().replace(/^[A-Z]{1,2}(?=[A-Z][a-z])/, '') + ' :: ' +
@@ -127,27 +128,32 @@ async function mainFlow(browser, url) {
   const text = await page.evaluate(() => navigator.clipboard.readText());
   ok(text.split('PLC team:')[1].split('Dev team:')[0].includes(T2), 'email: Mona’s task is in the PLC column');
 
-  // ---- Saved minutes stay fixed ----
+  // ---- Saved minutes: a fixed copy; the board itself always stays live ----
   await page.click('#saveMins');
   await page.waitForSelector('.mtg-note.saved');
   await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).title = 'RENAMED after the meeting'; window.__db.save(); }, T2);
   await page.evaluate(() => window.__db.emit('tasks'));
   await sleep(800);
-  ok(await page.isVisible(`.mtg-person >> text=${T2}`) && !(await page.isVisible('text=RENAMED after the meeting')), 'saved minutes don’t change when a task changes');
-  ok(!(await page.isVisible('[data-done]')), 'saved minutes are read-only');
-  ok(await page.locator('.board-card .name-tag').count() > 0, 'saved minutes still show who is on each project');
+  ok(await page.isVisible('#view >> text=RENAMED after the meeting') && await page.locator('#view [data-done]').count() > 0 && await page.locator('#mtgEdit').count() === 0,
+    'after saving minutes the board stays live and editable (no Edit button)');
+  ok((await page.textContent('#saveMins')).includes('Update saved minutes'), 'admins can update the saved copy');
+  await page.click('#viewSaved');
+  await page.waitForSelector('.saved-sheet');
+  ok(await page.isVisible(`.saved-sheet >> text=${T2}`) && !(await page.isVisible('.saved-sheet >> text=RENAMED after the meeting')), 'the saved copy doesn’t change when a task changes');
+  ok(await page.locator('.saved-sheet [data-done]').count() === 0, 'the saved copy is read-only');
+  ok(await page.locator('.saved-sheet .board-card .name-tag').count() > 0, 'the saved copy shows who is on each project');
+  await page.click('.saved-sheet [data-close]');
   // Minutes saved by an older version have no project ids: still matched by name
   await page.evaluate(() => {
     const d = window.__db.get(); const m = d.meetings[0];
     m.snapshot.rows.forEach(r => { delete r.id; r.people.forEach(pp => delete pp.id); }); window.__db.save();
   });
   await page.reload();
-  await page.waitForSelector('.mtg-note.saved');
-  ok(await page.locator('.board-card .name-tag').count() > 0, 'older saved minutes (no project ids) also show who is on each project');
-  await page.click('#mtgEdit');
-  ok(await page.isVisible('text=RENAMED after the meeting') && await page.isVisible('[data-done]'), '"Edit" shows the live, editable tasks');
-  await page.click('#mtgCancel');
-  ok(await page.isVisible('.mtg-note.saved'), '"Cancel edit" goes back to the saved minutes');
+  await page.waitForSelector('#viewSaved');
+  await page.click('#viewSaved');
+  await page.waitForSelector('.saved-sheet');
+  ok(await page.locator('.saved-sheet .board-card .name-tag').count() > 0, 'older saved minutes (no project ids) also show who is on each project');
+  await page.click('.saved-sheet [data-close]');
   await page.click('[data-mw="-1"]');
   await page.waitForSelector('.mtg-note.warn, .empty');
   ok(await page.isVisible('.mtg-note.warn'), 'an unsaved past week warns it is rebuilt from today’s tasks');
@@ -155,8 +161,9 @@ async function mainFlow(browser, url) {
   await page.waitForSelector('.archive-row');
   ok((await page.$$('.archive-row')).length === 1, 'past minutes lists the one saved week');
   await page.click('.archive-row');
-  await page.waitForSelector('.mtg-note.saved');
-  ok((await page.textContent('.weekbar-label')).includes('this week'), 'tapping a saved week opens its minutes');
+  await page.waitForSelector('.saved-sheet');
+  ok(await page.isVisible(`.saved-sheet >> text=${T2}`), 'tapping a saved week opens its saved copy');
+  await page.click('.saved-sheet [data-close]');
 
   // ---- Admin project save keeps people who joined meanwhile ----
   await page.goto(url + '#/manage');
@@ -185,7 +192,7 @@ async function memberView(browser, url) {
   await page.waitForSelector('[data-join="PRJ-0001"]', { state: 'detached' });
   await page.waitForSelector('[data-board="mine"].on');
   ok(true, 'a member can join a project in one tap');
-  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.dataset.board + '=' + b.className))).join() === 'me=,mine=on,all=', 'after joining, the board shows My projects (members get no By person view)');
+  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.dataset.board + '=' + b.className))).join() === 'mine=on,all=', 'after joining, the board shows Mine (My tasks and My projects are one view; members get no By person view)');
   const tags = await page.locator('.board-card').first().locator('.name-tag').allTextContents();
   ok(tags.length >= 2 && /Omar Dev\s*\(You\)/.test(tags[0]) && tags.some(t => /Adham Admin/.test(t)), 'project cards show everyone on the project as name tags, you first');
   await page.click('[data-board="all"]');
@@ -292,6 +299,7 @@ async function weekRollover(browser, url) {
   await page.waitForTimeout(500);
   const after = await page.textContent('.weekbar-label');
   ok(/Week 44 · this week/.test(before) && /Week 45 · this week/.test(after) && /next to week 46/.test(after), 'the week moves on by itself while the app stays open');
+  await page.click('[data-board="all"]');
   const carried = await page.$$eval('.wk-col:not(.next) .tag-carry', els => els.length);
   ok(carried >= 2, 'unfinished tasks roll over into the new week (' + carried + ' carried)');
   await ctx.close();
@@ -321,6 +329,7 @@ async function adminPlans(browser, url) {
   await page.click('#addForm button[type=submit]');
   await sleep(500);
   await page.goto(url + '#/meeting');
+  await page.click('[data-board="all"]');
   await page.waitForSelector('.wk2');
   ok(await page.locator('.wk2').first().locator('.wk-col').count() === 2, 'meeting: this week and next week side by side');
   ok(/Download the PLC program/.test(await page.textContent('.wk-col.next')), 'meeting: next week’s plan is in the second column');
@@ -635,6 +644,36 @@ async function sidePanel(browser, url) {
   await ctx.close();
 }
 
+async function ownTasks(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  // Mona is on Alpha Plant with Adham; T1 is Adham's, T2 is hers.
+  await signIn(page, url + '#/', 'mona');
+  await page.click('[data-board="mine"]');
+  await page.waitForSelector('.board-card');
+  const mine = await page.textContent('#view .board-grid');
+  ok(mine.includes(T2) && !mine.includes(T1), 'Mine: only my tasks, on the projects I’m on');
+  await page.click('[data-board="all"]');
+  await page.waitForSelector(`[data-toggle] >> text=${T1}`);
+  const t1 = page.locator('.t', { hasText: T1 });
+  ok(await t1.locator('[data-done]').isDisabled(), 'own tasks only: a teammate’s task can’t be ticked');
+  await t1.locator('[data-toggle]').click();
+  ok(await page.isVisible('.t-open.read-only >> text=Only they or an admin can change it') && await t1.locator('[data-title]').count() === 0,
+    'own tasks only: a teammate’s task opens read-only');
+  await t1.locator('[data-toggle]').click();
+  const t2 = page.locator('.t', { hasText: T2 });
+  ok(!(await t2.locator('[data-done]').isDisabled()), 'own tasks only: my own task can be ticked');
+  await t2.locator('[data-toggle]').click();
+  const boxes = await t2.locator('[data-asg]').evaluateAll(cs => cs.map(c => c.dataset.asg.split(':')[1]));
+  const monaId = await page.evaluate(() => window.__db.get().users.mona.id);
+  ok(boxes.join() === monaId, 'own tasks only: on my task I can only add or remove myself');
+  ok(await t2.locator('[data-del]').count() === 0, 'own tasks only: a task an admin created for me can’t be deleted by me');
+  ok(errors.length === 0, 'own tasks: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -650,6 +689,7 @@ async function sidePanel(browser, url) {
     await cardsLayout(browser, url);
     await peopleDetails(browser, url);
     await sidePanel(browser, url);
+    await ownTasks(browser, url);
   } finally {
     await browser.close();
     server.close();
