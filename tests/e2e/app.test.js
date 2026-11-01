@@ -5,6 +5,12 @@ const { launch, serve, newApp, signIn } = require('./harness');
 let failures = 0;
 const ok = (cond, msg) => { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) failures++; };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Reads the clipboard once it holds the copied text (writing it is asynchronous; a fixed wait was flaky on CI).
+async function clipboard(page, marker) {
+  let text = '';
+  for (let i = 0; i < 30 && !text.includes(marker); i++) { await sleep(100); text = await page.evaluate(() => navigator.clipboard.readText()).catch(() => ''); }
+  return text;
+}
 const T1 = 'Commission the pump station panels';
 const T2 = 'Wire the remote IO cabinet';
 
@@ -125,8 +131,8 @@ async function mainFlow(browser, url) {
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.click('#copyEmail');
   await sleep(300);
-  const text = await page.evaluate(() => navigator.clipboard.readText());
-  ok(text.split('PLC team:')[1].split('Dev team:')[0].includes(T2), 'email: Mona’s task is in the PLC column');
+  const text = await clipboard(page, 'PLC team:');
+  ok((text.split('PLC team:')[1] || '').split('Dev team:')[0].includes(T2), 'email: Mona’s task is in the PLC column');
 
   // ---- Saved minutes: a fixed copy; the board itself always stays live ----
   await page.click('#saveMins');
@@ -239,7 +245,7 @@ async function adminNudges(browser, url) {
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await page.click('#copyReminder');
   await sleep(300);
-  const text = await page.evaluate(() => navigator.clipboard.readText());
+  const text = await clipboard(page, 'Hi ');
   ok(/^Hi Mona, Omar — please add your tasks for week \d+/.test(text), 'reminder text names them: "' + text.slice(0, 60) + '…"');
   await ctx.close();
 
@@ -445,7 +451,7 @@ async function departments(browser, url) {
   await c2.grantPermissions(['clipboard-read', 'clipboard-write']);
   await p2.click('#copyEmail');
   await sleep(300);
-  const text = await p2.evaluate(() => navigator.clipboard.readText());
+  const text = await clipboard(p2, 'BMS team:');
   ok(/^Weekly Progress Check & Action Plan — BMS/.test(text) && text.includes('BMS team:') && text.includes('Survey the AHU') && !text.includes('PLC team:') && !text.includes('Alpha Plant'),
     'BMS email: one "BMS team" column with only BMS projects');
   await p2.click('[data-addto="PRJ-0002"]');
