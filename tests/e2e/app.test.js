@@ -33,10 +33,11 @@ async function mainFlow(browser, url) {
   ok(await page.isVisible(`text=${T1}`), 'signed in; the board shows this week’s tasks');
 
   // ---- Add a task ----
-  await page.fill('#addForm input[name=title]', 'Panels');
-  await page.click('#addForm button[type=submit]');
-  ok(await page.isVisible('text=Add a bit more detail'), 'a very short task title gets a nudge');
+  ok(await page.inputValue('#addForm select[name=project]') === '', 'the add box never preselects an arbitrary project');
   await page.fill('#addForm input[name=title]', 'Test the duty and standby pump logic');
+  await page.click('#addForm button[type=submit]');
+  ok(await page.isVisible('text=Choose the project first') && (await page.evaluate(() => window.__db.get().tasks.length)) === 3, 'adding without a project asks for one (nothing saved)');
+  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
   await page.click('#addForm button[type=submit]');
   await page.waitForSelector('text=Test the duty and standby pump logic');
   const added = await task('Test the duty and standby pump logic');
@@ -270,9 +271,12 @@ async function planNudge(browser, url) {
   await page.click('#planNext');
   ok(/next week/.test(await page.$eval('#addForm select[name=week]', s => s.options[s.selectedIndex].textContent)), 'the nudge sets the add box to next week');
   await page.fill('#addForm input[name=title]', 'Prepare the site acceptance test documents');
+  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
   await page.click('#addForm button[type=submit]');
   await page.waitForSelector('.wk-col.next >> text=Prepare the site acceptance test documents');
   ok(!(await page.isVisible('#planNudge')), 'nudge gone once something is planned');
+  ok(/next week/.test(await page.$eval('#addForm select[name=week]', s => s.options[s.selectedIndex].textContent)) &&
+    await page.inputValue('#addForm select[name=project]') === 'PRJ-0001', 'the next task keeps the planned week and the project (no silent switch back)');
   await ctx.close();
 
   const c2 = await newApp(browser);
@@ -319,6 +323,7 @@ async function adminPlans(browser, url) {
   const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.value));
   const later = weeks[weeks.length - 1 - 5];   // three weeks ahead
   await page.fill('#addForm input[name=title]', 'Prepare the FAT procedure for the client');
+  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
   await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC — PLC Engineer' });
   await page.selectOption('#addForm select[name=week]', later);
   await page.click('#addForm button[type=submit]');
