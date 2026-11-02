@@ -658,3 +658,10 @@ dialog::backdrop { background: rgba(10, 20, 35, .5); }
 .subs-ro li.done { color: var(--muted); text-decoration: line-through; }
 .tag-block-note { color: var(--bad); }
 .ro-note { font-style: italic; }
+
+/* Quick fixes: compact empty columns, bigger tick target */
+.lane.empty { flex: 0 0 150px; max-width: 150px; }
+.lane.empty .lane-empty { padding: 8px 4px; font-size: .75rem; }
+.t-check { position: relative; }
+.t-check::after { content: ""; position: absolute; inset: -9px; }   /* 44px touch target around the circle */
+#blockedAll { margin-top: 6px; }

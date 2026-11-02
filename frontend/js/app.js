@@ -473,8 +473,11 @@
     const open = p => CLOSED.indexOf(p.status) === -1 && inDept(p);
     const mine = myProjects().filter(open);
     const others = S.data.projects.filter(p => open(p) && mine.indexOf(p) === -1).sort((a, b) => a.name.localeCompare(b.name));
+    if (!S.lastProject) S.lastProject = remember.get('last-project');
+    const known = S.data.projects.some(p => p.id === S.lastProject && open(p));
     const opt = p => `<option value="${esc(p.id)}"${p.id === S.lastProject ? ' selected' : ''}>${esc(p.name)}</option>`;
-    return (mine.length ? `<optgroup label="My projects">${mine.map(opt).join('')}</optgroup>` : '') +
+    // Never preselect an arbitrary project: until you have used one, you pick it.
+    return (known ? '' : '<option value="" disabled selected>Choose a project…</option>') + (mine.length ? `<optgroup label="My projects">${mine.map(opt).join('')}</optgroup>` : '') +
       (others.length ? `<optgroup label="${mine.length ? 'Other projects' : 'Projects'}">${others.map(opt).join('')}</optgroup>` : '');
   }
   /** `fixedProject`: add straight into that project. `week`: the week picked by default. */
@@ -483,7 +486,7 @@
     if (week < shiftWeek(THIS, managesHere() ? -4 : -1) || week > shiftWeek(THIS, managesHere() ? 8 : 1)) week = THIS;
     return `
       <form class="card addbar${S.addWeek || fixedProject ? ' expanded' : ''}" id="addForm">
-        <input name="title" data-keep="add-title" placeholder="${week === NEXT ? 'What will you do next week?' : week < THIS ? 'What did you do that week?' : 'What are you working on this week?'}" autocomplete="off" required>
+        <input name="title" data-keep="add-title" placeholder="${week === NEXT ? 'Next week, e.g. Loop check LCP-02 with the client' : week < THIS ? 'What did you do that week?' : 'e.g. Commission AHU-3 controller on level 2'}" autocomplete="off" required>
         <div class="addbar-row">
           ${fixedProject ? '' : `<select name="project" aria-label="Project">${projectChoices()}</select>`}
           <select name="week" aria-label="Week">${weekChoices(week)}</select>
@@ -500,14 +503,9 @@
       e.preventDefault();
       const title = f.elements.title.value.trim();
       const pid = fixedProject || f.elements.project.value;
-      if (!title || !pid) return;
-      if (title.split(/\s+/).length < 3 && f.dataset.nudged !== title) {
-        f.dataset.nudged = title;
-        toast('Add a bit more detail so the meeting understands it, or tap Add again to keep it.');
-        f.elements.title.focus();
-        return;
-      }
-      S.lastProject = pid;
+      if (!title) return;
+      if (!pid) { toast('Choose the project first', true); f.elements.project.focus(); return; }
+      S.lastProject = pid; remember.set('last-project', pid);
       const forId = f.elements.person ? f.elements.person.value : me().id;
       const week = f.elements.week.value;
       const btn = $('button[type=submit]', f); btn.disabled = true;
@@ -520,7 +518,7 @@
         f.elements.title.value = '';
         const onBoard = currentTab().id === 'projects' && !S.project;
         const shown = forId === me().id && (onBoard ? week === S.mtgWeek || week === shiftWeek(S.mtgWeek, 1) || (week < S.mtgWeek && S.mtgWeek === THIS) : week === (S.which === 'next' ? NEXT : THIS));
-        S.addWeek = null;
+        S.addWeek = week;   // the next task goes in the same week until you change it
         if (!shown) toast('Added for ' + (forId === me().id ? 'you' : shortName(member(forId).name)) + ' · week ' + wnum(week));
         render(); const i = $('#addForm input'); if (i) i.focus();
       }
@@ -571,7 +569,7 @@
     viewProject(body, project(S.project));
     body.scrollTop = top;
   }
-  function closePanel() { S.project = null; render(); }
+  function closePanel() { S.project = null; S.addWeek = null; render(); }
 
   function viewProject(root, p) {
     const cur = S.data.tasks.filter(t => t.projectId === p.id && inView(t, S.which));
@@ -914,9 +912,9 @@
       : g.id === 'priority' ? `<span class="prio prio-${slug(k)}">${esc(k)}</span>` : esc(title(k) || 'All projects');
     // In a person's column (and in My tasks) a card shows only that person's tasks.
     const cardOpts = k => ({ group: g.id, drag: drag, onlyId: g.id === 'person' ? k : mode === 'mine' ? me().id : null });
-    const columns = keys.map(k => `<section class="lane${g.id === 'none' ? ' wide' : ''}" data-lane="${esc(k)}">
+    const columns = keys.map(k => `<section class="lane${g.id === 'none' ? ' wide' : ''}${(cols[k] || []).length ? '' : ' empty'}" data-lane="${esc(k)}">
         ${g.id === 'none' ? '' : `<header class="lane-head"><span class="lane-title">${head(k)}</span><span class="lane-count">${(cols[k] || []).length}</span></header>`}
-        <div class="lane-body">${(cols[k] || []).map(p => projectCardHtml(p, byId[p.id], cardOpts(k))).join('') || '<p class="lane-empty">Drop a project here</p>'}</div>
+        <div class="lane-body">${(cols[k] || []).map(p => projectCardHtml(p, byId[p.id], cardOpts(k))).join('') || '<p class="lane-empty">Drop here</p>'}</div>
       </section>`).join('');
     const empty = !projects.length ? `<div class="empty"><h3>${q ? 'No projects match “' + esc(S.cardFilter) + '”' : mode === 'mine' ? `Nothing of yours in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet` : 'No projects to show'}</h3>${mode === 'mine' && !q ? '<p>Add a task above, or join a project from <b>All projects</b>.</p>' : ''}</div>` : '';
     return {
@@ -1090,7 +1088,7 @@
       ${live && !S.addFor && !S.project && deptProjects().some(p => CLOSED.indexOf(p.status) === -1) ? addBar(undefined, undefined, week <= THIS ? THIS : week) : ''}
       ${quietCard}
       ${rows.length ? `<div class="mtg-sum"><span><b>${summary.moved}</b> ${summary.moved === 1 ? 'project' : 'projects'} with progress</span><span><b>${summary.done}</b> done</span><span class="${summary.blocked ? 'bad' : ''}"><b>${summary.blocked}</b> blocked</span><span class="${summary.delayed ? 'warn' : ''}"><b>${summary.delayed}</b> delayed</span></div>` : ''}
-      ${blocked.length ? `<section class="card warn foldable${S.fold.blocked ? ' shut' : ''}"><h3 class="card-title" data-extra="blocked">Blocked (${blocked.length})</h3><ul class="plain">${blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
+      ${blocked.length ? `<section class="card warn foldable${S.fold.blocked ? ' shut' : ''}"><h3 class="card-title" data-extra="blocked">Blocked (${blocked.length})</h3><ul class="plain">${blocked.slice(0, S.blockedAll ? blocked.length : 5).map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul>${blocked.length > 5 ? `<button type="button" class="text-btn" id="blockedAll">${S.blockedAll ? 'Show fewer' : 'Show all ' + blocked.length}</button>` : ''}</section>` : ''}
       <div class="board-tools no-print">
         ${live ? `<div class="seg board-seg">${views.map(v => `<button type="button" data-board="${v[0]}" class="${mode === v[0] ? 'on' : ''}">${v[1]}</button>`).join('')}</div>` : ''}
         ${live && mode !== 'people' ? `<div class="seg layout-seg" aria-label="Layout"><button type="button" data-layout="cards" class="${layout === 'cards' ? 'on' : ''}">Cards</button><button type="button" data-layout="list" class="${layout === 'list' ? 'on' : ''}">List</button></div>` : ''}
@@ -1099,6 +1097,7 @@
       ${cards.tools || ''}
       ${layout === 'cards' ? cards.html : `<div class="board-grid">${cards.html}</div>`}`;
     $$('[data-dept]', root).forEach(b => b.onclick = () => { S.dept = b.dataset.dept; S.addFor = null; S.addWeek = null; render(); });
+    const ba = $('#blockedAll', root); if (ba) ba.onclick = () => { S.blockedAll = !S.blockedAll; render(); };
     $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); S.addFor = null; S.addWeek = null; render(); });
     // Phone: the Blocked and No-update lists fold to one line (tap the title)
     $$('[data-extra]', root).forEach(h => h.onclick = () => { if (!isPhone()) return; S.fold[h.dataset.extra] = !S.fold[h.dataset.extra]; render(); });
