@@ -30,28 +30,44 @@ async function mainFlow(browser, url) {
   await page.waitForSelector('#loginError:not([hidden])');
   ok((await page.textContent('#loginError')).includes('Wrong username or password'), 'unknown user gets a clear sign-in error');
   await signIn(page, url, 'adham');
-  ok(await page.isVisible(`text=${T1}`), 'signed in; the board shows this week’s tasks');
+  ok(await page.isVisible('.mw-title >> text=This week') && await page.isVisible(`.mw-group >> text=${T1}`), 'signed in; My week shows my tasks for this week');
+  ok(!(await page.isVisible(`#view >> text=${T2}`)), 'My week shows only my own tasks');
 
-  // ---- Add a task ----
-  ok(await page.inputValue('#addForm select[name=project]') === '', 'the add box never preselects an arbitrary project');
-  await page.fill('#addForm input[name=title]', 'Test the duty and standby pump logic');
-  await page.click('#addForm button[type=submit]');
-  ok(await page.isVisible('text=Choose the project first') && (await page.evaluate(() => window.__db.get().tasks.length)) === 3, 'adding without a project asks for one (nothing saved)');
-  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
-  await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('text=Test the duty and standby pump logic');
+  // ---- Add a task (quick add sheet) ----
+  await page.click('#qaOpen');
+  await page.waitForSelector('#qaForm');
+  ok(await page.getAttribute('[data-qp].on', 'data-qp') === 'PRJ-0001', 'quick add: my only project is picked (never an arbitrary one)');
+  await page.fill('#qaForm textarea[name=title]', 'Test the duty and standby pump logic');
+  await page.click('#qaForm button[type=submit]');
+  await sleep(400);
   const added = await task('Test the duty and standby pump logic');
-  ok(added && added.project_id === 'PRJ-0001' && added.status === 'To Do', 'new task saved to the project');
-  ok(await page.inputValue('#addForm input[name=title]') === '', 'add box is cleared after adding');
-
-  // ---- Half-typed text survives a redraw ----
-  await page.fill('#addForm input[name=title]', 'Half typed');
-  await page.click('[data-done]');   // ticking a task redraws the screen
+  ok(added && added.project_id === 'PRJ-0001' && added.status === 'To Do' && added.week === (await db()).W, 'new task saved to the project, this week');
+  ok(await page.isVisible('#qaForm') && await page.inputValue('#qaForm textarea[name=title]') === '', 'quick add stays open and clears for the next task');
+  await page.click('#qaForm [data-qw]:nth-child(2)');
+  await page.fill('#qaForm textarea[name=title]', 'Prepare the FAT procedure document');
+  await page.click('#qaForm button[type=submit]');
   await sleep(300);
-  ok(await page.inputValue('#addForm input[name=title]') === 'Half typed', 'half-typed new task kept when the screen redraws');
-  await page.click('[data-done]');
-  await page.fill('#addForm input[name=title]', '');
+  await page.fill('#qaForm textarea[name=title]', 'Book the site visit with the client');
+  await page.click('#qaForm button[type=submit]');
+  await sleep(400);
+  const snap = await db();
+  const nx = snap.tasks.filter(t => /Prepare the FAT procedure document|Book the site visit/.test(t.title));
+  ok(nx.length === 2 && nx.every(t => t.week > snap.W), 'quick add keeps “next week” for the following task');
+  await page.click('#qaForm [data-qw]:first-child');
+  await page.click('#qaForm [data-qd]');
+  await page.fill('#qaForm textarea[name=title]', 'Checked the alarm list on site');
+  await page.click('#qaForm button[type=submit]');
+  await sleep(400);
+  ok((await task('Checked the alarm list on site')).status === 'Done', 'quick add: “already done” logs a finished task in one step');
+  // Half-typed text survives a live refresh
+  await page.fill('#qaForm textarea[name=title]', 'Half typed');
+  await page.evaluate(() => window.__db.emit('tasks'));
+  await sleep(800);
+  ok(await page.inputValue('#qaForm textarea[name=title]') === 'Half typed', 'half-typed task kept when a teammate’s change arrives');
+  await page.click('#qaForm [data-close]');
   await sleep(300);
+  await page.waitForSelector('#view >> text=Test the duty and standby pump logic');
+  ok(await page.isVisible('.mw-sec:nth-child(2) >> text=Prepare the FAT procedure document'), 'My week: next week’s plan is listed under Next week');
 
   // ---- The title of a task can be changed ----
   await page.click('[data-toggle] >> text=Test the duty and standby pump logic');
@@ -121,7 +137,6 @@ async function mainFlow(browser, url) {
 
   // ---- Meeting: tasks under the person assigned, in that person's column ----
   await page.goto(url + '#/meeting');
-  await page.click('[data-board="all"]');
   await page.waitForSelector('.mtg-person');
   const people = await page.$$eval('.mtg-person', els => els.map(e =>
     e.querySelector('strong').textContent.trim().replace(/^[A-Z]{1,2}(?=[A-Z][a-z])/, '') + ' :: ' +
@@ -193,33 +208,34 @@ async function memberView(browser, url) {
   const page = await ctx.newPage();
   await signIn(page, url, 'omar');
   ok(!(await page.isVisible('#settingsBtn')), 'members don’t see the settings (Manage) button');
-  ok(await page.locator('nav').count() === 0, 'one page: no tabs');
-  await page.goto(url + '#/projects');
-  await page.click('[data-join="PRJ-0001"]');
-  await page.waitForSelector('[data-join="PRJ-0001"]', { state: 'detached' });
-  await page.waitForSelector('[data-board="mine"].on');
+  ok((await page.$$eval('.appnav a', as => as.map(a => a.textContent.trim()))).join() === 'My week,Projects', 'members get two screens: My week and Projects (no Meeting)');
+  await page.click('.appnav a[href="#/projects"]');
+  await page.waitForSelector('.prow');
+  ok(await page.isVisible('[data-scope="all"].on'), 'Projects shows All projects for someone on no project yet');
+  ok(await page.locator('.prow').count() >= 1 && !(await page.isVisible('.prow >> text=Tower BMS Retrofit')), 'All projects lists the department’s open projects');
+  await page.click('.prow[data-project="PRJ-0001"]');
+  await page.waitForSelector('.side-panel #joinBtn');
+  await page.click('#joinBtn');
+  await page.waitForSelector('.side-panel #leaveBtn');
   ok(true, 'a member can join a project in one tap');
-  ok((await page.$$eval('[data-board]', bs => bs.map(b => b.dataset.board + '=' + b.className))).join() === 'mine=on,all=', 'after joining, the board shows Mine (My tasks and My projects are one view; members get no By person view)');
-  const tags = await page.locator('.board-card').first().locator('.name-tag').allTextContents();
-  ok(tags.length >= 2 && /Omar Dev\s*\(You\)/.test(tags[0]) && tags.some(t => /Adham Admin/.test(t)), 'project cards show everyone on the project as name tags, you first');
-  await page.click('[data-board="all"]');
-  ok(await page.locator('.board-card').count() >= 1, 'All projects lists every open project');
-  // Omar adds a task to his project from the board, in last week (forgot to log it)
-  await page.click('[data-addto="PRJ-0001"]');
-  const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.textContent));
+  const tags = await page.locator('.side-panel .name-tag').allTextContents();
+  ok(tags.length >= 2 && /Omar Dev\s*\(You\)/.test(tags[0]) && tags.some(t => /Adham Admin/.test(t)), 'the project shows everyone on it as name tags, you first');
+  // Omar adds a task to the project from its panel, in last week (forgot to log it)
+  const weeks = await page.$$eval('.side-panel #addForm select[name=week] option', os => os.map(o => o.textContent));
   ok(weeks.length === 3 && /last week/.test(weeks[0]) && /next week/.test(weeks[2]), 'members pick last, this or next week');
   ok(await page.locator('#addForm select[name=person]').count() === 0, 'members can only add tasks for themselves');
-  await page.fill('#addForm input[name=title]', 'Checked the alarm list with the client');
-  await page.selectOption('#addForm select[name=week]', { index: 1 });
-  await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('.board-card >> text=Checked the alarm list with the client');
-  ok(true, 'a task added on the board shows straight away in the board');
-  await page.click('[data-project="PRJ-0001"]');
-  await page.waitForSelector('#backBtn');
+  await page.fill('.side-panel #addForm input[name=title]', 'Checked the alarm list with the client');
+  await page.selectOption('.side-panel #addForm select[name=week]', { index: 1 });
+  await page.click('.side-panel #addForm button[type=submit]');
+  await page.waitForSelector('.side-panel >> text=Checked the alarm list with the client');
+  ok(true, 'a task added in the project panel shows straight away');
   ok(await page.locator('#assignSel').count() === 0, 'members can’t change who is on a project');
+  await page.keyboard.press('Escape');
+  await page.click('[data-scope="mine"]');
+  ok(await page.isVisible('.prow[data-project="PRJ-0001"]'), 'after joining, My projects lists it');
   await page.goto(url + '#/meeting');
   await page.waitForSelector('.weekbar');
-  ok(!(await page.isVisible('#saveMins')), 'members can’t save minutes');
+  ok(!(await page.isVisible('#saveMins')) && await page.isVisible('.mw-title'), 'members can’t open the Meeting screen (they land on My week)');
   await ctx.close();
 }
 
@@ -253,9 +269,7 @@ async function adminNudges(browser, url) {
   const c2 = await newApp(browser);
   const p2 = await c2.newPage();
   await signIn(p2, url + '#/', 'mona');
-  ok(await p2.locator('.board-seg').count() === 1, 'the app opens on Projects (the meeting board)');
-  await p2.goto(url + '#/tasks');
-  await p2.waitForSelector('#addForm');
+  ok(await p2.isVisible('.mw-title'), 'members start on My week');
   await p2.goto(url + '#/meeting');
   await p2.waitForSelector('.weekbar');
   ok(!(await p2.isVisible('.card.quiet')), 'members don’t see the no-update list');
@@ -269,14 +283,16 @@ async function planNudge(browser, url) {
   await signIn(page, url, 'adham');
   ok(await page.isVisible('#planNudge'), 'Thursday with nothing planned for next week: nudge shown');
   await page.click('#planNext');
-  ok(/next week/.test(await page.$eval('#addForm select[name=week]', s => s.options[s.selectedIndex].textContent)), 'the nudge sets the add box to next week');
-  await page.fill('#addForm input[name=title]', 'Prepare the site acceptance test documents');
-  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
-  await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('.wk-col.next >> text=Prepare the site acceptance test documents');
+  await page.waitForSelector('#qaForm');
+  ok(/Next week/.test(await page.textContent('#qaForm [data-qw].on')), 'the nudge opens quick add set to next week');
+  await page.fill('#qaForm textarea[name=title]', 'Prepare the site acceptance test documents');
+  await page.click('#qaForm button[type=submit]');
+  await sleep(400);
+  ok(/Next week/.test(await page.textContent('#qaForm [data-qw].on')) && await page.getAttribute('[data-qp].on', 'data-qp') === 'PRJ-0001',
+    'the next task keeps the planned week and the project (no silent switch back)');
+  await page.click('#qaForm [data-close]');
+  await page.waitForSelector('.mw-sec:nth-child(2) >> text=Prepare the site acceptance test documents');
   ok(!(await page.isVisible('#planNudge')), 'nudge gone once something is planned');
-  ok(/next week/.test(await page.$eval('#addForm select[name=week]', s => s.options[s.selectedIndex].textContent)) &&
-    await page.inputValue('#addForm select[name=project]') === 'PRJ-0001', 'the next task keeps the planned week and the project (no silent switch back)');
   await ctx.close();
 
   const c2 = await newApp(browser);
@@ -287,7 +303,7 @@ async function planNudge(browser, url) {
   await p2.click('#planLater');
   ok(!(await p2.isVisible('#planNudge')), '"Later" hides it');
   await p2.reload();
-  await p2.waitForSelector('.board-seg');
+  await p2.waitForSelector('.appnav a');
   ok(!(await p2.isVisible('#planNudge')), '...and it stays hidden for that week');
   await c2.close();
 
@@ -308,8 +324,9 @@ async function weekRollover(browser, url) {
   await page.clock.runFor(5 * 60 * 1000);                                // Monday, week 45
   await page.waitForTimeout(500);
   const after = await page.textContent('.weekbar-label');
-  ok(/Week 44 · this week/.test(before) && /Week 45 · this week/.test(after) && /next to week 46/.test(after), 'the week moves on by itself while the app stays open');
-  await page.click('[data-board="all"]');
+  ok(/Week 44 · this week/.test(before) && /Week 45 · this week/.test(after), 'the week moves on by itself while the app stays open');
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.wk2');
   const carried = await page.$$eval('.wk-col:not(.next) .tag-carry', els => els.length);
   ok(carried >= 2, 'unfinished tasks roll over into the new week (' + carried + ' carried)');
   await ctx.close();
@@ -320,10 +337,13 @@ async function adminPlans(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
   await signIn(page, url, 'adham');
+  // Any week: from the project's panel (quick add offers this week and next week)
+  await page.goto(url + '#/projects');
+  await page.click('.prow[data-project="PRJ-0001"]');
+  await page.waitForSelector('.side-panel #addForm');
   const weeks = await page.$$eval('#addForm select[name=week] option', os => os.map(o => o.value));
   const later = weeks[weeks.length - 1 - 5];   // three weeks ahead
   await page.fill('#addForm input[name=title]', 'Prepare the FAT procedure for the client');
-  await page.selectOption('#addForm select[name=project]', 'PRJ-0001');
   await page.selectOption('#addForm select[name=person]', { label: 'For: Mona PLC — PLC Engineer' });
   await page.selectOption('#addForm select[name=week]', later);
   await page.click('#addForm button[type=submit]');
@@ -340,7 +360,6 @@ async function adminPlans(browser, url) {
   await page.click('#addForm button[type=submit]');
   await sleep(500);
   await page.goto(url + '#/meeting');
-  await page.click('[data-board="all"]');
   await page.waitForSelector('.wk2');
   ok(await page.locator('.wk2').first().locator('.wk-col').count() === 2, 'meeting: this week and next week side by side');
   ok(/Download the PLC program/.test(await page.textContent('.wk-col.next')), 'meeting: next week’s plan is in the second column');
@@ -351,7 +370,7 @@ async function adminPlans(browser, url) {
   await page.setViewportSize({ width: 1000, height: 900 });
   ok(await page.$eval('.wk2', el => el.scrollWidth <= el.clientWidth + 1), 'meeting: on a wide screen both weeks fit');
   // By person: each employee, their tasks grouped by project
-  await page.click('[data-board="people"]');
+  await page.click('[data-detail="person"]');
   await page.waitForSelector('.person-project');
   const monaCard = await page.locator('.board-card', { hasText: 'Mona PLC' }).first().textContent();
   ok(/Alpha Plant/.test(monaCard) && /Download the PLC program/.test(monaCard) && /Prepare the FAT/.test(monaCard) === false, 'admin By person: Mona’s tasks under their project (this and next week)');
@@ -362,8 +381,8 @@ async function adminPlans(browser, url) {
   ok(await page.locator('.board-card.folded').count() === await page.locator('.board-card').count() - 1, 'one card can be opened on its own');
   await page.click('#unfoldAll');
   ok(await page.locator('.board-card.folded').count() === 0, 'Expand all opens every card');
-  // Tick a task straight on the board
-  await page.click('[data-board="all"]');
+  // Tick a task straight on the meeting walk-through
+  await page.click('[data-detail="project"]');
   const first = page.locator('.board-card [data-done]').first();
   const id = await first.getAttribute('data-done');
   await first.click();
@@ -374,11 +393,12 @@ async function adminPlans(browser, url) {
   await page.waitForSelector('.back');
   ok(/#\/manage$/.test(page.url()), 'admin settings button opens Manage');
   await page.click('.back');
-  await page.waitForSelector('.board-seg');
-  ok(true, 'Manage leads back to the board');
+  await page.waitForSelector('.appnav a');
+  ok(true, 'Manage leads back');
 
-  // Admin puts Omar on the project from the project page, then takes him off again
-  await page.click('[data-project="PRJ-0001"]');
+  // Admin puts Omar on the project from the project panel, then takes him off again
+  await page.goto(url + '#/projects');
+  await page.click('.prow[data-project="PRJ-0001"]');
   await page.waitForSelector('#assignSel');
   await page.selectOption('#assignSel', { label: 'Omar Dev — Software Engineer' });
   await page.waitForSelector('[data-unassign]:near(:text("Omar"))');
@@ -394,7 +414,9 @@ async function adminPlans(browser, url) {
   const ctx2 = await newApp(browser);
   const p2 = await ctx2.newPage();
   await signIn(p2, url, 'mona');
-  ok(await p2.locator('#addForm select[name=person]').count() === 0, 'members can only add tasks for themselves');
+  await p2.click('#qaOpen');
+  await p2.waitForSelector('#qaForm');
+  ok(await p2.locator('#qaForm select[name=person]').count() === 0, 'members can only add tasks for themselves');
   await ctx2.close();
 }
 
@@ -404,16 +426,19 @@ async function phoneLayout(browser, url) {
   const page = await ctx.newPage();
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await signIn(page, url + '#/', 'adham');
-  await page.click('[data-board="all"]');
-  ok(!(await page.isVisible('#addForm select[name=week]')), 'phone: the add box starts as one line');
-  await page.click('#addForm input[name=title]');
-  ok(await page.isVisible('#addForm select[name=week]'), 'phone: tapping it shows project and week');
-  ok(await page.locator('.wk-tabs').first().isVisible(), 'phone: week tabs above each project');
+  ok(await page.isVisible('.mtg-sum-line'), 'phone: managers start on Meeting');
+  const nav = await page.locator('.appnav').boundingBox();
+  ok(nav && nav.y > 760, 'phone: the screens are in a bottom bar (thumb reach)');
+  ok(await page.locator('.wk-tabs').first().isVisible(), 'phone: week tabs above each project in the walk-through');
   await page.locator('.wk-tabs').first().locator('button').nth(1).click();
   await sleep(600);
   ok((await page.locator('.wk-tabs').first().locator('button').nth(1).getAttribute('class')).includes('on'), 'phone: tapping a week tab shows that week');
-  await page.locator('[data-toggle]').first().click();
+  await page.click('.appnav a[href="#/week"]');
+  await page.waitForSelector('.mw-title');
+  ok(await page.isVisible('#qaOpen'), 'phone: “Add a task” sits above the bottom bar');
+  await page.locator('#view [data-toggle]').first().click();
   await page.waitForSelector('dialog[data-mode="task"][open]');
+  ok(await page.isVisible('dialog [data-block]') && await page.isVisible('dialog [data-move]'), 'phone: the task sheet starts with Done / Blocked / Next week');
   ok(await page.locator('#view .t-open').count() === 0, 'phone: a task opens in a bottom sheet, not inside the board');
   await page.fill('dialog [data-newsub]', 'Check the cabinet heaters');
   await page.press('dialog [data-newsub]', 'Enter');
@@ -437,14 +462,14 @@ async function departments(browser, url) {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await signIn(page, url + '#/', 'omar');
-  ok(await page.isVisible('[data-dept="AUTO"].on'), 'departments: a member opens on their own department’s board');
-  await page.click('[data-board="all"]');
-  ok(await page.isVisible('.board-card >> text=Alpha Plant') && !(await page.isVisible('text=Tower BMS Retrofit')), 'departments: the Automation board shows only Automation projects');
-  await page.click('[data-dept="BMS"]');
-  await page.waitForSelector('[data-dept="BMS"].on');
-  ok(await page.isVisible('.board-card >> text=Tower BMS Retrofit') && await page.isVisible('text=Survey the AHU controllers') && !(await page.isVisible('.board-card >> text=Alpha Plant')),
-    'departments: switching to BMS shows the BMS board');
-  ok(!(await page.isVisible('#saveMins')) && await page.locator('[data-board="people"]').count() === 0, 'departments: a member can’t manage the other department');
+  ok(await page.inputValue('#deptPick') === 'AUTO', 'departments: a member opens on their own department');
+  await page.goto(url + '#/projects');
+  await page.waitForSelector('.prow');
+  ok(await page.isVisible('.prow >> text=Alpha Plant') && !(await page.isVisible('text=Tower BMS Retrofit')), 'departments: Automation shows only Automation projects');
+  await page.selectOption('#deptPick', 'BMS');
+  await page.waitForSelector('.prow >> text=Tower BMS Retrofit');
+  ok(!(await page.isVisible('.prow >> text=Alpha Plant')), 'departments: switching to BMS shows the BMS projects');
+  ok(await page.locator('.appnav a[href="#/meeting"]').count() === 0, 'departments: a member can’t manage the other department');
   await ctx.close();
 
   // A BMS department admin manages BMS only.
@@ -452,24 +477,27 @@ async function departments(browser, url) {
   const p2 = await c2.newPage();
   p2.on('pageerror', e => errors.push(e.message));
   await signIn(p2, url + '#/', 'hany');
-  ok(await p2.isVisible('[data-dept="BMS"].on') && await p2.isVisible('#settingsBtn'), 'BMS admin: opens on BMS and gets the settings button');
+  ok(await p2.inputValue('#deptPick') === 'BMS' && await p2.isVisible('#settingsBtn') && await p2.isVisible('.mtg-sum-line'), 'BMS admin: opens on the BMS Meeting screen and gets the settings button');
   await c2.grantPermissions(['clipboard-read', 'clipboard-write']);
   await p2.click('#copyEmail');
-  await sleep(300);
   const text = await clipboard(p2, 'BMS team:');
   ok(/^Weekly Progress Check & Action Plan — BMS/.test(text) && text.includes('BMS team:') && text.includes('Survey the AHU') && !text.includes('PLC team:') && !text.includes('Alpha Plant'),
     'BMS email: one "BMS team" column with only BMS projects');
-  await p2.click('[data-addto="PRJ-0002"]');
-  ok(await p2.locator('#addForm select[name=person]').count() === 1, 'BMS admin: can add a task for someone on a BMS project');
-  await p2.click('[data-addto="PRJ-0002"]');
   await p2.click('#saveMins');
   await p2.waitForSelector('.mtg-note.saved');
   const mins = await p2.evaluate(() => window.__db.get().meetings);
   ok(mins.length === 1 && mins[0].department_id === 'BMS' && mins[0].snapshot.teams.join() === 'BMS', 'BMS admin: saves the BMS minutes');
-  await p2.click('[data-dept="AUTO"]');
-  await p2.waitForSelector('[data-dept="AUTO"].on');
-  ok(!(await p2.isVisible('.mtg-note.saved')) && !(await p2.isVisible('#saveMins')) && await p2.locator('[data-board="people"]').count() === 0,
+  await p2.selectOption('#deptPick', 'AUTO');
+  await p2.waitForFunction(() => document.querySelector('#deptPick').value === 'AUTO');
+  await sleep(300);
+  ok(!(await p2.isVisible('.mtg-note.saved')) && !(await p2.isVisible('#saveMins')),
     'BMS admin: Automation has its own minutes and can’t be managed by them');
+  await p2.selectOption('#deptPick', 'BMS');
+  await p2.click('.appnav a[href="#/week"]');
+  await p2.click('#qaOpen');
+  await p2.waitForSelector('#qaForm');
+  ok(await p2.locator('#qaForm select[name=person]').count() === 1, 'BMS admin: can add a task for someone in BMS');
+  await p2.click('#qaForm [data-close]');
   await p2.goto(url + '#/manage');
   await p2.waitForSelector('[data-edit]');
   ok(await p2.locator('[data-edit="PRJ-0002"]').count() === 1 && await p2.locator('[data-edit="PRJ-0001"]').count() === 0, 'BMS admin: Manage lists only BMS projects');
@@ -512,9 +540,9 @@ async function cardsLayout(browser, url) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await signIn(page, url + '#/', 'adham');
+  await signIn(page, url + '#/projects', 'adham');
   await page.click('[data-layout="cards"]');
-  await page.click('[data-board="all"]');
+  await page.click('[data-scope="all"]');
   await page.waitForSelector('.lanes');
   ok(await page.inputValue('#groupBy') === 'status', 'cards: grouped by status by default');
   const lane = page.locator('.lane[data-lane="In Progress"]');
@@ -547,8 +575,8 @@ async function cardsLayout(browser, url) {
   ok((await page.evaluate(() => window.__db.get().projects.find(p => p.id === 'PRJ-0001').status)) === 'Paused', 'cards: an admin drags a card to change the project’s status');
   // Tapping a card opens the project
   await page.click('.pcard .pc-open');
-  await page.waitForSelector('#backBtn');
-  ok(true, 'cards: tapping a card opens the project page');
+  await page.waitForSelector('.side-panel #backBtn');
+  ok(await page.isVisible('.lanes'), 'cards: tapping a card opens the project beside the board');
   await page.click('#backBtn');
   await page.reload();
   await page.waitForSelector('.lanes');
@@ -559,7 +587,7 @@ async function cardsLayout(browser, url) {
   const c2 = await newApp(browser);
   const p2 = await c2.newPage();
   p2.on('pageerror', e => errors.push(e.message));
-  await signIn(p2, url + '#/', 'laila');
+  await signIn(p2, url + '#/projects', 'laila');
   await p2.click('[data-layout="cards"]');
   await p2.waitForSelector('.lanes');
   ok(await p2.locator('.pcard[draggable]').count() === 0, 'cards: members can’t drag cards');
@@ -570,10 +598,10 @@ async function cardsLayout(browser, url) {
   const c3 = await newApp(browser, { viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true });
   const p3 = await c3.newPage();
   p3.on('pageerror', e => errors.push(e.message));
-  await signIn(p3, url + '#/', 'adham');
-  await p3.click('[data-layout="cards"]');
-  await p3.waitForSelector('.lanes');
-  ok(await p3.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'cards on a phone: no sideways page scroll');
+  await signIn(p3, url + '#/projects', 'adham');
+  await p3.waitForSelector('.prow');
+  ok(await p3.locator('.layout-seg').count() === 0 && await p3.locator('.lanes').count() === 0, 'phone: Projects is a compact list (no board columns to swipe)');
+  ok(await p3.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'phone: no sideways page scroll');
   ok(errors.length === 0, 'cards: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
   await c3.close();
 }
@@ -595,9 +623,9 @@ async function peopleDetails(browser, url) {
   await page.waitForTimeout(100);
   ok(await page.locator('.member').count() === 1 && await page.isVisible('.member >> text=Tamer Tech'), 'people: search people by title');
   // Assigning: pickers grouped by org-chart team
-  await page.goto(url + '#/');
-  await page.waitForSelector('.board-seg');
-  await page.click('[data-project="PRJ-0002"]');
+  await page.goto(url + '#/projects');
+  await page.waitForSelector('.prow');
+  await page.click('.prow[data-project="PRJ-0002"]');
   await page.waitForSelector('#assignSel');
   const optgroups = await page.$$eval('#assignSel optgroup', gs => gs.map(g => g.label));
   ok(optgroups[0] === 'Building Technical Staff' && optgroups.some(g => /· Automation$/.test(g)),
@@ -611,9 +639,9 @@ async function peopleDetails(browser, url) {
     'people: the project team checklist is grouped, with titles');
   await page.click('dialog [data-cancel]');
   // By person: only people on a project
-  await page.goto(url + '#/');
-  await page.waitForSelector('.board-seg');
-  await page.click('[data-board="people"]');
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('[data-detail="person"]');
+  await page.click('[data-detail="person"]');
   await page.waitForSelector('.board-card');
   const names = await page.$$eval('.board-card .board-title strong', ss => ss.map(s => s.textContent));
   ok(names.includes('Hany BMS Lead') && names.includes('Laila BMS') && !names.includes('Tamer Tech'),
@@ -628,13 +656,13 @@ async function sidePanel(browser, url) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
-  await signIn(page, url + '#/', 'mona');
+  await signIn(page, url + '#/projects', 'mona');
   await page.click('[data-layout="cards"]');
   await page.click('.pcard >> text=Alpha Plant');
   await page.waitForSelector('.side-panel');
   ok(await page.isVisible('.lanes') && await page.isVisible('.pcard.selected'), 'side panel: the project opens beside the board, its card highlighted');
-  ok(await page.isVisible('.side-panel >> text=Wire the remote IO cabinet') && await page.locator('#addForm').count() === 1,
-    'side panel: shows the project’s tasks and one add box (the board’s add box steps aside)');
+  ok(await page.isVisible('.side-panel >> text=Wire the remote IO cabinet') && await page.locator('#addForm').count() === 1 && !(await page.isVisible('#qaOpen')),
+    'side panel: shows the project’s tasks and its own add box (quick add steps aside)');
   ok(await page.isVisible('.side-panel .name-tag >> text=Adham Admin'), 'side panel: shows who is on the project');
   await page.fill('.side-panel #addForm input[name=title]', 'Check the panel wiring diagrams with the client');
   await page.click('.side-panel #addForm button[type=submit]');
@@ -645,7 +673,7 @@ async function sidePanel(browser, url) {
   ok(await page.isVisible('.side-panel >> text=No tasks planned for next week'), 'side panel: switches to next week');
   await page.keyboard.press('Escape');
   await page.waitForSelector('.side-panel', { state: 'detached' });
-  ok(await page.locator('#addForm').count() === 1, 'side panel: Esc closes it and the board’s add box is back');
+  ok(await page.isVisible('#qaOpen'), 'side panel: Esc closes it and quick add is back');
   await page.click('.pcard >> text=Alpha Plant');
   await page.waitForSelector('.side-panel');
   await page.click('.pcard >> text=Alpha Plant');
@@ -661,20 +689,20 @@ async function ownTasks(browser, url) {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   // Mona is on Alpha Plant with Adham; T1 is Adham's, T2 is hers.
-  await signIn(page, url + '#/', 'mona');
-  await page.click('[data-board="mine"]');
-  await page.waitForSelector('.board-card');
-  const mine = await page.textContent('#view .board-grid');
-  ok(mine.includes(T2) && !mine.includes(T1), 'Mine: only my tasks, on the projects I’m on');
-  await page.click('[data-board="all"]');
-  await page.waitForSelector(`[data-toggle] >> text=${T1}`);
-  const t1 = page.locator('.t', { hasText: T1 });
+  await signIn(page, url + '#/week', 'mona');
+  await page.waitForSelector('.mw-title');
+  const mine = await page.textContent('#view .mw-cols');
+  ok(mine.includes(T2) && !mine.includes(T1), 'My week: only my tasks');
+  await page.goto(url + '#/projects');
+  await page.click('.prow[data-project="PRJ-0001"]');
+  await page.waitForSelector(`.side-panel [data-toggle] >> text=${T1}`);
+  const t1 = page.locator('.side-panel .t', { hasText: T1 });
   ok(await t1.locator('[data-done]').isDisabled(), 'own tasks only: a teammate’s task can’t be ticked');
   await t1.locator('[data-toggle]').click();
   ok(await page.isVisible('.t-open.read-only >> text=Only they or an admin can change it') && await t1.locator('[data-title]').count() === 0,
     'own tasks only: a teammate’s task opens read-only');
   await t1.locator('[data-toggle]').click();
-  const t2 = page.locator('.t', { hasText: T2 });
+  const t2 = page.locator('.side-panel .t', { hasText: T2 });
   ok(!(await t2.locator('[data-done]').isDisabled()), 'own tasks only: my own task can be ticked');
   await t2.locator('[data-toggle]').click();
   const boxes = await t2.locator('[data-asg]').evaluateAll(cs => cs.map(c => c.dataset.asg.split(':')[1]));
@@ -682,6 +710,53 @@ async function ownTasks(browser, url) {
   ok(boxes.join() === monaId, 'own tasks only: on my task I can only add or remove myself');
   ok(await t2.locator('[data-del]').count() === 0, 'own tasks only: a task an admin created for me can’t be deleted by me');
   ok(errors.length === 0, 'own tasks: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await ctx.close();
+}
+
+async function meetingHealth(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(url);
+  // Alpha Plant is past its end date and has a task blocked since last week; Gamma has nobody updating it.
+  await page.evaluate(() => {
+    const d = window.__db.get(); const u = d.users;
+    const [y, w] = d.W.split('-W').map(Number);
+    const last = y + '-W' + String(w - 1).padStart(2, '0');
+    d.projects.find(p => p.id === 'PRJ-0001').end_date = '2020-01-31';
+    d.projects.push({ id: 'PRJ-0003', name: 'Gamma Pumping', type: 'PLC', status: 'In Progress', priority: 'High', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'AUTO' });
+    d.assignments.push({ project_id: 'PRJ-0003', user_id: u.omar.id });
+    const t = d.tasks.find(x => x.title === 'Wire the remote IO cabinet');
+    t.status = 'Blocked'; t.block_note = ''; t.week = last;
+    window.__db.save();
+  });
+  await signIn(page, url + '#/', 'adham');
+  await page.waitForSelector('.hchips');
+  const chip = async f => Number(await page.textContent(`[data-hf="${f}"] b`));
+  ok(await chip('blocked') === 1 && await chip('late') === 1 && await chip('quiet') === 1, 'meeting: health chips count blocked, past end date and no-update projects');
+  await page.click('[data-hf="quiet"]');
+  ok(await page.locator('.htable .prow').count() === 1 && await page.isVisible('.htable .prow >> text=Gamma Pumping'), 'meeting: tapping a chip filters the projects');
+  await page.click('[data-hf="quiet"]');
+  ok(await page.locator('.htable .prow').count() >= 2, 'meeting: tapping it again shows all');
+  const blk = await page.textContent('.mtg-side .card.warn');
+  ok(/since week \d+/.test(blk) && /no reason given/.test(blk), 'meeting: Blocked shows since when, and flags a missing reason');
+  await page.click('.blk-item');
+  await page.waitForSelector('.side-panel');
+  ok(await page.isVisible('.side-panel .block-box'), 'meeting: tapping a blocked item opens its project with the task open');
+  await page.click('.side-panel [data-reason$=":Material"]');
+  await sleep(400);
+  ok((await page.evaluate(() => window.__db.get().tasks.find(t => t.title === 'Wire the remote IO cabinet').block_note)) === 'Material', 'blocked: a reason is one tap');
+  await page.keyboard.press('Escape');
+  // A task an admin created for Mona that nobody touched doesn't count as Mona's update
+  const quiet = await page.textContent('.mtg-side .card.quiet');
+  ok(/Omar Dev/.test(quiet) && !/Adham/.test(quiet), 'no update: lists people with nothing of their own changed this week');
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await page.click('#copyEmail');
+  const text = await clipboard(page, 'Gamma Pumping');
+  ok(/projects moved · \d+ tasks done · \d+ blocked/.test(text) && /Blocked \(1\):/.test(text) && /Gamma Pumping — No update this week/.test(text) && /Past end date/.test(text),
+    'email: summary line, Blocked section, projects with no update and health in the status');
+  ok(errors.length === 0, 'meeting health: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
   await ctx.close();
 }
 
@@ -701,6 +776,7 @@ async function ownTasks(browser, url) {
     await peopleDetails(browser, url);
     await sidePanel(browser, url);
     await ownTasks(browser, url);
+    await meetingHealth(browser, url);
   } finally {
     await browser.close();
     server.close();

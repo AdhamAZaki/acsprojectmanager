@@ -63,20 +63,21 @@ function demo() {
   await page.waitForSelector('#loginView:not([hidden])');
   await page.screenshot({ path: path.join(OUT, '1-login.png') });
 
-  await signIn(page, url, 'adham');
-  await page.click('[data-board="mine"]');
-  await page.screenshot({ path: path.join(OUT, '2-board.png'), fullPage: true });
-  await page.click('[data-toggle] >> text=Build the filter overview');
+  await signIn(page, url + '#/week', 'adham');
+  await page.waitForSelector('.mw-title');
+  await page.screenshot({ path: path.join(OUT, '2-board.png') });
+  await page.click('#view [data-toggle] >> text=Build the filter overview');
   await page.waitForSelector('dialog[data-mode="task"][open]');
   await page.screenshot({ path: path.join(OUT, '2b-task-sheet.png') });
   await page.click('dialog [data-close]');
-  await page.click('[data-board="people"]');
-  await page.waitForSelector('.person-project');
-  await page.screenshot({ path: path.join(OUT, '3-by-person.png'), fullPage: true });
+  await page.goto(url + '#/meeting');
+  await page.waitForSelector('.hchips');
+  await page.screenshot({ path: path.join(OUT, '3-by-person.png') });
 
-  await page.setViewportSize({ width: 1100, height: 900 });
-  await page.click('[data-board="all"]');
-  await page.screenshot({ path: path.join(OUT, '4-board-wide.png'), fullPage: true });
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.reload();
+  await page.waitForSelector('.hchips');
+  await page.screenshot({ path: path.join(OUT, '4-board-wide.png') });
 
   await browser.close();
   server.close();
