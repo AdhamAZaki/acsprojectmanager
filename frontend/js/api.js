@@ -79,7 +79,7 @@
     id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
     subtasks: Array.isArray(r.subtasks) ? r.subtasks : [], createdBy: r.created_by,
-    createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at),
+    createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at), createdRaw: r.created_at,
     version: r.updated_at,   // exact timestamp, used to spot a teammate saving the same task first
   });
   const mapContact = r => ({ id: r.id, name: r.name, org: r.org || '' });

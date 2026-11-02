@@ -39,7 +39,7 @@ async function signIn(page, url, username) {
   await page.fill('input[name=username]', username);
   await page.fill('input[name=password]', 'test-password');
   await page.click('button[type=submit]');
-  await page.waitForSelector('.week-seg, .board-seg');
+  await page.waitForSelector('.appnav a');
 }
 
 // PW_CHANNEL=chrome uses an installed Google Chrome instead of Playwright's Chromium (CI does this).

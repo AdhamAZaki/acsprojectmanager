@@ -11,9 +11,9 @@ Each engineer signs in with a **username and password** and:
 
 The board is the meeting: it builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins also get a **By person** view (each employee's tasks, grouped by project), can add tasks for anyone in any week, set who is on each project, and open **Manage** from the ⚙ settings button. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's department and PLC / Dev team) and 3rd parties. A **Dept admin** (e.g. the BMS lead) has the same admin tools, but only for their own department; the email for BMS has one *BMS Team Action Plan* column.
 
-| Phone | Task (phone) | By person | Desktop |
+| My week (phone) | Task (phone) | Meeting (phone) | Meeting (computer) |
 |---|---|---|---|
-| ![Weekly board on a phone](docs/screenshots/2-board.png) | ![Task sheet on a phone](docs/screenshots/2b-task-sheet.png) | ![By person](docs/screenshots/3-by-person.png) | ![Wide screen](docs/screenshots/4-board-wide.png) |
+| ![My week on a phone](docs/screenshots/2-board.png) | ![Task sheet on a phone](docs/screenshots/2b-task-sheet.png) | ![Meeting on a phone](docs/screenshots/3-by-person.png) | ![Meeting on a computer](docs/screenshots/4-board-wide.png) |
 
 *(Screenshots use made-up demo data.)*
 
