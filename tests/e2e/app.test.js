@@ -399,6 +399,7 @@ async function adminPlans(browser, url) {
   // Admin puts Omar on the project from the project panel, then takes him off again
   await page.goto(url + '#/projects');
   await page.click('.prow[data-project="PRJ-0001"]');
+  await page.click('.side-panel .sp-fold summary >> text=Team');
   await page.waitForSelector('#assignSel');
   await page.selectOption('#assignSel', { label: 'Omar Dev — Software Engineer' });
   await page.waitForSelector('[data-unassign]:near(:text("Omar"))');
@@ -626,6 +627,7 @@ async function peopleDetails(browser, url) {
   await page.goto(url + '#/projects');
   await page.waitForSelector('.prow');
   await page.click('.prow[data-project="PRJ-0002"]');
+  await page.click('.side-panel .sp-fold summary >> text=Team');
   await page.waitForSelector('#assignSel');
   const optgroups = await page.$$eval('#assignSel optgroup', gs => gs.map(g => g.label));
   ok(optgroups[0] === 'Building Technical Staff' && optgroups.some(g => /· Automation$/.test(g)),
@@ -760,6 +762,64 @@ async function meetingHealth(browser, url) {
   await ctx.close();
 }
 
+async function r2Features(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(url);
+  // Mona has two tasks carried 3 weeks; Adham is on 9 more projects (overloaded); one task done this week.
+  const seed = () => {
+    const d = window.__db.get(); const u = d.users;
+    const [y, w] = d.W.split('-W').map(Number);
+    const old = y + '-W' + String(w - 3).padStart(2, '0');
+    const t0 = d.tasks[0].created_at;
+    ['Update the cable schedule', 'Clean up the old HMI backups'].forEach((title, i) => d.tasks.push({ id: 'old-' + i, project_id: 'PRJ-0001', week: old, title, notes: '', status: 'To Do', team: null, block_note: '',
+      assignee_ids: [u.mona.id], contact_ids: [], subtasks: [], created_by: u.mona.id, created_at: t0, updated_at: t0 }));
+    for (let i = 10; i < 20; i++) {
+      d.projects.push({ id: 'PRJ-00' + i, name: 'Extra project ' + i, type: 'PLC', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'AUTO' });
+      d.assignments.push({ project_id: 'PRJ-00' + i, user_id: u.adm.id });
+    }
+    d.tasks.find(t => t.title === 'Commission the pump station panels').status = 'Done';
+    window.__db.save();
+  };
+  await page.evaluate(seed);
+  // Carried-over review (Mona)
+  await signIn(page, url + '#/week', 'mona');
+  await page.waitForSelector('.card.review');
+  ok(/Carried over 2\+ weeks \(2\)/.test(await page.textContent('.card.review')), 'carried-over review: lists my tasks carried 2+ weeks');
+  await page.click('.rv-row:has-text("Update the cable schedule") [data-keep-task]');
+  await sleep(400);
+  await page.click('.rv-row:has-text("Clean up the old HMI backups") [data-done-task]');
+  await sleep(400);
+  const d = await page.evaluate(() => window.__db.get());
+  const keep = d.tasks.find(t => t.title === 'Update the cable schedule'), done = d.tasks.find(t => t.title === 'Clean up the old HMI backups');
+  ok(keep.week === d.W && keep.status !== 'Done' && done.status === 'Done', 'carried-over review: Keep moves it to this week, Done finishes it (one tap each)');
+  ok(!(await page.isVisible('.card.review')), 'carried-over review: gone once everything is reviewed');
+  await ctx.close();
+
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  p2.on('pageerror', e => errors.push(e.message));
+  await p2.goto(url);
+  await p2.evaluate(seed);
+  await signIn(p2, url + '#/meeting', 'adham');
+  await p2.waitForSelector('.htable .prow');
+  ok(await p2.isVisible('.htable .prow[data-project="PRJ-0001"] >> text=Lead: Adham A.'), 'team leader: worked out from the project team and shown on the project');
+  await p2.click('[data-detail="load"]');
+  await p2.waitForSelector('.wl-table');
+  const first = await p2.textContent('.wl-table tbody tr:first-child');
+  ok(/Adham Admin/.test(first) && /Overloaded/.test(first), 'workload: people sorted by open projects, the overloaded one flagged');
+  // Project history
+  await p2.click('.htable .prow[data-project="PRJ-0001"]');
+  await p2.waitForSelector('.side-panel .history');
+  await p2.click('.side-panel .history summary');
+  ok(/1 done/.test(await p2.textContent('.side-panel .history summary')) && await p2.locator('.side-panel .hist-col').count() === 8 &&
+    await p2.isVisible('.side-panel .hist-list >> text=Commission the pump station panels'), 'project history: last 8 weeks with what was done');
+  ok(errors.length === 0, 'R2: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await c2.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -777,6 +837,7 @@ async function meetingHealth(browser, url) {
     await sidePanel(browser, url);
     await ownTasks(browser, url);
     await meetingHealth(browser, url);
+    await r2Features(browser, url);
   } finally {
     await browser.close();
     server.close();

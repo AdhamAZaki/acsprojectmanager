@@ -41,6 +41,9 @@
     fold: { blocked: true, quiet: true },   // phone: Blocked / No-update lists folded to one line
     dept: null,          // department whose board is shown (default: your own)
     peopleOpen: {},      // task id -> its People section is unfolded
+    leadFilter: null,    // Meeting: show one team leader's projects
+    unitFilter: null,    // Workload: one org-chart team
+    teamOpen: false,     // project panel: Team section unfolded
     pscope: null,        // Projects: 'mine' | 'all'
     hfilter: 'all',      // Meeting: health filter
     mdetail: 'project',  // Meeting: walk through by project or by person
@@ -587,11 +590,13 @@
       ${canManage(p.departmentId) ? '' : teamTags(p.id, { people: order.map(id => ({ id: id })) })}
       ${p.notes ? `<p class="sp-notes">${esc(p.notes)}</p>` : ''}
       ${weekSwitch(S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length, S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'next')).length)}
-      ${canManage(p.departmentId) ? teamEditor(p) : ''}
       ${CLOSED.indexOf(p.status) === -1 ? addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1))) : ''}
       ${order.map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</h3>
         ${byPerson[id].sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t, true)).join('')}</section>`).join('')
-        || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}`;
+        || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}
+      ${canManage(p.departmentId) ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
+      ${historyHtml(p)}`;
+    $$('[data-spfold="team"]', root).forEach(d => d.ontoggle = () => { S.teamOpen = d.open; });
     $('#backBtn', root).onclick = closePanel;
     const leave = $('#leaveBtn', root);
     if (leave) leave.onclick = async () => {
@@ -602,6 +607,19 @@
     const join = $('#joinBtn', root);
     if (join) join.onclick = async () => { S.lastWrite = Date.now(); await guard(() => Api.joinProject(p.id)); render(); };
     bindWeekSwitch(root); bindAddBar(root, p.id); bindTasks(root); bindTeamEditor(root, p);
+  }
+
+  /** The project's last 8 weeks: a small bar per week (tasks done), and what was done. */
+  function historyHtml(p) {
+    const hist = projectHistory(p, S.mtgWeek);
+    const max = Math.max(1, ...hist.map(h => h.done.length));
+    const total = hist.reduce((n, h) => n + h.done.length, 0);
+    return `<details class="sp-fold history"><summary>History · last 8 weeks <small class="muted">${total} done</small></summary>
+      <div class="hist-bars" role="img" aria-label="Tasks done per week">${hist.map(h => `<span class="hist-col" title="Week ${wnum(h.week)}: ${h.done.length} done, ${h.added} added">
+        <span class="hist-bar" style="height:${Math.round(h.done.length / max * 100)}%"></span><small>${wnum(h.week)}</small><b>${h.done.length}</b></span>`).join('')}</div>
+      ${hist.slice().reverse().filter(h => h.done.length).map(h => `<p class="hist-week">Week ${wnum(h.week)} <small class="muted">· ${h.done.length} done · ${h.added} added</small></p>
+        <ul class="plain hist-list">${h.done.map(t => `<li>✔ ${esc(t.title)} <small class="muted">${esc(who(t) || member(t.createdBy).name)}</small></li>`).join('')}</ul>`).join('') || '<p class="muted small">Nothing done in these weeks yet.</p>'}
+    </details>`;
   }
 
   /** Admins: who is on the project. Tap × to take someone off, or pick a person to add. */
@@ -1078,6 +1096,30 @@
     blocked: { label: 'Blocked', rank: 0 }, late: { label: 'Past end date', rank: 1 }, stale: { label: 'Carried 2+ weeks', rank: 2 },
     quiet: { label: 'No update', rank: 3 }, ok: { label: 'On track', rank: 4 },
   };
+  /**
+   * The project's team leader, worked out from its team (no extra data to keep up to date): the
+   * Dept admin (else admin) on the team whose org-chart team matches most of the others on it.
+   */
+  function projectLead(p) {
+    const team = projectTeam(p.id).filter(m => m.active !== false);
+    const leads = team.filter(m => m.role === 'Dept admin' || m.role === 'Admin');
+    if (!leads.length) return null;
+    const units = {};
+    team.filter(m => leads.indexOf(m) === -1 && m.unit).forEach(m => { units[m.unit] = (units[m.unit] || 0) + 1; });
+    return leads.slice().sort((a, b) => (units[b.unit] || 0) - (units[a.unit] || 0) ||
+      (a.role === 'Dept admin' ? 0 : 1) - (b.role === 'Dept admin' ? 0 : 1) || a.name.localeCompare(b.name))[0];
+  }
+  /** Last 8 weeks of a project: tasks done and added per week (from the tasks already loaded). */
+  function projectHistory(p, upTo) {
+    const ts = S.data.tasks.filter(t => t.projectId === p.id);
+    const out = [];
+    for (let n = 7; n >= 0; n--) {
+      const w = shiftWeek(upTo, -n);
+      out.push({ week: w, done: ts.filter(t => isDone(t) && t.week === w),
+        added: ts.filter(t => t.createdRaw && isoWeek(new Date(t.createdRaw)) === w).length });
+    }
+    return out;
+  }
   const healthBadge = h => h.flags.length ? h.flags.map(f => `<span class="hb hb-${f}">${HEALTH[f].label}</span>`).join('') : '<span class="hb hb-ok">On track</span>';
   const ago = v => {
     if (!v) return '—';
@@ -1093,7 +1135,7 @@
       <span class="pr-main"><span class="pr-dot" aria-hidden="true"></span><strong>${esc(p.name)}</strong>
         <span class="pr-tags"><span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${h.closed || p.status !== 'In Progress' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}${healthBadge(h)}</span></span>
       <span class="pr-nums">${n(h.blocked, 'bad', 'blocked')}${n(h.doing, '', 'open')}${n(h.done, 'ok', 'done')}${n(h.next, 'nx', 'next wk')}</span>
-      <span class="pr-meta muted small">${team.length ? team.length + (team.length === 1 ? ' person' : ' people') : 'Nobody yet'} · ${ago(h.last)}${p.endDate ? ' · ends ' + esc(p.endDate) : ''}</span>
+      <span class="pr-meta muted small">${projectLead(p) ? 'Lead: ' + esc(shortName(projectLead(p).name)) + ' · ' : ''}${team.length ? team.length + (team.length === 1 ? ' person' : ' people') : 'Nobody yet'} · ${ago(h.last)}${p.endDate ? ' · ends ' + esc(p.endDate) : ''}</span>
     </button>`;
   }
 
@@ -1119,18 +1161,33 @@
           </div>`).join('') || `<div class="empty small-empty"><p>${empty}</p></div>`}
       </section>`;
     };
+    // Carried 2+ weeks: one tap each to keep (moves it to this week), finish or drop it.
+    const review = week === THIS ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
     const day = new Date().getDay();
     const planHint = week === THIS && (day === 0 || day >= 4) && !mine.some(t => t.week === next) && remember.get('plan-dismissed') !== next;
     root.innerHTML = `
       ${weekBar()}
       ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(next)} yet. It goes straight into next week’s meeting.</span>
         <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(next)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
+      ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
+        <p class="muted small" style="margin:0 0 8px">Still doing these? Keep them for this week, mark them done, or drop them.</p>
+        ${review.map(t => `<div class="rv-row"><div class="rv-text"><strong>${esc(t.title)}</strong><small class="muted">${esc(project(t.projectId).name)} · since week ${wnum(t.week)}</small></div>
+          <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canManage(project(t.projectId).departmentId) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
+      </section>` : ''}
       <div class="mw-cols">
         ${section(mine.filter(inWeek), week === THIS ? 'This week' : 'Week ' + wnum(week), 'week ' + wnum(week), 'Nothing yet. Tap <b>Add a task</b> below.')}
         ${section(mine.filter(t => t.week === next), week === THIS ? 'Next week' : 'Week ' + wnum(next), 'plan · week ' + wnum(next), 'Nothing planned yet.')}
       </div>
       ${quickAddBar()}`;
     bindWeekBar(root); bindTasks(root); bindProjectLinks(root); bindQuickAdd(root);
+    $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
+    $$('[data-done-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.doneTask), { status: 'Done', week: THIS }); toast('Done ✔'); });
+    $$('[data-drop-task]', root).forEach(b => b.onclick = async () => {
+      if (!confirm('Drop this task? It is deleted.')) return;
+      S.lastWrite = Date.now();
+      if (await guard(() => Api.deleteTask(b.dataset.dropTask).then(() => true))) toast('Dropped');
+      render();
+    });
     const plan = $('#planNext', root); if (plan) plan.onclick = () => quickAddSheet({ week: next });
     const later = $('#planLater', root); if (later) later.onclick = () => { remember.set('plan-dismissed', next); render(); };
   }
@@ -1261,6 +1318,40 @@
     bindProjectLinks(root); bindQuickAdd(root);
   }
 
+  // ---------- Workload (managers): who carries how much ----------
+
+  /**
+   * One row per person in the department (or on one of its open projects): open projects, this
+   * week's open / blocked / carried tasks, next week planned, last update. Overloaded = on at least
+   * 10 open projects and twice the team's median.
+   */
+  function workloadHtml(week) {
+    const openP = deptProjects().filter(p => CLOSED.indexOf(p.status) === -1);
+    const openIds = openP.map(p => p.id);
+    const people = S.data.team.filter(m => m.active && (m.departmentId === curDept() || S.data.assignments.some(a => a.userId === m.id && openIds.indexOf(a.projectId) !== -1)));
+    const rows = people.map(m => {
+      const ts = S.data.tasks.filter(t => ownersOf(t).indexOf(m.id) !== -1 && inDept(project(t.projectId)));
+      const cur = ts.filter(t => !isDone(t) && (t.week === week || (week === THIS && t.week < week)));
+      return { m: m, projects: S.data.assignments.filter(a => a.userId === m.id && openIds.indexOf(a.projectId) !== -1).length,
+        open: cur.length, blocked: cur.filter(isBlocked).length, carried: cur.filter(t => t.week < week).length,
+        done: ts.filter(t => isDone(t) && t.week === week).length, next: ts.filter(t => t.week === shiftWeek(week, 1)).length,
+        last: ts.reduce((x, t) => t.version && t.version > x ? t.version : x, '') };
+    });
+    const sorted = rows.map(r => r.projects).sort((a, b) => a - b);
+    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const heavy = r => r.projects >= 10 && r.projects >= 2 * Math.max(1, median);
+    const units = Array.from(new Set(rows.map(r => r.m.unit || 'Other'))).sort();
+    const shown = rows.filter(r => !S.unitFilter || (r.m.unit || 'Other') === S.unitFilter)
+      .sort((a, b) => b.projects - a.projects || b.open - a.open || a.m.name.localeCompare(b.m.name));
+    const n = (v, cls) => `<td class="${cls || ''}${v ? '' : ' zero'}">${v}</td>`;
+    return { keys: [], html: `<div class="card workload">
+      <div class="wl-head"><p class="muted small">Sorted by open projects. ${rows.filter(heavy).length ? `<b class="wl-heavy-note">${rows.filter(heavy).length} overloaded</b> (10+ projects and twice the team’s usual ${median}).` : `Team’s usual: ${median} projects each.`}</p>
+        ${units.length > 1 ? `<select id="unitFilter" aria-label="Team"><option value="">All teams</option>${units.map(u => `<option${S.unitFilter === u ? ' selected' : ''}>${esc(u)}</option>`).join('')}</select>` : ''}</div>
+      <div class="wl-scroll"><table class="wl-table"><thead><tr><th>Person</th><th>Projects</th><th>Open</th><th>Blocked</th><th>Carried</th><th>Done</th><th>Next week</th><th>Last update</th></tr></thead>
+      <tbody>${shown.map(r => `<tr class="${heavy(r) ? 'heavy' : ''}"><td><strong>${esc(r.m.name)}</strong>${heavy(r) ? ' <span class="hb hb-blocked">Overloaded</span>' : ''}<br><small class="muted">${esc(personInfo(r.m) || '')}</small></td>
+        ${n(r.projects, 'big')}${n(r.open)}${n(r.blocked, 'bad')}${n(r.carried, 'warn')}${n(r.done, 'ok')}${n(r.next)}<td class="muted small">${ago(r.last)}</td></tr>`).join('')}</tbody></table></div></div>` };
+  }
+
   // ---------- Meeting (managers): health, blocked, no update, minutes ----------
 
   function viewMeeting(root) {
@@ -1273,9 +1364,11 @@
     const m = buildMinutes(week);
     const projects = deptProjects().filter(p => CLOSED.indexOf(p.status) === -1 || m.rows.some(r => r.id === p.id && !r.silent))
       .map(p => ({ p: p, h: healthOf(p, week) }));
-    const count = f => projects.filter(x => f === 'all' ? true : f === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(f) !== -1).length;
+    const count = f => projects.filter(x => !S.leadFilter || (projectLead(x.p) || {}).id === S.leadFilter).filter(x => f === 'all' ? true : f === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(f) !== -1).length;
     const filter = S.hfilter || 'all';
-    const shown = projects.filter(x => filter === 'all' || (filter === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(filter) !== -1))
+    const leads = Array.from(new Set(projects.map(x => projectLead(x.p)).filter(Boolean))).sort((a, b) => a.name.localeCompare(b.name));
+    const byLead = x => !S.leadFilter || (projectLead(x.p) || {}).id === S.leadFilter;
+    const shown = projects.filter(byLead).filter(x => filter === 'all' || (filter === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(filter) !== -1))
       .sort((a, b) => HEALTH[a.h.key].rank - HEALTH[b.h.key].rank || (a.h.last < b.h.last ? 1 : -1));
     const quiet = week <= THIS ? quietPeople(week) : [];
     const chip = (f, label, cls) => `<button type="button" class="hchip${filter === f ? ' on' : ''} ${cls || ''}" data-hf="${f}"><b>${count(f)}</b> ${label}</button>`;
@@ -1290,13 +1383,14 @@
     quiet.forEach(q => { (units[q.m.unit || 'Other'] = units[q.m.unit || 'Other'] || []).push(q); });
     const detail = S.mdetail || 'project';
     const rowsWithTasks = m.rows.filter(r => !r.silent);
-    const cards = detail === 'person' ? personCards(rowsWithTasks, week, true) : projectCards(rowsWithTasks, week, true, 'active');
+    const cards = detail === 'person' ? personCards(rowsWithTasks, week, true) : detail === 'load' ? workloadHtml(week) : projectCards(rowsWithTasks, week, true, 'active');
     root.innerHTML = `
       ${weekBar()}
       <div class="actions-row no-print"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${manager && week <= THIS ? `<button type="button" class="secondary" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
       ${note}
       <div class="mtg-layout">
         <div class="mtg-main">
+          ${leads.length > 1 ? `<label class="lead-filter no-print">Lead <select id="leadFilter"><option value="">Everyone</option>${leads.map(l => `<option value="${esc(l.id)}"${S.leadFilter === l.id ? ' selected' : ''}>${esc(l.name)} (${projects.filter(x => (projectLead(x.p) || {}).id === l.id).length})</option>`).join('')}</select></label>` : ''}
           <div class="hchips no-print">${chip('all', 'projects')}${chip('blocked', 'blocked', 'bad')}${chip('late', 'past end date', 'bad')}${chip('stale', 'carried 2+ weeks', 'warn')}${chip('quiet', 'no update', 'warn')}${chip('ok', 'on track', 'ok')}</div>
           <p class="muted small mtg-sum-line">${m.summary.moved} ${m.summary.moved === 1 ? 'project' : 'projects'} moved this week · ${m.summary.done} ${m.summary.done === 1 ? 'task' : 'tasks'} done · ${m.summary.blocked} blocked · ${quiet.length} ${quiet.length === 1 ? 'person' : 'people'} with no update</p>
           <div class="prows htable">${shown.map(x => projectRowHtml(x.p, x.h)).join('') || '<div class="empty"><h3>Nothing here</h3></div>'}</div>
@@ -1317,17 +1411,19 @@
       </div>
       <div class="board-tools no-print mtg-detail-tools">
         <h3 class="mtg-detail-title">Walk through the week</h3>
-        <div class="seg board-seg"><button type="button" data-detail="project" class="${detail === 'project' ? 'on' : ''}">By project</button><button type="button" data-detail="person" class="${detail === 'person' ? 'on' : ''}">By person</button></div>
-        <span class="fold-all"><button type="button" class="text-btn" id="unfoldAll">Expand all</button><button type="button" class="text-btn" id="foldAll">Collapse all</button></span>
+        <div class="seg board-seg"><button type="button" data-detail="project" class="${detail === 'project' ? 'on' : ''}">By project</button><button type="button" data-detail="person" class="${detail === 'person' ? 'on' : ''}">By person</button><button type="button" data-detail="load" class="${detail === 'load' ? 'on' : ''}">Workload</button></div>
+        ${detail === 'load' ? '' : '<span class="fold-all"><button type="button" class="text-btn" id="unfoldAll">Expand all</button><button type="button" class="text-btn" id="foldAll">Collapse all</button></span>'}
       </div>
-      <div class="board-grid">${cards.html}</div>`;
+      ${detail === 'load' ? cards.html : `<div class="board-grid">${cards.html}</div>`}`;
     document.body.dataset.layout = 'list';
     bindWeekBar(root);
     $$('[data-hf]', root).forEach(b => b.onclick = () => { S.hfilter = b.dataset.hf === S.hfilter ? 'all' : b.dataset.hf; render(); });
     $$('[data-detail]', root).forEach(b => b.onclick = () => { S.mdetail = b.dataset.detail; render(); });
     $$('[data-fold]', root).forEach(b => b.onclick = () => { setCollapsed([b.dataset.fold], !collapsed()[b.dataset.fold]); render(); });
-    $('#foldAll', root).onclick = () => { setCollapsed(cards.keys, true); render(); };
-    $('#unfoldAll', root).onclick = () => { setCollapsed(cards.keys, false); render(); };
+    const fa = $('#foldAll', root); if (fa) fa.onclick = () => { setCollapsed(cards.keys, true); render(); };
+    const ua = $('#unfoldAll', root); if (ua) ua.onclick = () => { setCollapsed(cards.keys, false); render(); };
+    const lf = $('#leadFilter', root); if (lf) lf.onchange = () => { S.leadFilter = lf.value || null; render(); };
+    const uf = $('#unitFilter', root); if (uf) uf.onchange = () => { S.unitFilter = uf.value || null; render(); };
     const ba = $('#blockedAll', root); if (ba) ba.onclick = () => { S.blockedAll = !S.blockedAll; render(); };
     $$('[data-open-task]', root).forEach(b => b.addEventListener('click', () => { S.open[b.dataset.openTask] = true; }, true));
     // Phone: tabs above each project's two weeks jump between them; the tab follows a swipe
