@@ -19,6 +19,8 @@
       omar: { id: uid(), email: 'omar@advcontrolsys.com', name: 'Omar Dev', role: 'member', active: true, team: 'Dev', department_id: 'AUTO', title: 'Software Engineer', unit: 'Development' },
       hany: { id: uid(), email: 'hany@advcontrolsys.com', name: 'Hany BMS Lead', role: 'lead', active: true, team: null, department_id: 'BMS', title: 'BMS Team Leader Engineer', unit: 'B.A Execution Team B' },
       laila: { id: uid(), email: 'laila@advcontrolsys.com', name: 'Laila BMS', role: 'member', active: true, team: null, department_id: 'BMS', title: 'BMS Engineer', unit: 'B.A Execution Team B' },
+      amira: { id: uid(), email: 'amira@advcontrolsys.com', name: 'Amira GUI Lead', role: 'lead', active: true, team: 'UI/UX', department_id: 'GUI', title: 'UI/UX Team Leader', unit: 'GUI (UI UX)' },
+      gina: { id: uid(), email: 'gina@advcontrolsys.com', name: 'Gina GUI Dev', role: 'member', active: true, team: 'Dev', department_id: 'GUI', title: 'UI/UX Developer', unit: 'GUI Dev' },
       tamer: { id: uid(), email: 'tamer@advcontrolsys.com', name: 'Tamer Tech', role: 'member', active: true, team: null, department_id: 'BMS', title: 'Technician', unit: 'Building Technical Staff' },
     };
     const t0 = ts();
@@ -28,6 +30,7 @@
       departments: [
         { id: 'AUTO', name: 'Automation', teams: ['PLC', 'Dev'], project_types: ['PLC', 'AVEVA', 'AVEVA + PLC', 'Other'], sort: 1 },
         { id: 'BMS', name: 'BMS', teams: ['BMS'], project_types: ['BMS', 'GRMS', 'CRS', 'Service', 'Other'], sort: 2 },
+        { id: 'GUI', name: 'GUI', teams: ['UI/UX', 'Dev'], project_types: ['GUI', 'Internal', 'Other'], sort: 3, cross_project: true },
       ],
       projects: [
         { id: 'PRJ-0001', name: 'Alpha Plant', type: 'AVEVA + PLC', status: 'In Progress', priority: 'Medium', client: '', manager: '', notes: '', start_date: null, end_date: null, department_id: 'AUTO' },
@@ -41,6 +44,8 @@
           created_by: users.adm.id, created_at: t0, updated_at: t0 },
         { id: uid(), project_id: 'PRJ-0001', week: W, title: 'Wire the remote IO cabinet', notes: '', status: 'To Do', team: 'Dev', block_note: '',
           assignee_ids: [users.mona.id], contact_ids: [], subtasks: [], created_by: users.adm.id, created_at: t0, updated_at: t0 },
+        { id: uid(), project_id: 'PRJ-0002', week: W, title: 'GUI: AHU screens for the tower', notes: '', status: 'To Do', team: 'Dev', block_note: '',
+          assignee_ids: [users.gina.id], contact_ids: [], subtasks: [], created_by: users.gina.id, created_at: t0, updated_at: t0 },
         { id: uid(), project_id: 'PRJ-0002', week: W, title: 'Survey the AHU controllers on every floor', notes: '', status: 'To Do', team: null, block_note: '',
           assignee_ids: [users.laila.id], contact_ids: [], subtasks: [], created_by: users.laila.id, created_at: t0, updated_at: t0 },
       ],

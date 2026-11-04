@@ -78,7 +78,7 @@ alter table public.projects alter column status set default 'In Progress';
 -- Widened in place (Oct 2026) for the BMS department's service lines (GRMS, CRS, Service): this line runs on
 -- every deploy before later migrations, so a narrower list here would reject those projects. Only ever widen it.
 alter table public.projects add constraint projects_type_check
-  check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'GRMS', 'CRS', 'Service', 'Other'));
+  check (type in ('PLC', 'AVEVA', 'AVEVA + PLC', 'BMS', 'GRMS', 'CRS', 'Service', 'GUI', 'Internal', 'Other'));
 alter table public.projects add constraint projects_status_check
   check (status in ('Backlog', 'Planning', 'In Progress', 'Paused', 'Done', 'Canceled'));
 alter table public.projects add constraint projects_priority_check check (priority in ('Low', 'Medium', 'High'));
@@ -397,7 +397,8 @@ create trigger tasks_guard before update on public.tasks
 -- Each person belongs to the PLC or Dev team; the weekly meeting groups tasks by it.
 alter table public.profiles add column if not exists team text;
 alter table public.profiles drop constraint if exists profiles_team_check;
-alter table public.profiles add constraint profiles_team_check check (team is null or team in ('PLC', 'Dev'));
+-- Widened in place (Nov 2026) for the GUI department's UI/UX column; this line runs on every deploy. Only ever widen it.
+alter table public.profiles add constraint profiles_team_check check (team is null or team in ('PLC', 'Dev', 'UI/UX'));
 
 -- Why a task is blocked (shown in the meeting).
 alter table public.tasks add column if not exists block_note text not null default '';

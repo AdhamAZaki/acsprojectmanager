@@ -74,7 +74,7 @@
     client: r.client || '', manager: r.manager || '', notes: r.notes || '',
     startDate: r.start_date || '', endDate: r.end_date || '', departmentId: r.department_id || 'AUTO',
   });
-  const mapDepartment = r => ({ id: r.id, name: r.name, teams: r.teams || [], projectTypes: r.project_types || [] });
+  const mapDepartment = r => ({ id: r.id, name: r.name, teams: r.teams || [], projectTypes: r.project_types || [], crossProject: !!r.cross_project });
   const mapTask = r => ({
     id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],

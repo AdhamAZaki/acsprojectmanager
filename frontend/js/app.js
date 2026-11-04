@@ -101,12 +101,37 @@
   }
   /** Meeting email columns: the department's sub-teams, or one column named after it. */
   const deptTeams = id => dept(id).teams.length ? dept(id).teams : [dept(id).name];
-  const inDept = p => (p.departmentId || 'AUTO') === curDept();
+  /**
+   * A department that works across projects (GUI) also sees other departments' projects that its
+   * people are on, or have tasks in ("supported" projects). Worked out once per redraw.
+   */
+  const crossDept = () => !!dept(curDept()).crossProject;
+  function supported() {
+    const key = curDept();
+    if (S.sup && S.sup.key === key && S.sup.data === S.data && S.sup.n === S.data.tasks.length + S.data.assignments.length) return S.sup.ids;
+    const ids = new Set();
+    if (crossDept()) {
+      const ours = new Set(S.data.team.filter(m => m.departmentId === key).map(m => m.id));
+      S.data.assignments.forEach(a => { if (ours.has(a.userId)) ids.add(a.projectId); });
+      S.data.tasks.forEach(t => { if (ownersOf(t).some(id => ours.has(id))) ids.add(t.projectId); });
+    }
+    S.sup = { key: key, data: S.data, n: S.data.tasks.length + S.data.assignments.length, ids: ids };
+    return ids;
+  }
+  const ownDept = p => (p.departmentId || 'AUTO') === curDept();
+  const inDept = p => ownDept(p) || (crossDept() && supported().has(p.id));
   const deptProjects = () => S.data.projects.filter(inDept);
+  /** On a supported project, the department only counts its own people's tasks. */
+  const relevant = t => ownDept(project(t.projectId)) || ownersOf(t).some(id => member(id).departmentId === curDept());
+  /** Small tag for another department's project shown on a cross-project board. */
+  const deptTag = p => !ownDept(p) ? `<span class="badge dept-tag">${esc(dept(p.departmentId).name)}</span>` : '';
+  /** Dept admins (and admins) lead the people of their department, on any project. */
+  const leadsPerson = id => isAdmin() || (me().role === 'Dept admin' && member(id).departmentId === me().departmentId);
+  const leadsTask = t => isAdmin() || (me().role === 'Dept admin' && (ownersOf(t).concat(t.createdBy).some(id => member(id).departmentId === me().departmentId)));
   /** Manage: admins work on the department in view, department admins on their own. */
   const manageDept = () => isAdmin() ? curDept() : me().departmentId;
   /** Can I manage what is on screen (the open project's department, or the board's)? */
-  const managesHere = () => canManage(S.project ? project(S.project).departmentId : curDept());
+  const managesHere = () => canManage(S.project ? project(S.project).departmentId : curDept()) || (S.project && canManage(curDept()) && crossDept());
   // ---------- People: title and org-chart team ----------
 
   /** "BMS Team Leader Engineer · B.A Execution Team B" (whatever is known). */
@@ -223,7 +248,7 @@
    */
   function teamsOf(t) {
     const p = project(t.projectId);
-    const cols = deptTeams(p.departmentId || curDept());
+    const cols = deptTeams(curDept());   // the columns of the board being shown
     const teams = Array.from(new Set(ownersOf(t).map(id => member(id).team).filter(x => cols.indexOf(x) !== -1)));
     if (teams.length) return teams;
     if (cols.indexOf(t.team) !== -1) return [t.team];
@@ -247,7 +272,7 @@
   /** One-tap reasons for a blocked task (the note can still be typed). */
   const BLOCK_REASONS = ['Waiting for client', 'Material', 'Site access', 'Approval', 'Another company'];
   /** Own tasks only: you change tasks you created or are on; admins of the project's department change any. */
-  const canEditTask = t => canManage(project(t.projectId).departmentId) || t.createdBy === me().id || t.assigneeIds.indexOf(me().id) !== -1;
+  const canEditTask = t => canManage(project(t.projectId).departmentId) || leadsTask(t) || t.createdBy === me().id || t.assigneeIds.indexOf(me().id) !== -1;
   /** Where sub-task i (with this text) is now; it may have moved if a teammate changed the list. */
   function subIndex(t, i, text) {
     return t.subtasks[i] && t.subtasks[i].t === text ? i : t.subtasks.findIndex(s => s.t === text);
@@ -261,7 +286,7 @@
     const subDone = t.subtasks.filter(s => s.done).length;
     const team = projectTeam(t.projectId);
     const extra = t.assigneeIds.filter(id => !team.some(m => m.id === id)).map(member);
-    const edit = canEditTask(t), admin = canManage(project(t.projectId).departmentId);
+    const edit = canEditTask(t), full = canManage(project(t.projectId).departmentId), admin = full || leadsTask(t);
     const owners = ownersOf(t).map(id => member(id).name).join(', ');
     return `
       <div class="t ${isDone(t) ? 'done' : ''}${edit ? '' : ' ro'}">
@@ -303,7 +328,7 @@
           <details class="people-fold"${S.peopleOpen[t.id] ? ' open' : ''} data-pfold="${t.id}">
             <summary><span class="muted small">People:</span> ${esc(who(t) || owners)} <span class="text-btn">Change</span></summary>
             <div class="people">
-              ${team.concat(extra).filter(m => admin || m.id === me().id || t.assigneeIds.indexOf(m.id) !== -1).map(m => admin || m.id === me().id
+              ${team.concat(extra).filter(m => admin || m.id === me().id || t.assigneeIds.indexOf(m.id) !== -1).map(m => full || (admin && leadsPerson(m.id)) || m.id === me().id
                 ? `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assigneeIds.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`
                 : `<span class="person-chip" title="Only an admin can change who is on a task"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</span>`).join('')}
               ${S.data.contacts.map(c => `<label class="ext"><input type="checkbox" data-ext="${t.id}:${c.id}"${t.contactIds.indexOf(c.id) !== -1 ? ' checked' : ''}>${esc(c.name)}</label>`).join('')}
@@ -485,7 +510,7 @@
   }
   /** Admins only: who the task is for (default: themselves). */
   function personChoices(people) {
-    const list = people.filter(m => m.active !== false && m.id !== me().id);
+    const list = people.filter(m => m.active !== false && m.id !== me().id && leadsPerson(m.id));
     return `<option value="${esc(me().id)}">For: me</option>` + peopleOptions(list, curDept(), 'For: ');
   }
   /** Project picker: my projects first, then every other open project of the department (anyone can add to any project). */
@@ -594,7 +619,7 @@
       ${order.map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</h3>
         ${byPerson[id].sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t, true)).join('')}</section>`).join('')
         || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}
-      ${canManage(p.departmentId) ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
+      ${canManage(p.departmentId) || isManager() ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
       ${historyHtml(p)}`;
     $$('[data-spfold="team"]', root).forEach(d => d.ontoggle = () => { S.teamOpen = d.open; });
     $('#backBtn', root).onclick = closePanel;
@@ -625,9 +650,11 @@
   /** Admins: who is on the project. Tap × to take someone off, or pick a person to add. */
   function teamEditor(p) {
     const team = projectTeam(p.id);
-    const others = S.data.team.filter(m => m.active && team.indexOf(m) === -1);
+    // On another department's project, a department admin adds and removes only their own people.
+    const may = m => canManage(p.departmentId) || leadsPerson(m.id);
+    const others = S.data.team.filter(m => m.active && team.indexOf(m) === -1 && may(m));
     return `<div class="card team-edit"><strong class="small">Team</strong>
-      <div class="avatars-row">${team.map(m => `<span class="person-chip" title="${esc(personInfo(m))}">${esc(shortName(m.name))}<button type="button" class="chip-x" data-unassign="${esc(m.id)}" aria-label="Take ${esc(m.name)} off the project">×</button></span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
+      <div class="avatars-row">${team.map(m => `<span class="person-chip" title="${esc(personInfo(m))}">${esc(shortName(m.name))}${may(m) ? `<button type="button" class="chip-x" data-unassign="${esc(m.id)}" aria-label="Take ${esc(m.name)} off the project">×</button>` : ''}</span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
       ${others.length ? `<select id="assignSel" aria-label="Add a person to the project"><option value="">+ Add a person…</option>${peopleOptions(others, p.departmentId)}</select>` : ''}</div>`;
   }
   function bindTeamEditor(root, p) {
@@ -665,7 +692,7 @@
     const summary = { moved: 0, done: 0, delayed: 0, blocked: 0 };
     const teams = deptTeams(curDept());
     deptProjects().forEach(p => {
-      const ts = S.data.tasks.filter(t => t.projectId === p.id);
+      const ts = S.data.tasks.filter(t => t.projectId === p.id && relevant(t));
       const pick = {
         doing: ts.filter(t => !isDone(t) && open(t)),
         done: ts.filter(t => isDone(t) && t.week === week),
@@ -696,7 +723,7 @@
         people: Object.keys(people).map(k => people[k]).sort((x, y) => x.name.localeCompare(y.name)),
       });
     });
-    const blocked = S.data.tasks.filter(t => isBlocked(t) && open(t) && inDept(project(t.projectId)))
+    const blocked = S.data.tasks.filter(t => isBlocked(t) && open(t) && inDept(project(t.projectId)) && relevant(t))
       .sort((a, b) => a.week.localeCompare(b.week))
       .map(t => Object.assign(itemOf(t, 'doing'), { project: project(t.projectId).name }));
     summary.silent = rows.filter(r => r.silent).length;
@@ -759,6 +786,7 @@
         <div class="sheet-body">
           <p class="muted small" style="margin:0 0 10px">${esc(weekRange(rec.week))} ${weekMonday(rec.week).getUTCFullYear()} · saved ${esc(rec.savedAt)}${rec.savedBy ? ' by ' + esc(member(rec.savedBy).name) : ''}. This copy does not change when tasks change.</p>
           <div class="actions-row"><button type="button" class="primary" id="copySaved">Copy as email</button></div>
+          ${m.notes ? `<section class="card"><h3 class="card-title">Team notes</h3><p class="saved-notes">${esc(m.notes)}</p></section>` : ''}
           ${(m.blocked || []).length ? `<section class="card warn"><h3 class="card-title">Blocked (${m.blocked.length})</h3><ul class="plain">${m.blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
           ${cards.html}</div></div>`;
       $('[data-close]', dlg).onclick = () => dlg.close();
@@ -890,7 +918,7 @@
     const team = projectTeam(p.id).filter(m => m.active !== false);
     const stat = (v, cls, label) => v ? `<span class="pc-stat ${cls}" title="${label}">${v} ${label}</span>` : '';
     return `<article class="pcard${opts.drag ? ' draggable' : ''}${S.project === p.id ? ' selected' : ''}" data-pid="${esc(p.id)}"${opts.drag ? ' draggable="true"' : ''}>
-      <div class="pc-top"><span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${opts.group !== 'priority' ? `<span class="prio prio-${slug(p.priority)}">${esc(p.priority || 'Medium')}</span>` : ''}${opts.group !== 'status' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}</div>
+      <div class="pc-top">${deptTag(p)}<span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${opts.group !== 'priority' ? `<span class="prio prio-${slug(p.priority)}">${esc(p.priority || 'Medium')}</span>` : ''}${opts.group !== 'status' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}</div>
       <button type="button" class="pc-open" data-project="${esc(p.id)}">${esc(p.name)}</button>
       ${items.length ? `<div class="pc-stats">${stat(blocked, 'bad', 'blocked')}${stat(doing, '', 'in progress')}${stat(done, 'ok', 'done')}${stat(next, 'next', 'next week')}</div>
       <ul class="pc-tasks">${top.map(it => `<li class="${it.blocked ? 'blk' : ''}${it.kind === 'done' ? ' done' : ''}"><span class="mk">${mark(it)}</span><span>${esc(it.title)}</span></li>`).join('')}</ul>
@@ -1073,7 +1101,7 @@
    *   quiet: In Progress but no task added or changed that week · ok: none of these
    */
   function healthOf(p, week) {
-    const ts = S.data.tasks.filter(t => t.projectId === p.id);
+    const ts = S.data.tasks.filter(t => t.projectId === p.id && relevant(t));
     const inWeek = t => t.week === week || (week === THIS && t.week < week && !isDone(t));
     const open = ts.filter(t => !isDone(t) && inWeek(t));
     const h = {
@@ -1133,7 +1161,7 @@
     const n = (v, cls, label) => `<span class="pr-n ${cls}${v ? '' : ' zero'}" title="${label}">${v}<small>${label}</small></span>`;
     return `<button type="button" class="prow hk-${h.key}${S.project === p.id ? ' selected' : ''}" data-project="${esc(p.id)}">
       <span class="pr-main"><span class="pr-dot" aria-hidden="true"></span><strong>${esc(p.name)}</strong>
-        <span class="pr-tags"><span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${h.closed || p.status !== 'In Progress' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}${healthBadge(h)}</span></span>
+        <span class="pr-tags">${deptTag(p)}<span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${h.closed || p.status !== 'In Progress' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}${healthBadge(h)}</span></span>
       <span class="pr-nums">${n(h.blocked, 'bad', 'blocked')}${n(h.doing, '', 'open')}${n(h.done, 'ok', 'done')}${n(h.next, 'nx', 'next wk')}</span>
       <span class="pr-meta muted small">${projectLead(p) ? 'Lead: ' + esc(shortName(projectLead(p).name)) + ' · ' : ''}${team.length ? team.length + (team.length === 1 ? ' person' : ' people') : 'Nobody yet'} · ${ago(h.last)}${p.endDate ? ' · ends ' + esc(p.endDate) : ''}</span>
     </button>`;
@@ -1215,7 +1243,7 @@
    */
   function quickAddSheet(opts) {
     const dlg = $('#dialog');
-    const openP = p => inDept(p) && CLOSED.indexOf(p.status) === -1;
+    const openP = p => (inDept(p) || crossDept()) && CLOSED.indexOf(p.status) === -1;   // a cross-project team can add to any project
     const qa = S.qa = S.qa || {};
     const recent = recentProjects();
     const chips = recent.concat(myProjects().filter(p => openP(p) && recent.indexOf(p.id) === -1).map(p => p.id)).slice(0, 4);
@@ -1377,7 +1405,7 @@
       ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${savedBy}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
       : week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : '';
     const pr = { High: 0, Medium: 1, Low: 2 };
-    const blocked = S.data.tasks.filter(t => isBlocked(t) && inDept(project(t.projectId)) && (t.week === week || (week === THIS && t.week < week)))
+    const blocked = S.data.tasks.filter(t => isBlocked(t) && inDept(project(t.projectId)) && relevant(t) && (t.week === week || (week === THIS && t.week < week)))
       .sort((a, b) => a.week.localeCompare(b.week) || (pr[project(a.projectId).priority] || 1) - (pr[project(b.projectId).priority] || 1));
     const units = {};
     quiet.forEach(q => { (units[q.m.unit || 'Other'] = units[q.m.unit || 'Other'] || []).push(q); });

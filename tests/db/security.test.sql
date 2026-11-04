@@ -215,7 +215,7 @@ select test.ok(test.n($$select * from public.meetings where week = '2026-W44' an
 reset role;
 
 -- ---------- Departments ----------
-select test.ok((select array_agg(id order by sort) from public.departments) = array['AUTO', 'BMS'], 'Automation and BMS departments exist');
+select test.ok((select array_agg(id order by sort) from public.departments) = array['AUTO', 'BMS', 'GUI'], 'Automation, BMS and GUI departments exist');
 select test.ok((select department_id from public.projects where id = 'PRJ-0001') = 'AUTO', 'existing projects belong to Automation');
 select test.ok((select department_id from public.profiles where email = 'hany.test@advcontrolsys.com') = 'BMS', 'BMS people belong to BMS');
 
@@ -239,8 +239,8 @@ set role authenticated;
 insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'));
 select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('ahmed.test@advcontrolsys.com')$$) = 1,
   'department admin can put anyone on their department''s project');
-select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'))$$,
-  'row-level security', 'department admin cannot staff another department''s project');
+select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('omar.test@advcontrolsys.com'))$$,
+  'row-level security', 'department admin cannot staff another department''s project with that department''s people');
 insert into public.tasks (project_id, week, title, created_by, assignee_ids)
   values ('PRJ-0006', '2026-W45', 'lead planned task', test.uid('laila.test@advcontrolsys.com'), array[test.uid('laila.test@advcontrolsys.com')]);
 select test.ok(test.n($$select * from public.tasks where title = 'lead planned task'$$) = 1, 'department admin can add a task for someone in their department');
@@ -277,7 +277,7 @@ select test.ok((select count(*) = 2 from public.meetings where week = '2026-W44'
 select test.ok((select snapshot ->> 'n' from public.meetings where week = '2026-W44' and department_id = 'AUTO') = '2', 'saving BMS minutes leaves Automation''s alone');
 select test.fails($$select public.admin_save_minutes('2026-W44', '{}', 'AUTO')$$, 'admin access required', 'department admin cannot save another department''s minutes');
 select test.ok((select public.app_bootstrap() -> 'me' ->> 'department_id') = 'BMS'
-  and json_array_length(public.app_bootstrap() -> 'departments') = 2, 'startup data includes your department and the department list');
+  and json_array_length(public.app_bootstrap() -> 'departments') = 3, 'startup data includes your department and the department list');
 reset role;
 
 -- A member cannot change departments
@@ -311,5 +311,37 @@ set role authenticated;
 update public.profiles set title = 'CEO' where id = auth.uid();
 reset role;
 select test.ok((select title from public.profiles where email = 'laila.test@advcontrolsys.com') = 'BMS Engineer', 'members cannot change their own title');
+
+-- ---------- GUI: a department that works across projects ----------
+select test.ok((select cross_project and teams = array['UI/UX', 'Dev'] from public.departments where id = 'GUI'), 'GUI department exists, works across projects, columns UI/UX | Dev');
+select public._create_login('amira.test@advcontrolsys.com', 'Local-test-only-1', 'Amira (Test GUI Lead)', 'lead') as amira \gset
+select public._create_login('sondos.test@advcontrolsys.com', 'Local-test-only-1', 'Sondos (Test GUI Dev)', 'member') as sondos \gset
+update public.profiles set department_id = 'GUI', team = 'UI/UX' where id = :'amira';
+update public.profiles set department_id = 'GUI', team = 'Dev' where id = :'sondos';
+-- Sondos (GUI) works on the BMS project PRJ-0006
+select test.login('sondos.test@advcontrolsys.com');
+set role authenticated;
+insert into public.tasks (project_id, week, title, assignee_ids) values ('PRJ-0006', '2026-W45', 'GUI: AHU screens for the hospital', array[auth.uid()]);
+select test.ok(test.n($$select * from public.tasks where title = 'GUI: AHU screens for the hospital'$$) = 1, 'GUI member adds their own task on a BMS project');
+reset role;
+select test.login('amira.test@advcontrolsys.com');
+set role authenticated;
+update public.tasks set notes = 'reviewed by Amira' where title = 'GUI: AHU screens for the hospital';
+select test.ok(test.n($$select * from public.tasks where notes = 'reviewed by Amira'$$) = 1, 'GUI dept admin manages her own people''s tasks on another department''s project');
+insert into public.tasks (project_id, week, title, created_by, assignee_ids) values ('PRJ-0006', '2026-W46', 'GUI: alarm view', test.uid('sondos.test@advcontrolsys.com'), array[test.uid('sondos.test@advcontrolsys.com')]);
+select test.ok(test.n($$select * from public.tasks where title = 'GUI: alarm view'$$) = 1, 'GUI dept admin adds a task for her own person on a BMS project');
+select test.fails($$insert into public.tasks (project_id, week, title, created_by, assignee_ids) values ('PRJ-0006', '2026-W46', 'for laila', test.uid('laila.test@advcontrolsys.com'), array[test.uid('laila.test@advcontrolsys.com')])$$,
+  'row-level security', 'GUI dept admin cannot add a task for a BMS person');
+update public.tasks set notes = 'amira was here' where title = 'lead planned task';
+select test.ok(test.n($$select * from public.tasks where notes = 'amira was here'$$) = 0, 'GUI dept admin cannot change a BMS person''s task');
+select test.fails($$update public.tasks set assignee_ids = assignee_ids || test.uid('laila.test@advcontrolsys.com') where title = 'GUI: alarm view'$$,
+  'only add or remove your own team', 'GUI dept admin cannot put a BMS person on a task');
+insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('sondos.test@advcontrolsys.com'));
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('sondos.test@advcontrolsys.com')$$) = 1, 'GUI dept admin puts her own person on a BMS project''s team');
+select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'))$$,
+  'row-level security', 'GUI dept admin cannot staff another department''s people');
+select public.admin_save_minutes('2026-W45', '{"v": 1, "dept": "GUI"}', 'GUI');
+select test.ok(test.n($$select * from public.meetings where department_id = 'GUI' and snapshot is not null$$) = 1, 'GUI dept admin saves GUI minutes');
+reset role;
 
 select 'All database checks passed' as result;

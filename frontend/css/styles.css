@@ -832,3 +832,7 @@ select.qa-for { margin-top: 14px; width: 100%; }
 @media (max-width: 599px) { .wl-table th:nth-child(6), .wl-table td:nth-child(6), .wl-table th:nth-child(8), .wl-table td:nth-child(8) { display: none; } }
 .wl-table td:first-child { min-width: 260px; }
 .wl-table th:not(:first-child), .wl-table td:not(:first-child) { width: 1%; white-space: nowrap; padding-left: 14px; padding-right: 14px; }
+
+/* GUI: another department's project on a cross-project board */
+.badge.dept-tag { background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+.saved-notes { white-space: pre-wrap; margin: 0; font-size: .92rem; }
