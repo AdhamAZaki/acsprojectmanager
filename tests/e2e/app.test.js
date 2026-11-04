@@ -820,6 +820,55 @@ async function r2Features(browser, url) {
   await c2.close();
 }
 
+async function guiCrossProject(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  // Gina (GUI) has a task on the BMS project Tower BMS Retrofit
+  await signIn(page, url + '#/week', 'gina');
+  await page.waitForSelector('.mw-title');
+  ok(await page.inputValue('#deptPick') === 'GUI' && await page.isVisible('#view >> text=GUI: AHU screens for the tower'), 'GUI: My week shows my task on a BMS project');
+  await page.goto(url + '#/projects');
+  await page.click('[data-scope="all"]');
+  await page.waitForSelector('.prow');
+  ok(await page.isVisible('.prow[data-project="PRJ-0002"] .dept-tag >> text=BMS') && !(await page.isVisible('.prow >> text=Alpha Plant')),
+    'GUI: the board shows the other departments’ projects GUI works on, tagged with their department');
+  await page.click('#qaOpen');
+  await page.waitForSelector('#qaForm');
+  ok(await page.locator('#qaForm select[name=other] option[value="PRJ-0001"]').count() === 1, 'GUI: quick add can add to any department’s project');
+  await page.click('#qaForm [data-close]');
+  await ctx.close();
+
+  // Amira (GUI dept admin) runs the GUI meeting
+  const c2 = await newApp(browser);
+  const p2 = await c2.newPage();
+  p2.on('pageerror', e => errors.push(e.message));
+  await signIn(p2, url + '#/meeting', 'amira');
+  await p2.waitForSelector('.mtg-person');
+  const walk = await p2.textContent('.board-grid');
+  ok(walk.includes('GUI: AHU screens for the tower') && !walk.includes('Survey the AHU controllers'), 'GUI meeting: only GUI people’s tasks on a shared project');
+  await c2.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await p2.click('#copyEmail');
+  const text = await clipboard(p2, 'Dev team:');
+  ok(/Weekly Progress Check & Action Plan — GUI/.test(text) && text.includes('UI/UX team:') && text.includes('Dev team:') && (text.split('Dev team:')[1] || '').includes('GUI: AHU screens'),
+    'GUI email: two columns, UI/UX and Dev; Gina’s task in Dev');
+  // Amira can manage Gina's task on the BMS project, and only GUI people on its team
+  await p2.goto(url + '#/projects');
+  await p2.click('[data-scope="all"]');
+  await p2.click('.prow[data-project="PRJ-0002"]');
+  await p2.waitForSelector('.side-panel');
+  const gt = p2.locator('.side-panel .t', { hasText: 'GUI: AHU screens for the tower' });
+  ok(!(await gt.locator('[data-done]').first().isDisabled()), 'GUI dept admin can tick her team’s task on a BMS project');
+  const st = p2.locator('.side-panel .t', { hasText: 'Survey the AHU controllers' });
+  ok(await st.locator('[data-done]').first().isDisabled(), '...but not a BMS person’s task');
+  await p2.click('.side-panel .sp-fold summary >> text=Team');
+  const opts = await p2.$$eval('#assignSel option', os => os.map(o => o.textContent));
+  ok(opts.some(o => /Amira GUI Lead/.test(o)) && !opts.some(o => /Mona PLC|Laila BMS/.test(o)), 'GUI dept admin can add only GUI people to a BMS project’s team');
+  ok(errors.length === 0, 'GUI: no JavaScript errors' + (errors.length ? ': ' + errors.join('; ') : ''));
+  await c2.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
@@ -838,6 +887,7 @@ async function r2Features(browser, url) {
     await ownTasks(browser, url);
     await meetingHealth(browser, url);
     await r2Features(browser, url);
+    await guiCrossProject(browser, url);
   } finally {
     await browser.close();
     server.close();
