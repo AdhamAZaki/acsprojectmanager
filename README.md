@@ -9,11 +9,11 @@ Each engineer signs in with a **username and password** and:
 - does everything on **one page**: switch between *My tasks*, *My projects* and *All projects*, tick and edit tasks right on the board
 - marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-Three screens: **My week** (your own tasks, a quick **Add a task…** with recent projects, This / Next week and *Already done*, and a one-tap review of anything carried over 2+ weeks), **Projects** (search, health and counts; each project opens in a side panel with its tasks, team and the last 8 weeks of history) and **Meeting** for admins (project health with filters, Blocked with "since week X", No update by team, Workload per person with overload flags, each project's team leader worked out from its team).
+Projects are **shared by every team** (PLC, AVEVA, BMS, UI/UX, Dev): each team adds its own tasks to the same project, and a project shows the teams on it. Three pages, nothing in two places: **My tasks** (everyone: your own tasks this week and next, by project or as a board, with a review of anything carried over 2+ weeks), **Team** for admins and department admins (the weekly meeting: filter by week, team and person; look at it by project, as a board, by person or as a table; other teams' tasks on the same project are one click away) and **Projects** (everyone: every project and the teams on it; join one or add a task to it; each opens in a side panel with its tasks, team and history). **Manage** (admins and department admins) has People, Projects, Departments & teams and 3rd parties, edited straight in tables.
 
-The meeting builds the minutes automatically from everyone's tasks, one card per project, each person's tasks under their name, blocked items first. Admins also get a **By person** view (each employee's tasks, grouped by project), can add tasks for anyone in any week, set who is on each project, and open **Manage** from the ⚙ settings button. **Copy as email** gives the *Weekly Progress Check & Action Plan* table (PLC / Dev columns), and admins can **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, admins see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres); admins manage projects, the team (including each person's department and PLC / Dev team) and 3rd parties. A **Dept admin** (e.g. the BMS lead) has the same admin tools, but only for their own department; the email for BMS has one *BMS Team Action Plan* column.
+**Employees see only their own tasks** (the database enforces it); admins see everything and department admins manage their own people's tasks on any project. **+ Add task** is on every page (a round button on a phone); admins and department admins can add a task *for* one of their people. On the Team page, pick a department to **Copy as email** (the *Weekly Progress Check & Action Plan* table, one column per team) or **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, managers see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres).
 
-| My week (phone) | Task (phone) | Meeting (phone) | Meeting (computer) |
+| My tasks (phone) | Task (phone) | Team (phone) | Team (computer) |
 |---|---|---|---|
 | ![My week on a phone](docs/screenshots/2-board.png) | ![Task sheet on a phone](docs/screenshots/2b-task-sheet.png) | ![Meeting on a phone](docs/screenshots/3-by-person.png) | ![Meeting on a computer](docs/screenshots/4-board-wide.png) |
 
@@ -51,7 +51,7 @@ The meeting builds the minutes automatically from everyone's tasks, one card per
 | `frontend/` | The app: static site deployed to GitHub Pages |
 | `frontend/js/config.js` | Supabase Project URL + publishable key (both public by design) |
 | `frontend/js/api.js` | Data layer: one-request loading, local cache, conflict-safe saving |
-| `frontend/js/app.js` | Screens: My tasks, Projects, Meeting, Manage |
+| `frontend/js/app.js` | Pages: My tasks, Team, Projects, Manage |
 | `frontend/sw.js`, `manifest.webmanifest` | Installable app (Add to Home screen), offline app shell, self-updating |
 | `supabase/migrations/` | Every database change, in order ([rules](supabase/migrations/README.md)) |
 | `supabase/setup.sql` | All migrations in one file, generated. Paste into the SQL Editor, or let the deploy run it |
