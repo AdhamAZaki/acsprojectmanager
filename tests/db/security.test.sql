@@ -79,7 +79,9 @@ select test.fails($$update public.tasks set created_by = test.uid('mona.test@adv
   'creator of a task cannot be changed', 'member cannot change who created a task');
 update public.tasks set title = 'helping on another project (edited)' where title = 'helping on another project';
 select test.ok(test.n($$select * from public.tasks where title = 'helping on another project (edited)'$$) = 1, 'member can edit their own task on a project they are not on');
-select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%'$$) = 1, 'member sees tasks of every project (the meeting board)');
+select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%'$$) = 0, 'member does not see other people''s tasks');
+select test.ok(test.n($$select * from public.tasks where not (created_by = auth.uid() or auth.uid() = any (assignee_ids))$$) = 0, 'member sees only tasks they created or are on');
+select test.ok(test.n('select * from public.meetings') = 0, 'member cannot read saved minutes (they hold everyone''s tasks)');
 update public.tasks set notes = 'not mine' where title like 'Start PLC%';
 select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%' and notes = 'not mine'$$) = 0, 'member cannot edit someone else''s task on a project they are not on');
 update public.tasks set project_id = 'PRJ-0002' where title like 'Build main%';
@@ -99,7 +101,7 @@ select test.fails($$select public.admin_save_minutes('2026-W44', '{}')$$, 'admin
 select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0003', test.uid('omar.test@advcontrolsys.com'))$$,
   'row-level security', 'member cannot add someone else to a project');
 insert into public.assignments (project_id, user_id) values ('PRJ-0003', auth.uid());
-select test.ok(test.n($$select * from public.tasks where project_id = 'PRJ-0003'$$) > 0, 'member can join a project and sees its tasks');
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0003' and user_id = auth.uid()$$) = 1, 'member can join a project');
 delete from public.assignments where project_id = 'PRJ-0003' and user_id = auth.uid();
 
 -- Own tasks only: members change only tasks they created or are assigned to
@@ -203,7 +205,7 @@ reset role;
 select test.login('admin.test@advcontrolsys.com');
 set role authenticated;
 
--- Saved minutes: one per week, replaced on a second save, readable by members
+-- Saved minutes: one per week, replaced on a second save, not readable by members
 select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 1}');
 select public.admin_save_minutes('2026-W44', '{"v": 1, "n": 2}');
 select test.ok((select count(*) = 1 and max(snapshot ->> 'n') = '2' from public.meetings where week = '2026-W44'), 'saving minutes twice keeps one copy, the newest');
@@ -211,7 +213,7 @@ select test.fails($$select public.admin_save_minutes('W44', '{}')$$, 'invalid we
 reset role;
 select test.login('mona.test@advcontrolsys.com');
 set role authenticated;
-select test.ok(test.n($$select * from public.meetings where week = '2026-W44' and snapshot is not null$$) = 1, 'members can read saved minutes');
+select test.ok(test.n($$select * from public.meetings where week = '2026-W44' and snapshot is not null$$) = 0, 'members cannot read saved minutes');
 reset role;
 
 -- ---------- Departments ----------
@@ -219,33 +221,33 @@ select test.ok((select array_agg(id order by sort) from public.departments) = ar
 select test.ok((select department_id from public.projects where id = 'PRJ-0001') = 'AUTO', 'existing projects belong to Automation');
 select test.ok((select department_id from public.profiles where email = 'hany.test@advcontrolsys.com') = 'BMS', 'BMS people belong to BMS');
 
--- Department admin (BMS): manages BMS only
+-- Department admin (BMS): their own people; projects are shared
 select test.login('hany.test@advcontrolsys.com');
 set role authenticated;
 select test.ok(test.n('select * from public.projects') = 7, 'department admin sees every department''s projects');
+select test.ok(test.n($$select * from public.tasks where title like 'Start PLC%'$$) = 1, 'department admin sees every task (for the meeting)');
+select test.ok(test.n($$select * from public.meetings where week = '2026-W44'$$) = 1, 'department admin can read saved minutes');
 select test.ok(public.admin_save_project(jsonb_build_object('name', 'BMS lead project', 'type', 'BMS'), '{}', '{}') ->> 'department_id' = 'BMS',
   'department admin creates a project in their own department');
-select test.fails($$select public.admin_save_project(jsonb_build_object('name', 'Sneaky', 'department_id', 'AUTO'), '{}', '{}')$$,
-  'admin access required', 'department admin cannot create a project in another department');
-select test.fails($$select public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Taken over', 'department_id', 'BMS'), '{}', '{}')$$,
-  'admin access required', 'department admin cannot take over another department''s project');
-update public.projects set name = 'hacked' where id = 'PRJ-0002';
-select test.fails($$update public.projects set department_id = 'AUTO' where id = 'PRJ-0006'$$,
-  'row-level security', 'department admin cannot move a project out of their department');
-reset role;
-select test.ok((select name from public.projects where id = 'PRJ-0002') <> 'hacked', 'department admin cannot edit another department''s project');
-select test.login('hany.test@advcontrolsys.com');
-set role authenticated;
-insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'));
-select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('ahmed.test@advcontrolsys.com')$$) = 1,
-  'department admin can put anyone on their department''s project');
+select test.ok(public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Shared site', 'type', 'PLC'), '{}', '{}') ->> 'name' = 'Shared site',
+  'department admin can edit a project first entered by another department (projects are shared)');
+select test.ok((select department_id from public.projects where id = 'PRJ-0002') = 'AUTO', 'editing a shared project keeps where it was first entered');
+select test.fails($$select public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Shared site'), array[test.uid('omar.test@advcontrolsys.com')], '{}')$$,
+  'only add or remove your own team', 'department admin cannot put another department''s person on a project through the project form');
+delete from public.projects where id = 'PRJ-0002';
+select test.ok(test.n($$select * from public.projects where id = 'PRJ-0002'$$) = 1, 'department admin cannot delete a project');
+select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'))$$,
+  'row-level security', 'department admin cannot put another department''s person on a project');
+insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'));
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('laila.test@advcontrolsys.com')$$) = 1,
+  'department admin can put their own person on any project');
 select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('omar.test@advcontrolsys.com'))$$,
   'row-level security', 'department admin cannot staff another department''s project with that department''s people');
 insert into public.tasks (project_id, week, title, created_by, assignee_ids)
   values ('PRJ-0006', '2026-W45', 'lead planned task', test.uid('laila.test@advcontrolsys.com'), array[test.uid('laila.test@advcontrolsys.com')]);
 select test.ok(test.n($$select * from public.tasks where title = 'lead planned task'$$) = 1, 'department admin can add a task for someone in their department');
 select test.fails($$insert into public.tasks (project_id, week, title, created_by) values ('PRJ-0002', '2026-W45', 'for omar', test.uid('omar.test@advcontrolsys.com'))$$,
-  'row-level security', 'department admin cannot add a task for someone on another department''s project');
+  'row-level security', 'department admin cannot add a task for someone in another department');
 delete from public.tasks where title like 'Migrate conveyor%';
 select test.ok(test.n($$select * from public.tasks where title like 'Migrate conveyor%'$$) = 1, 'department admin cannot delete another department''s tasks');
 -- People

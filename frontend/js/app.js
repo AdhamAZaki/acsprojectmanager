@@ -1,10 +1,13 @@
 // ACS Weekly Tasks: UI. Plain JS, no build step. Mobile-first.
-// One page: the weekly board (every project, this week and next side by side, tasks editable in
-// place), viewed as My tasks / My projects / All projects, or By person for admins. Admins also
-// get Manage behind the settings button.
-// Departments (e.g. Automation and BMS) each have their own board, minutes and email; everyone
-// opens on their own department's board and can switch. Admins manage every department, a
-// "Dept admin" only their own.
+// Three pages, nothing in two places:
+//   My tasks  (everyone): your own tasks, this week and next, by project or as a board.
+//   Team      (admins and department admins): the weekly meeting. Filter by week, team, person;
+//             look at it by project, as a board, by person or as a table; email and save minutes.
+//   Projects  (everyone): every project and the teams on it; join one or add a task to it.
+//   Manage    (admins and department admins): people, projects, departments, 3rd parties.
+// Projects are shared by every team (PLC, AVEVA, BMS, UI/UX, Dev, ...). Employees see only their
+// own tasks (the database enforces it); admins see everything, department admins their department
+// first and the rest one filter away.
 (function () {
   const Api = window.Api;
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -23,34 +26,34 @@
 
   const S = {
     data: null,          // see Api.refresh()
-    which: 'this',       // My tasks / project page: 'this' or 'next' week
+    which: 'this',       // project panel: 'this' or 'next' week
     open: {},            // expanded task rows
-    project: null,       // open project page
-    mtgWeek: THIS,
-    manageTab: 'projects',
-    projectFilter: 'Open',
-    projectSearch: '',
+    project: null,       // project open in the side panel
+    mtgWeek: THIS,       // the week the project panel's history ends on
+    manageTab: 'people',
+    projectFilter: 'open',
     lastProject: null,
     lastWrite: 0,
-    minutes: {},         // saved minutes per week: record, null (none saved) or undefined (loading)
-    board: null,         // 'mine' | 'all' | 'people' (admins); remembered per device
-    addFor: null,        // project whose own add box is open
-    addWeek: null,       // week picked in the add box (e.g. by "Plan next week")
-    collapsed: null,     // card key ('p:<project id>' / 'u:<user id>') -> true; remembered per device
-    sheetTask: null,     // phone: task open in the bottom sheet
-    fold: { blocked: true, quiet: true },   // phone: Blocked / No-update lists folded to one line
-    dept: null,          // department whose board is shown (default: your own)
+    minutes: {},         // saved minutes per department and week: record, null (none saved) or undefined (loading)
+    addWeek: null,       // week picked in the project panel's add box
+    collapsed: null,
+    sheetTask: null,     // task open in the bottom sheet (phone, board, table)
     peopleOpen: {},      // task id -> its People section is unfolded
-    leadFilter: null,    // Meeting: show one team leader's projects
-    unitFilter: null,    // Workload: one org-chart team
     teamOpen: false,     // project panel: Team section unfolded
-    pscope: null,        // Projects: 'mine' | 'all'
-    hfilter: 'all',      // Meeting: health filter
-    mdetail: 'project',  // Meeting: walk through by project or by person
     qa: null,            // quick add: project and week kept between adds
-    layout: null,        // board layout: 'cards' (Trello-style, default) or 'list'; remembered per device
-    groupBy: null,       // cards: 'status' | 'person' | 'type' | 'priority' | 'client' | 'manager' | 'none'
-    cardFilter: '',      // cards: text filter on project name / client / type
+    search: {},          // search box text per page
+    myWeek: 'now',       // My tasks: 'now' (this + next week) or one week
+    myLayout: null,      // My tasks: 'project' | 'board'; remembered per device
+    teamWeek: 'now',     // Team: 'now' or one week
+    teamLayout: null,    // Team: 'project' | 'board' | 'person' | 'table'; remembered per device
+    tfilter: null,       // Team: 'all' | 'dept:<id>' | 'team:<dept>:<team>' | 'team:MGMT'
+    who: 'all',          // Team: one person
+    tscope: 'ours',      // Team: 'ours' (projects the filter's people are on) | 'all'
+    showOthers: {},      // project id -> other teams' tasks unfolded
+    showQuiet: false,    // projects with no tasks unfolded
+    sort: 'project',     // Team table
+    pstatus: 'open',     // Projects: 'open' | 'closed' | 'all'
+    mteam: 'all',        // Manage › People: one team
   };
 
   // ---------- Helpers ----------
@@ -85,7 +88,7 @@
   const project = id => S.data.projects.find(p => p.id === id) || { id: id, name: '(removed project)', type: '', status: '' };
   const contact = id => S.data.contacts.find(c => c.id === id);
 
-  // ---------- Departments ----------
+  // ---------- Departments and teams ----------
 
   /** Admins manage every department; a "Dept admin" only their own. */
   const canManage = deptId => isAdmin() || (!!S.data && me().role === 'Dept admin' && me().departmentId === deptId);
@@ -94,44 +97,66 @@
     : [{ id: 'AUTO', name: 'Automation', teams: ['PLC', 'Dev'], projectTypes: PROJECT_TYPES }];
   const dept = id => departments().find(d => d.id === id) || departments()[0];
   const manyDepts = () => departments().length > 1;
-  /** The department whose board is shown: your own, until you switch. */
-  function curDept() {
-    if (!S.dept || !departments().some(d => d.id === S.dept)) S.dept = dept(me().departmentId).id;
-    return S.dept;
-  }
-  /** Meeting email columns: the department's sub-teams, or one column named after it. */
+  /** A department's teams (the columns of its meeting email); one column named after it if it has none. */
   const deptTeams = id => dept(id).teams.length ? dept(id).teams : [dept(id).name];
   /**
-   * A department that works across projects (GUI) also sees other departments' projects that its
-   * people are on, or have tasks in ("supported" projects). Worked out once per redraw.
+   * Teams are "<department>:<team>" keys, e.g. AUTO:PLC, AUTO:Dev (shown as AVEVA), BMS:BMS,
+   * GUI:UI/UX, GUI:Dev. Admins are in their own "Management" team.
    */
-  const crossDept = () => !!dept(curDept()).crossProject;
-  function supported() {
-    const key = curDept();
-    if (S.sup && S.sup.key === key && S.sup.data === S.data && S.sup.n === S.data.tasks.length + S.data.assignments.length) return S.sup.ids;
-    const ids = new Set();
-    if (crossDept()) {
-      const ours = new Set(S.data.team.filter(m => m.departmentId === key).map(m => m.id));
-      S.data.assignments.forEach(a => { if (ours.has(a.userId)) ids.add(a.projectId); });
-      S.data.tasks.forEach(t => { if (ownersOf(t).some(id => ours.has(id))) ids.add(t.projectId); });
-    }
-    S.sup = { key: key, data: S.data, n: S.data.tasks.length + S.data.assignments.length, ids: ids };
-    return ids;
+  const MGMT = 'MGMT';
+  const teamKeys = () => departments().reduce((a, d) => a.concat(deptTeams(d.id).map(c => d.id + ':' + c)), []).concat(MGMT);
+  function teamKeyOf(m) {
+    if (m.role === 'Admin') return MGMT;
+    const cols = deptTeams(m.departmentId);
+    return dept(m.departmentId).id + ':' + (cols.indexOf(m.team) !== -1 ? m.team : cols[0]);
   }
-  const ownDept = p => (p.departmentId || 'AUTO') === curDept();
-  const inDept = p => ownDept(p) || (crossDept() && supported().has(p.id));
-  const deptProjects = () => S.data.projects.filter(inDept);
-  /** On a supported project, the department only counts its own people's tasks. */
-  const relevant = t => ownDept(project(t.projectId)) || ownersOf(t).some(id => member(id).departmentId === curDept());
-  /** Small tag for another department's project shown on a cross-project board. */
-  const deptTag = p => !ownDept(p) ? `<span class="badge dept-tag">${esc(dept(p.departmentId).name)}</span>` : '';
+  function teamLabel(key) {
+    if (key === MGMT) return 'Management';
+    const d = key.slice(0, key.indexOf(':')), t = key.slice(key.indexOf(':') + 1);
+    return d === 'AUTO' && t === 'Dev' ? 'AVEVA' : t;   // Automation's Dev team is the AVEVA team
+  }
+  const teamChip = (key, mine) => `<span class="tchip tc-${slug(teamLabel(key))}${mine ? ' mine' : ''}"><i></i>${esc(teamLabel(key))}</span>`;
+  const myTeamKey = () => teamKeyOf(me());
+  /** A task's team: the team of the person it belongs to. */
+  const taskTeam = t => teamKeyOf(member(ownersOf(t)[0]));
+  /** Teams on a project: the teams of the people on it and of the people with tasks in it. */
+  function teamsOnProject(pid) {
+    const keys = new Set(projectTeam(pid).filter(m => m.active !== false && m.id).map(teamKeyOf));
+    S.data.tasks.forEach(t => { if (t.projectId === pid) keys.add(taskTeam(t)); });
+    return teamKeys().filter(k => keys.has(k));
+  }
+
+  /** The Team page's filter: admins start on every team, a department admin on their department. */
+  const teamFilter = () => S.tfilter || (isAdmin() ? 'all' : 'dept:' + me().departmentId);
+  function teamMatch(key) {
+    const f = teamFilter();
+    if (f === 'all') return true;
+    if (f.indexOf('dept:') === 0) return key.indexOf(f.slice(5) + ':') === 0;
+    return key === f.slice(5);
+  }
+  /** The department whose minutes the Team page shows: the one picked in the Team filter, if any. */
+  function filterDept() {
+    const f = teamFilter();
+    if (f.indexOf('dept:') === 0) return f.slice(5);
+    if (f.indexOf('team:') === 0 && f !== 'team:' + MGMT) return f.slice(5, f.indexOf(':', 5));
+    return null;
+  }
+  /** The department of the minutes being built or shown. */
+  const curDept = () => filterDept() || me().departmentId;
+  /** In a department's minutes, only its own people's tasks count. */
+  const relevant = t => ownersOf(t).some(id => member(id).departmentId === curDept());
+  /** A department's projects: first entered by it, or its people are on it or have tasks in it. */
+  function deptProjects() {
+    const d = curDept();
+    const ids = new Set(S.data.projects.filter(p => p.departmentId === d).map(p => p.id));
+    S.data.assignments.forEach(a => { if (member(a.userId).departmentId === d) ids.add(a.projectId); });
+    S.data.tasks.forEach(t => { if (relevant(t)) ids.add(t.projectId); });
+    return S.data.projects.filter(p => ids.has(p.id));
+  }
   /** Dept admins (and admins) lead the people of their department, on any project. */
   const leadsPerson = id => isAdmin() || (me().role === 'Dept admin' && member(id).departmentId === me().departmentId);
   const leadsTask = t => isAdmin() || (me().role === 'Dept admin' && (ownersOf(t).concat(t.createdBy).some(id => member(id).departmentId === me().departmentId)));
-  /** Manage: admins work on the department in view, department admins on their own. */
-  const manageDept = () => isAdmin() ? curDept() : me().departmentId;
-  /** Can I manage what is on screen (the open project's department, or the board's)? */
-  const managesHere = () => canManage(S.project ? project(S.project).departmentId : curDept()) || (S.project && canManage(curDept()) && crossDept());
+
   // ---------- People: title and org-chart team ----------
 
   /** "BMS Team Leader Engineer · B.A Execution Team B" (whatever is known). */
@@ -271,8 +296,8 @@
   const findTask = id => S.data.tasks.find(t => t.id === id);
   /** One-tap reasons for a blocked task (the note can still be typed). */
   const BLOCK_REASONS = ['Waiting for client', 'Material', 'Site access', 'Approval', 'Another company'];
-  /** Own tasks only: you change tasks you created or are on; admins of the project's department change any. */
-  const canEditTask = t => canManage(project(t.projectId).departmentId) || leadsTask(t) || t.createdBy === me().id || t.assigneeIds.indexOf(me().id) !== -1;
+  /** Own tasks only: you change tasks you created or are on; a department admin their people's; admins any. */
+  const canEditTask = t => leadsTask(t) || t.createdBy === me().id || t.assigneeIds.indexOf(me().id) !== -1;
   /** Where sub-task i (with this text) is now; it may have moved if a teammate changed the list. */
   function subIndex(t, i, text) {
     return t.subtasks[i] && t.subtasks[i].t === text ? i : t.subtasks.findIndex(s => s.t === text);
@@ -286,7 +311,7 @@
     const subDone = t.subtasks.filter(s => s.done).length;
     const team = projectTeam(t.projectId);
     const extra = t.assigneeIds.filter(id => !team.some(m => m.id === id)).map(member);
-    const edit = canEditTask(t), full = canManage(project(t.projectId).departmentId), admin = full || leadsTask(t);
+    const edit = canEditTask(t), full = isAdmin(), admin = full || leadsTask(t);
     const owners = ownersOf(t).map(id => member(id).name).join(', ');
     return `
       <div class="t ${isDone(t) ? 'done' : ''}${edit ? '' : ' ro'}">
@@ -344,7 +369,7 @@
   function renderTaskSheet() {
     const dlg = $('#dialog');
     const t = S.sheetTask && findTask(S.sheetTask);
-    if (!t || !isPhone()) {
+    if (!t) {
       if (dlg.dataset.mode === 'task') { delete dlg.dataset.mode; if (dlg.open) dlg.close(); }
       if (S.sheetTask && !t) S.sheetTask = null;
       return;
@@ -500,7 +525,7 @@
   /** Weeks a task can go in: last, this and next week; admins 4 back to 8 ahead. */
   function weekChoices(selected) {
     const out = [];
-    const [from, to] = managesHere() ? [-4, 8] : [-1, 1];
+    const [from, to] = isManager() ? [-4, 8] : [-1, 1];
     const names = { '-1': 'last week', 0: 'this week', 1: 'next week' };
     for (let n = from; n <= to; n++) {
       const w = shiftWeek(THIS, n);
@@ -511,11 +536,11 @@
   /** Admins only: who the task is for (default: themselves). */
   function personChoices(people) {
     const list = people.filter(m => m.active !== false && m.id !== me().id && leadsPerson(m.id));
-    return `<option value="${esc(me().id)}">For: me</option>` + peopleOptions(list, curDept(), 'For: ');
+    return `<option value="${esc(me().id)}">Me</option>` + peopleOptions(list, curDept());
   }
   /** Project picker: my projects first, then every other open project of the department (anyone can add to any project). */
   function projectChoices() {
-    const open = p => CLOSED.indexOf(p.status) === -1 && inDept(p);
+    const open = p => CLOSED.indexOf(p.status) === -1;
     const mine = myProjects().filter(open);
     const others = S.data.projects.filter(p => open(p) && mine.indexOf(p) === -1).sort((a, b) => a.name.localeCompare(b.name));
     if (!S.lastProject) S.lastProject = remember.get('last-project');
@@ -528,7 +553,7 @@
   /** `fixedProject`: add straight into that project. `week`: the week picked by default. */
   function addBar(fixedProject, people, week) {
     week = S.addWeek || week || (S.which === 'next' ? NEXT : THIS);
-    if (week < shiftWeek(THIS, managesHere() ? -4 : -1) || week > shiftWeek(THIS, managesHere() ? 8 : 1)) week = THIS;
+    if (week < shiftWeek(THIS, isManager() ? -4 : -1) || week > shiftWeek(THIS, isManager() ? 8 : 1)) week = THIS;
     return `
       <form class="card addbar${S.addWeek || fixedProject ? ' expanded' : ''}" id="addForm">
         <input name="title" data-keep="add-title" placeholder="${week === NEXT ? 'Next week, e.g. Loop check LCP-02 with the client' : week < THIS ? 'What did you do that week?' : 'e.g. Commission AHU-3 controller on level 2'}" autocomplete="off" required>
@@ -537,7 +562,7 @@
           <select name="week" aria-label="Week">${weekChoices(week)}</select>
           <button type="submit" class="primary small">${icon('plus')} Add</button>
         </div>
-        ${managesHere() ? `<div class="addbar-row admin-row"><select name="person" aria-label="For">${personChoices(people || S.data.team)}</select></div>` : ''}
+        ${isManager() ? `<div class="addbar-row admin-row"><select name="person" aria-label="For">${personChoices(people || S.data.team)}</select></div>` : ''}
       </form>`;
   }
   function bindAddBar(root, fixedProject) {
@@ -561,8 +586,7 @@
       btn.disabled = false;
       if (saved) {
         f.elements.title.value = '';
-        const onBoard = currentTab().id === 'projects' && !S.project;
-        const shown = forId === me().id && (onBoard ? week === S.mtgWeek || week === shiftWeek(S.mtgWeek, 1) || (week < S.mtgWeek && S.mtgWeek === THIS) : week === (S.which === 'next' ? NEXT : THIS));
+        const shown = forId === me().id && week === (S.which === 'next' ? NEXT : THIS);
         S.addWeek = week;   // the next task goes in the same week until you change it
         if (!shown) toast('Added for ' + (forId === me().id ? 'you' : shortName(member(forId).name)) + ' · week ' + wnum(week));
         render(); const i = $('#addForm input'); if (i) i.focus();
@@ -610,16 +634,17 @@
           <button type="button" class="icon-btn sp-close" id="backBtn" aria-label="Close">×</button></span>
       </div>
       <h2 class="sp-title">${esc(p.name)}</h2>
-      <p class="muted small sp-meta">${[manyDepts() ? dept(p.departmentId).name : '', p.id, p.client, p.manager ? 'PM: ' + p.manager : '',
+      <p class="muted small sp-meta">${[p.id, p.client, p.manager ? 'PM: ' + p.manager : '',
         p.startDate || p.endDate ? (p.startDate || '…') + ' → ' + (p.endDate || '…') : ''].filter(Boolean).map(esc).join(' · ')}</p>
-      ${canManage(p.departmentId) ? '' : teamTags(p.id, { people: order.map(id => ({ id: id })) })}
+      <div class="tchips sp-teams">${teamsOnProject(p.id).map(k => teamChip(k, myTeamKey() === k)).join('')}</div>
+      ${teamTags(p.id, { people: order.map(id => ({ id: id })) })}
       ${p.notes ? `<p class="sp-notes">${esc(p.notes)}</p>` : ''}
       ${weekSwitch(S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length, S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'next')).length)}
       ${CLOSED.indexOf(p.status) === -1 ? addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1))) : ''}
       ${order.map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</h3>
         ${byPerson[id].sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t, true)).join('')}</section>`).join('')
         || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}
-      ${canManage(p.departmentId) || isManager() ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
+      ${isManager() ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
       ${historyHtml(p)}`;
     $$('[data-spfold="team"]', root).forEach(d => d.ontoggle = () => { S.teamOpen = d.open; });
     $('#backBtn', root).onclick = closePanel;
@@ -651,7 +676,7 @@
   function teamEditor(p) {
     const team = projectTeam(p.id);
     // On another department's project, a department admin adds and removes only their own people.
-    const may = m => canManage(p.departmentId) || leadsPerson(m.id);
+    const may = m => leadsPerson(m.id);
     const others = S.data.team.filter(m => m.active && team.indexOf(m) === -1 && may(m));
     return `<div class="card team-edit"><strong class="small">Team</strong>
       <div class="avatars-row">${team.map(m => `<span class="person-chip" title="${esc(personInfo(m))}">${esc(shortName(m.name))}${may(m) ? `<button type="button" class="chip-x" data-unassign="${esc(m.id)}" aria-label="Take ${esc(m.name)} off the project">×</button>` : ''}</span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
@@ -723,29 +748,12 @@
         people: Object.keys(people).map(k => people[k]).sort((x, y) => x.name.localeCompare(y.name)),
       });
     });
-    const blocked = S.data.tasks.filter(t => isBlocked(t) && open(t) && inDept(project(t.projectId)) && relevant(t))
+    const blocked = S.data.tasks.filter(t => isBlocked(t) && open(t) && relevant(t))
       .sort((a, b) => a.week.localeCompare(b.week))
       .map(t => Object.assign(itemOf(t, 'doing'), { project: project(t.projectId).name }));
     summary.silent = rows.filter(r => r.silent).length;
     summary.blocked = blocked.length;
     return { v: 1, week: week, dept: curDept(), deptName: dept(curDept()).name, teams: teams, rows: rows, blocked: blocked, summary: summary };
-  }
-
-  /**
-   * People of the department (and anyone on one of its open projects) with no update in the week:
-   * none of their tasks (created by or assigned to them) was added or changed that week. A task
-   * someone else created for them and nobody has touched since doesn't count as their update.
-   * Returns [{ m, onProject, last }].
-   */
-  function quietPeople(week) {
-    const openIds = deptProjects().filter(p => CLOSED.indexOf(p.status) === -1).map(p => p.id);
-    const onOpen = id => S.data.assignments.some(a => a.userId === id && openIds.indexOf(a.projectId) !== -1);
-    const theirs = m => S.data.tasks.filter(t => t.createdBy === m.id || t.assigneeIds.indexOf(m.id) !== -1);
-    const counts = (t, m) => touchedIn(t, week) && !(t.createdBy !== m.id && t.createdRaw && t.createdRaw === t.version);
-    return S.data.team.filter(m => m.active && (m.departmentId === curDept() || onOpen(m.id)))
-      .filter(m => !theirs(m).some(t => counts(t, m)))
-      .map(m => ({ m: m, onProject: onOpen(m.id), last: theirs(m).reduce((x, t) => t.version && t.version > x ? t.version : x, '') }))
-      .sort((a, b) => a.m.name.localeCompare(b.m.name));
   }
 
   function copyText(text, okMsg) {
@@ -769,7 +777,7 @@
       <button type="button" class="archive-row${r.week === S.mtgWeek ? ' on' : ''}" data-week="${esc(r.week)}">
         <span><strong>Week ${wnum(r.week)}</strong> · ${esc(weekRange(r.week))} ${weekMonday(r.week).getUTCFullYear()}<br>
         <span class="muted small">Saved ${esc(r.savedAt)}${r.savedBy ? ' by ' + esc(member(r.savedBy).name) : ''}</span></span>${icon('chevron')}</button>`).join('')}</div>`
-      : '<div class="empty"><h3>No saved minutes yet</h3><p>An admin can save them from the Projects tab after each meeting.</p></div>';
+      : '<div class="empty"><h3>No saved minutes yet</h3><p>Save them from the Team page after each meeting.</p></div>';
     $$('[data-week]', body).forEach(b => b.onclick = () => {
       const week = b.dataset.week;
       guard(() => Api.minutes(week, curDept())).then(rec => { if (rec && rec.snapshot) savedMinutesSheet(rec); });
@@ -781,14 +789,13 @@
     const dlg = $('#dialog');
     const m = rec.snapshot;
     const draw = () => {
-      const cards = projectCards(m.rows || [], rec.week, false, 'all');
       dlg.innerHTML = `<div class="sheet saved-sheet"><header class="sheet-head"><span></span><h3>Saved minutes · week ${wnum(rec.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
         <div class="sheet-body">
           <p class="muted small" style="margin:0 0 10px">${esc(weekRange(rec.week))} ${weekMonday(rec.week).getUTCFullYear()} · saved ${esc(rec.savedAt)}${rec.savedBy ? ' by ' + esc(member(rec.savedBy).name) : ''}. This copy does not change when tasks change.</p>
           <div class="actions-row"><button type="button" class="primary" id="copySaved">Copy as email</button></div>
           ${m.notes ? `<section class="card"><h3 class="card-title">Team notes</h3><p class="saved-notes">${esc(m.notes)}</p></section>` : ''}
           ${(m.blocked || []).length ? `<section class="card warn"><h3 class="card-title">Blocked (${m.blocked.length})</h3><ul class="plain">${m.blocked.map(it => `<li><span><strong>${esc(it.title)}</strong><br><span class="muted">${esc(it.project)} · ${esc(it.who)} — ${esc(it.note || 'no reason given')}</span></span></li>`).join('')}</ul></section>` : ''}
-          ${cards.html}</div></div>`;
+          ${savedRowsHtml(m)}</div></div>`;
       $('[data-close]', dlg).onclick = () => dlg.close();
       $('#copySaved', dlg).onclick = () => copyEmail(m);
       $$('[data-fold]', dlg).forEach(b => b.onclick = () => { setCollapsed([b.dataset.fold], !collapsed()[b.dataset.fold]); draw(); });
@@ -803,7 +810,7 @@
     const d = curDept(), key = mkey(week);
     S.minutes[key] = undefined;
     Api.minutes(week, d).then(rec => { S.minutes[key] = rec; }, () => { S.minutes[key] = null; })
-      .then(() => { if (currentTab().id === 'meeting' && S.mtgWeek === week && curDept() === d) softRender(); });
+      .then(() => { if (currentTab().id === 'team' && curDept() === d) softRender(); });
   }
 
   function collapsed() {
@@ -826,258 +833,6 @@
       <span class="avatar xs">${esc(initials(m.name))}</span>${esc(m.name)}${m.id === me().id ? ' <small>(You)</small>' : ''}</span>`;
     if (!team.length && !helping.length) return '<p class="team-line muted">Nobody on this project yet</p>';
     return `<div class="name-tags" aria-label="People on this project">${team.map(m => tag(m)).join('')}${helping.map(m => tag(m, true)).join('')}</div>`;
-  }
-  const chevron = (key, label) => `<button type="button" class="icon-btn fold" data-fold="${esc(key)}" aria-expanded="${!collapsed()[key]}" aria-label="${collapsed()[key] ? 'Expand' : 'Collapse'} ${esc(label)}">${icon(collapsed()[key] ? 'chevron' : 'down')}</button>`;
-
-  /**
-   * The two weeks side by side for one project (or one person on it). Live: the real task rows,
-   * so tasks can be ticked and edited right here. Saved minutes: plain text, exactly as saved.
-   */
-  function weekGrid(r, week, live, onlyId) {
-    const subs = it => it.subTotal ? ` <em>(${it.subDone}/${it.subTotal})</em>` : '';
-    const blockText = it => it.blocked ? ` — blocked: ${esc(it.note || 'no reason given')}` : '';
-    const mark = it => it.kind === 'done' ? '✔' : it.kind === 'next' ? '→' : it.blocked ? '⛔' : '•';
-    const text = it => `<li class="${it.blocked ? 'blk' : ''}"><span class="mk">${mark(it)}</span><span>${esc(it.title)}${it.kind === 'doing' && it.week < week ? ` <span class="tag-carry">from week ${wnum(it.week)}</span>` : ''}${blockText(it)}${subs(it)}</span></li>`;
-    // A task shared by two people is editable once (under the first); elsewhere it is a plain line.
-    const drawn = {};
-    const row = it => {
-      const t = live && it.id && !drawn[it.id] && findTask(it.id);
-      if (t) { drawn[it.id] = true; return taskHtml(t, true); }
-      return `<ul>${text(it)}</ul>`;
-    };
-    const people = r.people.filter(pp => !onlyId || pp.id === onlyId);
-    const column = isNext => {
-      const inCol = it => (it.kind === 'next') === isNext;
-      const blocks = people.filter(pp => pp.items.some(inCol)).map(pp => `<div class="mtg-person">
-        ${onlyId ? '' : `<strong><span class="avatar sm">${esc(initials(pp.name))}</span>${esc(pp.name)}${pp.team ? ` <span class="badge">${esc(pp.team)}</span>` : ''}</strong>`}
-        ${pp.items.filter(inCol).map(row).join('')}</div>`);
-      const w = isNext ? shiftWeek(week, 1) : week;
-      return `<div class="wk-col${isNext ? ' next' : ''}"><h4>Week ${wnum(w)} <span>${isNext ? 'plan' : 'done & in progress'}</span></h4>
-        ${blocks.join('') || `<p class="muted small">${isNext ? 'Nothing planned yet' : 'Nothing this week'}</p>`}</div>`;
-    };
-    const tabs = `<div class="wk-tabs" aria-hidden="true"><button type="button" class="on">Week ${wnum(week)}</button><button type="button">Week ${wnum(shiftWeek(week, 1))} · plan</button></div>`;
-    return `${tabs}<div class="wk2">${column(false)}${column(true)}</div>`;
-  }
-
-  /**
-   * The department's projects shown in a view: My tasks (projects I have tasks on), My projects
-   * (joined), All projects (open ones, plus closed ones with tasks). Mine first, then active, then A-Z.
-   */
-  function boardProjects(byId, mode) {
-    const mineIds = myProjectIds();
-    const mineHas = r => r && r.people.some(pp => pp.id === me().id);
-    const shown = p => mode === 'mine' ? mineIds.indexOf(p.id) !== -1 || mineHas(byId[p.id]) : mode === 'active' ? !!byId[p.id] : (CLOSED.indexOf(p.status) === -1 || byId[p.id]);
-    return deptProjects().filter(shown).sort((a, b) =>
-      (mineIds.indexOf(b.id) !== -1) - (mineIds.indexOf(a.id) !== -1) || !!byId[b.id] - !!byId[a.id] || a.name.localeCompare(b.name));
-  }
-
-  // ---------- Cards layout (Trello-style columns) ----------
-
-  /** Board layout and grouping, remembered per device. */
-  function boardLayout() {
-    if (!S.layout) S.layout = remember.get('layout') === 'list' ? 'list' : 'cards';
-    return S.layout;
-  }
-  /**
-   * The ways cards can be grouped. `keys(p, r)` gives the column(s) a project goes in; `order` sorts
-   * the columns; `field` makes a column a drop target (admins drag a card to change that field).
-   * Client and Project manager are only offered when some project has one.
-   */
-  function cardGroups(projects) {
-    const d = dept(curDept());
-    const has = f => projects.some(p => String(p[f] || '').trim());
-    const people = (p, r) => {
-      const ids = projectTeam(p.id).filter(m => m.active !== false).map(m => m.id);
-      (r ? r.people : []).forEach(pp => { if (pp.id && ids.indexOf(pp.id) === -1) ids.push(pp.id); });
-      return ids.length ? ids : [''];
-    };
-    const g = [
-      { id: 'status', label: 'Status', keys: p => [p.status], order: PROJECT_STATUSES, field: 'status' },
-      { id: 'person', label: 'Person', keys: people, name: id => id ? member(id).name : 'Nobody yet',
-        order: null, sort: (a, b) => (!a) - (!b) || (b === me().id) - (a === me().id) || member(a).name.localeCompare(member(b).name) },
-      { id: 'type', label: d.projectTypes.indexOf('GRMS') !== -1 ? 'Service' : 'Type', keys: p => [p.type], order: d.projectTypes, field: 'type' },
-      { id: 'priority', label: 'Priority', keys: p => [p.priority || 'Medium'], order: PRIORITIES, field: 'priority' },
-    ];
-    if (has('client')) g.push({ id: 'client', label: 'Client', keys: p => [String(p.client || '').trim() || 'No client'] });
-    if (has('manager')) g.push({ id: 'manager', label: 'Project manager', keys: p => [String(p.manager || '').trim() || 'No manager'] });
-    g.push({ id: 'none', label: 'No grouping', keys: () => [''] });
-    return g;
-  }
-
-  /** One compact card: this week's numbers, the first few tasks (blocked first), the team. */
-  function projectCardHtml(p, r, opts) {
-    const seen = {}, items = [];
-    (r ? r.people : []).filter(pp => !opts.onlyId || pp.id === opts.onlyId)
-      .forEach(pp => pp.items.forEach(it => { if (!seen[it.id]) { seen[it.id] = true; items.push(it); } }));
-    const n = k => items.filter(k).length;
-    const blocked = n(it => it.kind === 'doing' && it.blocked), doing = n(it => it.kind === 'doing' && !it.blocked);
-    const done = n(it => it.kind === 'done'), next = n(it => it.kind === 'next');
-    const rank = it => it.blocked ? 0 : it.kind === 'doing' ? 1 : it.kind === 'next' ? 2 : 3;
-    const top = items.slice().sort((a, b) => rank(a) - rank(b)).slice(0, 3);
-    const mark = it => it.kind === 'done' ? '✔' : it.kind === 'next' ? '→' : it.blocked ? '⛔' : '•';
-    const team = projectTeam(p.id).filter(m => m.active !== false);
-    const stat = (v, cls, label) => v ? `<span class="pc-stat ${cls}" title="${label}">${v} ${label}</span>` : '';
-    return `<article class="pcard${opts.drag ? ' draggable' : ''}${S.project === p.id ? ' selected' : ''}" data-pid="${esc(p.id)}"${opts.drag ? ' draggable="true"' : ''}>
-      <div class="pc-top">${deptTag(p)}<span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${opts.group !== 'priority' ? `<span class="prio prio-${slug(p.priority)}">${esc(p.priority || 'Medium')}</span>` : ''}${opts.group !== 'status' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}</div>
-      <button type="button" class="pc-open" data-project="${esc(p.id)}">${esc(p.name)}</button>
-      ${items.length ? `<div class="pc-stats">${stat(blocked, 'bad', 'blocked')}${stat(doing, '', 'in progress')}${stat(done, 'ok', 'done')}${stat(next, 'next', 'next week')}</div>
-      <ul class="pc-tasks">${top.map(it => `<li class="${it.blocked ? 'blk' : ''}${it.kind === 'done' ? ' done' : ''}"><span class="mk">${mark(it)}</span><span>${esc(it.title)}</span></li>`).join('')}</ul>
-      ${items.length > 3 ? `<p class="pc-more">+${items.length - 3} more</p>` : ''}`
-      : '<p class="pc-empty">No tasks this week or next</p>'}
-      <div class="pc-foot">${team.length ? `<span class="avatars" aria-label="Team">${team.slice(0, 5).map(m => `<span class="avatar sm${m.id === me().id ? ' me' : ''}" title="${esc(m.name)}">${esc(initials(m.name))}</span>`).join('')}${team.length > 5 ? `<span class="avatar sm more">+${team.length - 5}</span>` : ''}</span>` : '<span class="muted small">Nobody on it yet</span>'}</div>
-    </article>`;
-  }
-
-  /** Trello-style board: one column per group (status, person, …), compact project cards in each. */
-  function cardsBoard(rows, week, mode) {
-    const byId = {}; rows.forEach(r => { if (r.id) byId[r.id] = r; });
-    const q = S.cardFilter.trim().toLowerCase();
-    const all = boardProjects(byId, mode);
-    const projects = all.filter(p => !q || (p.name + ' ' + p.client + ' ' + p.type + ' ' + p.id).toLowerCase().indexOf(q) !== -1);
-    const groups = cardGroups(all);
-    if (!S.groupBy) S.groupBy = remember.get('group') || 'status';
-    const g = groups.find(x => x.id === S.groupBy) || groups[0];
-    const drag = !!g.field && canManage(curDept());
-    // Columns: every project goes in the column(s) its key(s) name.
-    const cols = {};
-    projects.forEach(p => g.keys(p, byId[p.id]).forEach(k => { (cols[k] = cols[k] || []).push(p); }));
-    let keys = Object.keys(cols);
-    if (g.order) {
-      // Admins also see empty columns, to drag a card into.
-      keys = g.order.filter(k => cols[k] || drag).concat(keys.filter(k => g.order.indexOf(k) === -1));
-    } else keys.sort(g.sort || ((a, b) => a.localeCompare(b)));
-    const title = k => g.name ? g.name(k) : k;
-    const head = k => g.id === 'person' ? `<span class="avatar xs">${esc(k ? initials(member(k).name) : '?')}</span>${esc(title(k))}${k === me().id ? ' <small>(You)</small>' : ''}`
-      : g.id === 'status' ? `<span class="pstatus ps-${slug(k)}">${esc(k)}</span>`
-      : g.id === 'priority' ? `<span class="prio prio-${slug(k)}">${esc(k)}</span>` : esc(title(k) || 'All projects');
-    // In a person's column (and in My tasks) a card shows only that person's tasks.
-    const cardOpts = k => ({ group: g.id, drag: drag, onlyId: g.id === 'person' ? k : null });
-    const columns = keys.map(k => `<section class="lane${g.id === 'none' ? ' wide' : ''}${(cols[k] || []).length ? '' : ' empty'}" data-lane="${esc(k)}">
-        ${g.id === 'none' ? '' : `<header class="lane-head"><span class="lane-title">${head(k)}</span><span class="lane-count">${(cols[k] || []).length}</span></header>`}
-        <div class="lane-body">${(cols[k] || []).map(p => projectCardHtml(p, byId[p.id], cardOpts(k))).join('') || '<p class="lane-empty">Drop here</p>'}</div>
-      </section>`).join('');
-    const empty = !projects.length ? `<div class="empty"><h3>${q ? 'No projects match “' + esc(S.cardFilter) + '”' : mode === 'mine' ? `Nothing of yours in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet` : 'No projects to show'}</h3>${mode === 'mine' && !q ? '<p>Add a task above, or join a project from <b>All projects</b>.</p>' : ''}</div>` : '';
-    return {
-      tools: `<div class="cards-tools no-print">
-          <label class="group-by">Group by <select id="groupBy">${groups.map(x => `<option value="${x.id}"${x.id === g.id ? ' selected' : ''}>${esc(x.label)}</option>`).join('')}</select></label>
-          <input type="search" id="cardFilter" class="search" placeholder="Find a project" value="${esc(S.cardFilter)}" data-keep="card-filter" autocomplete="off">
-        </div>`,
-      html: empty || `<div class="lanes${g.id === 'none' ? ' grid-mode' : ''}" data-group="${g.id}">${columns}</div>`,
-      field: g.field, keys: [],
-    };
-  }
-
-  function bindCards(root, field) {
-    const gb = $('#groupBy', root);
-    if (gb) gb.onchange = () => { S.groupBy = gb.value; remember.set('group', S.groupBy); render(); };
-    const f = $('#cardFilter', root);
-    if (f) f.oninput = () => {
-      S.cardFilter = f.value;
-      const pos = f.selectionStart;
-      render();
-      const f2 = $('#cardFilter'); if (f2) { f2.focus(); f2.setSelectionRange(pos, pos); }
-    };
-    // Admins: drag a card to another column to change its status / priority / type.
-    if (!field) return;
-    $$('.pcard[draggable]', root).forEach(c => {
-      c.ondragstart = e => { e.dataTransfer.setData('text/plain', c.dataset.pid); e.dataTransfer.effectAllowed = 'move'; c.classList.add('dragging'); };
-      c.ondragend = () => c.classList.remove('dragging');
-    });
-    $$('.lane', root).forEach(l => {
-      l.ondragover = e => { e.preventDefault(); l.classList.add('drop'); };
-      l.ondragleave = () => l.classList.remove('drop');
-      l.ondrop = async e => {
-        e.preventDefault(); l.classList.remove('drop');
-        const p = project(e.dataTransfer.getData('text/plain'));
-        const to = l.dataset.lane;
-        if (!p || !to || p[field] === to) return;
-        const team = S.data.assignments.filter(a => a.projectId === p.id).map(a => a.userId);
-        const before = p[field];
-        p[field] = to; S.lastWrite = Date.now(); render();   // show it at once
-        const saved = await guard(() => Api.saveProject(Object.assign({}, p), team, team));
-        if (saved) toast(p.name + ' → ' + to); else { p[field] = before; render(); }
-      };
-    });
-  }
-
-  /** One card per project (My tasks / My projects / All projects views). */
-  function projectCards(rows, week, live, mode) {
-    const byId = {}; rows.forEach(r => { if (r.id) byId[r.id] = r; });
-    const mineIds = myProjectIds();
-    let list;
-    // Saved minutes: find each project again by id, or by name for minutes saved before ids were kept.
-    const savedProject = r => S.data.projects.find(x => x.id === r.id) || S.data.projects.find(x => x.name === r.name);
-    if (!live) list = rows.map(r => ({ r: r, p: savedProject(r) || { id: r.id || r.name, name: r.name, type: r.type, status: r.status } }));
-    else list = boardProjects(byId, mode).map(p => ({ r: byId[p.id], p: p }));
-    const card = ({ r, p }) => {
-      const key = 'p:' + p.id;
-      const exists = project(p.id).id === p.id;   // saved minutes may name a project that was removed since
-      const isReal = live && exists;
-      const on = mineIds.indexOf(p.id) !== -1;
-      const open = CLOSED.indexOf(p.status) === -1;
-      return `<section class="card board-card${collapsed()[key] ? ' folded' : ''}${S.project === p.id ? ' selected' : ''}">
-        <div class="board-head">
-          ${chevron(key, p.name)}
-          <div class="board-name">
-            ${isReal ? `<button type="button" class="board-title" data-project="${esc(p.id)}">` : '<span class="board-title">'}<strong>${esc(p.name)}</strong> <span class="badge ${typeClass(p.type)}">${esc(p.type)}</span><span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>${isReal ? '</button>' : '</span>'}
-          </div>
-          ${isReal ? `<span class="board-actions no-print">${on ? '' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}${open ? `<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button>` : ''}</span>` : ''}
-        </div>
-        ${exists ? teamTags(p.id, r) : ''}
-        <div class="board-body">
-          ${live && S.addFor === p.id ? `<div class="no-print">${addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1)), week)}</div>` : ''}
-          ${r ? weekGrid(r, week, live, mode === 'mine' ? me().id : null) : `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}
-        </div>
-      </section>`;
-    };
-    const empty = mode === 'mine'
-      ? `<div class="empty"><h3>No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))} yet</h3><p>Add one above, on any project.</p></div>`
-      : '<div class="empty"><h3>No projects to show</h3></div>';
-    return { html: list.map(card).join('') || empty, keys: list.map(x => 'p:' + x.p.id) };
-  }
-
-  /** Admins: one card per person in the department (or with tasks in it), their tasks grouped by project. */
-  /** By person: only people on one of the department's projects, or with tasks in it that week. */
-  function personCards(rows, week, live) {
-    const onDeptProject = id => S.data.assignments.some(a => a.userId === id && inDept(project(a.projectId)));
-    const people = S.data.team.filter(m => m.active && (onDeptProject(m.id) || rows.some(r => r.people.some(pp => pp.id === m.id))))
-      .sort((a, b) => unitOf(a).localeCompare(unitOf(b)) || a.name.localeCompare(b.name));
-    const html = people.map(m => {
-      const key = 'u:' + m.id;
-      const mine = rows.filter(r => r.people.some(pp => pp.id === m.id));
-      const onProjects = S.data.assignments.filter(a => a.userId === m.id && inDept(project(a.projectId))).length;
-      const count = mine.reduce((n, r) => n + r.people.find(pp => pp.id === m.id).items.length, 0);
-      return `<section class="card board-card${collapsed()[key] ? ' folded' : ''}">
-        <div class="board-head">${chevron(key, m.name)}
-          <div class="board-name"><span class="board-title"><span class="avatar sm">${esc(initials(m.name))}</span><strong>${esc(m.name)}</strong>${m.team ? ` <span class="badge">${esc(m.team)}</span>` : ''}</span>
-          ${personInfo(m) ? `<p class="team-line person-info">${esc(personInfo(m))}</p>` : ''}
-          <p class="team-line muted">${count} ${count === 1 ? 'task' : 'tasks'} this week · on ${onProjects} ${onProjects === 1 ? 'project' : 'projects'}</p></div></div>
-        <div class="board-body">${mine.map(r => `<h4 class="person-project">${esc(r.name)}</h4>${weekGrid(r, week, live, m.id)}`).join('') || `<p class="muted small" style="margin:8px 0 0">No tasks in week ${wnum(week)} or ${wnum(shiftWeek(week, 1))}.</p>`}</div>
-      </section>`;
-    }).join('');
-    return { html: html || '<div class="empty"><h3>Nobody is on a project yet</h3><p>Add people to projects from each project’s page.</p></div>', keys: people.map(m => 'u:' + m.id) };
-  }
-
-  // ---------- Shared: compact header (department ▾ · week ‹ ›) ----------
-
-  /** One sticky bar: the department (if there is more than one) and the week. */
-  function weekBar() {
-    const week = S.mtgWeek;
-    const deptSel = manyDepts() ? `<select class="dept-pick" id="deptPick" aria-label="Department">${departments().map(d =>
-      `<option value="${esc(d.id)}"${d.id === curDept() ? ' selected' : ''}>${esc(d.name)}${d.id === me().departmentId ? '' : ' (view)'}</option>`).join('')}</select>` : '';
-    return `<div class="weekbar">
-        ${deptSel}
-        <button type="button" class="icon-btn" data-mw="-1" aria-label="Previous week">${icon('left')}</button>
-        <div class="weekbar-label"><strong>Week ${wnum(week)}${week === THIS ? ' · this week' : ''}</strong><span>${esc(weekRange(week))}</span></div>
-        <button type="button" class="icon-btn" data-mw="1" aria-label="Next week"${week >= shiftWeek(THIS, 8) ? ' disabled' : ''}>${icon('chevron')}</button>
-        ${week !== THIS ? '<button type="button" class="text-btn" id="toToday">This week</button>' : ''}
-      </div>`;
-  }
-  function bindWeekBar(root) {
-    const d = $('#deptPick', root);
-    if (d) d.onchange = () => { S.dept = d.value; S.project = null; S.addWeek = null; render(); };
-    $$('[data-mw]', root).forEach(b => b.onclick = () => { S.mtgWeek = shiftWeek(S.mtgWeek, Number(b.dataset.mw)); S.addWeek = null; render(); });
-    const t = $('#toToday', root); if (t) t.onclick = () => { S.mtgWeek = THIS; render(); };
   }
 
   /** Opens a project in the side panel (from any screen); tapping the open one again closes it. */
@@ -1148,77 +903,11 @@
     }
     return out;
   }
-  const healthBadge = h => h.flags.length ? h.flags.map(f => `<span class="hb hb-${f}">${HEALTH[f].label}</span>`).join('') : '<span class="hb hb-ok">On track</span>';
   const ago = v => {
     if (!v) return '—';
     const days = Math.floor((Date.now() - new Date(v).getTime()) / 86400000);
     return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 14 ? days + ' days ago' : 'week ' + wnum(isoWeek(new Date(v)));
   };
-
-  /** A compact project row (phone project list, manager table): health, counts, team. */
-  function projectRowHtml(p, h) {
-    const team = projectTeam(p.id).filter(m => m.active !== false);
-    const n = (v, cls, label) => `<span class="pr-n ${cls}${v ? '' : ' zero'}" title="${label}">${v}<small>${label}</small></span>`;
-    return `<button type="button" class="prow hk-${h.key}${S.project === p.id ? ' selected' : ''}" data-project="${esc(p.id)}">
-      <span class="pr-main"><span class="pr-dot" aria-hidden="true"></span><strong>${esc(p.name)}</strong>
-        <span class="pr-tags">${deptTag(p)}<span class="badge ${typeClass(p.type)}">${esc(p.type)}</span>${h.closed || p.status !== 'In Progress' ? `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>` : ''}${healthBadge(h)}</span></span>
-      <span class="pr-nums">${n(h.blocked, 'bad', 'blocked')}${n(h.doing, '', 'open')}${n(h.done, 'ok', 'done')}${n(h.next, 'nx', 'next wk')}</span>
-      <span class="pr-meta muted small">${projectLead(p) ? 'Lead: ' + esc(shortName(projectLead(p).name)) + ' · ' : ''}${team.length ? team.length + (team.length === 1 ? ' person' : ' people') : 'Nobody yet'} · ${ago(h.last)}${p.endDate ? ' · ends ' + esc(p.endDate) : ''}</span>
-    </button>`;
-  }
-
-  // ---------- My week (the employee's home) ----------
-
-  /** My tasks for the week (this week also shows my unfinished older tasks) and next week, grouped by project. */
-  function viewWeek(root) {
-    const week = S.mtgWeek, next = shiftWeek(week, 1);
-    // Mine = assigned to me (or created by me with nobody assigned): the same rule as the meeting.
-    const mine = S.data.tasks.filter(t => ownersOf(t).indexOf(me().id) !== -1 && inDept(project(t.projectId)));
-    const inWeek = t => t.week === week || (week === THIS && t.week < week && !isDone(t));
-    const rank = t => isBlocked(t) ? 0 : !isDone(t) && t.week < week ? 1 : isDone(t) ? 3 : 2;
-    const section = (list, title, sub, empty) => {
-      const groups = {};
-      list.forEach(t => { (groups[t.projectId] = groups[t.projectId] || []).push(t); });
-      const order = Object.keys(groups).sort((a, b) =>
-        Math.min(...groups[a].map(rank)) - Math.min(...groups[b].map(rank)) || project(a).name.localeCompare(project(b).name));
-      const open = list.filter(t => !isDone(t)).length;
-      return `<section class="mw-sec"><h2 class="mw-title">${title} <small>${sub} · ${open} open${list.length - open ? ' · ' + (list.length - open) + ' done' : ''}</small></h2>
-        ${order.map(pid => `<div class="card mw-group">
-            <button type="button" class="mw-project" data-project="${esc(pid)}"><strong>${esc(project(pid).name)}</strong><span class="badge ${typeClass(project(pid).type)}">${esc(project(pid).type)}</span>${icon('chevron')}</button>
-            ${groups[pid].sort((a, b) => rank(a) - rank(b)).map(t => taskHtml(t, true)).join('')}
-          </div>`).join('') || `<div class="empty small-empty"><p>${empty}</p></div>`}
-      </section>`;
-    };
-    // Carried 2+ weeks: one tap each to keep (moves it to this week), finish or drop it.
-    const review = week === THIS ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
-    const day = new Date().getDay();
-    const planHint = week === THIS && (day === 0 || day >= 4) && !mine.some(t => t.week === next) && remember.get('plan-dismissed') !== next;
-    root.innerHTML = `
-      ${weekBar()}
-      ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(next)} yet. It goes straight into next week’s meeting.</span>
-        <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(next)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
-      ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
-        <p class="muted small" style="margin:0 0 8px">Still doing these? Keep them for this week, mark them done, or drop them.</p>
-        ${review.map(t => `<div class="rv-row"><div class="rv-text"><strong>${esc(t.title)}</strong><small class="muted">${esc(project(t.projectId).name)} · since week ${wnum(t.week)}</small></div>
-          <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canManage(project(t.projectId).departmentId) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
-      </section>` : ''}
-      <div class="mw-cols">
-        ${section(mine.filter(inWeek), week === THIS ? 'This week' : 'Week ' + wnum(week), 'week ' + wnum(week), 'Nothing yet. Tap <b>Add a task</b> below.')}
-        ${section(mine.filter(t => t.week === next), week === THIS ? 'Next week' : 'Week ' + wnum(next), 'plan · week ' + wnum(next), 'Nothing planned yet.')}
-      </div>
-      ${quickAddBar()}`;
-    bindWeekBar(root); bindTasks(root); bindProjectLinks(root); bindQuickAdd(root);
-    $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
-    $$('[data-done-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.doneTask), { status: 'Done', week: THIS }); toast('Done ✔'); });
-    $$('[data-drop-task]', root).forEach(b => b.onclick = async () => {
-      if (!confirm('Drop this task? It is deleted.')) return;
-      S.lastWrite = Date.now();
-      if (await guard(() => Api.deleteTask(b.dataset.dropTask).then(() => true))) toast('Dropped');
-      render();
-    });
-    const plan = $('#planNext', root); if (plan) plan.onclick = () => quickAddSheet({ week: next });
-    const later = $('#planLater', root); if (later) later.onclick = () => { remember.set('plan-dismissed', next); render(); };
-  }
 
   // ---------- Quick add (bottom bar → sheet) ----------
 
@@ -1226,15 +915,12 @@
   function recentProjects() {
     let ids = [];
     try { ids = JSON.parse(remember.get('recent-projects') || '[]'); } catch (e) { ids = []; }
-    return ids.filter(id => S.data.projects.some(p => p.id === id && inDept(p) && CLOSED.indexOf(p.status) === -1));
+    return ids.filter(id => S.data.projects.some(p => p.id === id && CLOSED.indexOf(p.status) === -1));
   }
   function rememberProject(id) {
     const ids = [id].concat(recentProjects().filter(x => x !== id)).slice(0, 6);
     remember.set('recent-projects', JSON.stringify(ids)); remember.set('last-project', id);
   }
-  const quickAddBar = () => deptProjects().some(p => CLOSED.indexOf(p.status) === -1)
-    ? `<div class="qa-bar no-print"><button type="button" class="qa-open" id="qaOpen">${icon('plus')} Add a task…</button></div>` : '';
-  function bindQuickAdd(root) { const b = $('#qaOpen', root); if (b) b.onclick = () => quickAddSheet({}); }
 
   /**
    * The add sheet: what (title), where (project chips: recent ones, then "Other…"), when (this / next
@@ -1243,20 +929,22 @@
    */
   function quickAddSheet(opts) {
     const dlg = $('#dialog');
-    const openP = p => (inDept(p) || crossDept()) && CLOSED.indexOf(p.status) === -1;   // a cross-project team can add to any project
+    const openP = p => CLOSED.indexOf(p.status) === -1;   // projects are shared: anyone adds to any project
     const qa = S.qa = S.qa || {};
     const recent = recentProjects();
     const chips = recent.concat(myProjects().filter(p => openP(p) && recent.indexOf(p.id) === -1).map(p => p.id)).slice(0, 4);
     if (opts.week) qa.week = opts.week;
+    if (opts.pid) qa.pid = opts.pid;
     if (!qa.week || (qa.week !== THIS && qa.week !== NEXT)) qa.week = THIS;
     if (!qa.pid || !S.data.projects.some(p => p.id === qa.pid && openP(p))) qa.pid = recent[0] || (chips.length === 1 ? chips[0] : '');
     const others = S.data.projects.filter(p => openP(p) && chips.indexOf(p.id) === -1).sort((a, b) => a.name.localeCompare(b.name));
-    const manager = canManage(curDept());
+    const manager = isManager();
     const draw = () => {
       dlg.innerHTML = `<form class="sheet qa-sheet" id="qaForm">
         <header class="sheet-head"><button type="button" class="text-btn" data-close>Close</button><h3>Add a task</h3><button type="submit" class="text-btn strong">Add</button></header>
         <div class="sheet-body">
-          <textarea name="title" rows="2" maxlength="300" placeholder="${qa.week === NEXT ? 'Next week, e.g. Loop check LCP-02 with the client' : 'e.g. Commission AHU-3 controller on level 2'}" aria-label="Task" required></textarea>
+          ${manager ? `<p class="qa-label">For</p><select class="qa-for" name="person" aria-label="Who the task is for">${personChoices(S.data.team)}</select>` : ''}
+          ${manager ? '<p class="qa-label">Task</p>' : ''}<textarea name="title" rows="2" maxlength="300" placeholder="${qa.week === NEXT ? 'Next week, e.g. Loop check LCP-02 with the client' : 'e.g. Commission AHU-3 controller on level 2'}" aria-label="Task" required></textarea>
           <p class="qa-label">Project</p>
           <div class="chips qa-chips">${chips.map(id => `<button type="button" class="chip${qa.pid === id ? ' on' : ''}" data-qp="${esc(id)}">${esc(project(id).name)}</button>`).join('')}
             <select class="qa-other${qa.pid && chips.indexOf(qa.pid) === -1 ? ' on' : ''}" name="other" aria-label="Other project"><option value="">${chips.length ? 'Other…' : 'Choose a project…'}</option>${others.map(p => `<option value="${esc(p.id)}"${p.id === qa.pid ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></div>
@@ -1266,7 +954,6 @@
             <button type="button" class="chip${qa.week === NEXT ? ' on' : ''}" data-qw="${NEXT}">Next week · ${wnum(NEXT)}</button>
             ${qa.week === THIS ? `<button type="button" class="chip done-chip${qa.done ? ' on' : ''}" data-qd>✓ Already done</button>` : ''}
           </div>
-          ${manager ? `<select class="qa-for" name="person" aria-label="Who the task is for">${personChoices(S.data.team)}</select>` : ''}
           <p class="muted small qa-hint">Tap <b>Add</b> and type the next one. The project and week stay chosen.</p>
         </div></form>`;
       const f = $('#qaForm', dlg);
@@ -1304,188 +991,474 @@
     $('#qaForm textarea', dlg).focus();
   }
 
-  // ---------- Projects (browse; open one in the side panel) ----------
+  // ---------- Shared pieces of the three pages ----------
 
-  function viewProjectList(root) {
-    const week = S.mtgWeek;
-    const m = buildMinutes(week);
-    const scope = S.pscope || (remember.get('pscope') === 'all' || !myProjectIds().some(id => inDept(project(id))) ? 'all' : 'mine');
-    const wide = !isPhone();
-    const layout = wide ? boardLayout() : 'list';
-    document.body.dataset.layout = layout === 'cards' ? 'cards' : 'list';
-    const q = S.cardFilter.trim().toLowerCase();
-    let body, tools = '', field = null;
-    if (layout === 'cards') {
-      const c = cardsBoard(m.rows, week, scope);
-      body = c.html; tools = c.tools; field = c.field;
-    } else {
-      const byId = {}; m.rows.forEach(r => { byId[r.id] = r; });
-      const list = boardProjects(byId, scope).filter(p => !q || (p.name + ' ' + p.client + ' ' + p.type + ' ' + p.id).toLowerCase().indexOf(q) !== -1);
-      const withH = list.map(p => ({ p: p, h: healthOf(p, week) }));
-      withH.sort((a, b) => HEALTH[a.h.key].rank - HEALTH[b.h.key].rank || a.p.name.localeCompare(b.p.name));
-      tools = `<div class="cards-tools no-print"><input type="search" id="cardFilter" class="search" placeholder="Find a project" value="${esc(S.cardFilter)}" data-keep="card-filter" autocomplete="off"></div>`;
-      body = `<div class="prows">${withH.map(x => projectRowHtml(x.p, x.h)).join('') || `<div class="empty"><h3>${q ? 'No projects match' : 'No projects to show'}</h3></div>`}</div>`;
+  /** Week choices: "This + next week" (the default) or one week; `back` = how many past weeks. */
+  function weekSelect(id, value, back) {
+    const opts = [{ value: 'now', label: 'This + next week' }, { value: THIS, label: 'This week · ' + wnum(THIS) }, { value: NEXT, label: 'Next week · ' + wnum(NEXT) }];
+    for (let n = 1; n <= back; n++) {
+      const w = shiftWeek(THIS, -n);
+      opts.push({ value: w, label: (n === 1 ? 'Last week · ' : 'Week ') + wnum(w) + (n === 1 ? '' : ' · ' + weekRange(w)) });
     }
-    root.innerHTML = `
-      ${weekBar()}
-      <div class="board-tools no-print">
-        <div class="seg board-seg"><button type="button" data-scope="mine" class="${scope === 'mine' ? 'on' : ''}">My projects</button><button type="button" data-scope="all" class="${scope === 'all' ? 'on' : ''}">All projects</button></div>
-        ${wide ? `<div class="seg layout-seg" aria-label="Layout"><button type="button" data-layout="cards" class="${layout === 'cards' ? 'on' : ''}">Board</button><button type="button" data-layout="list" class="${layout === 'list' ? 'on' : ''}">List</button></div>` : ''}
-      </div>
-      ${tools}
-      ${body}
-      ${S.project ? '' : quickAddBar()}`;
-    bindWeekBar(root);
-    $$('[data-scope]', root).forEach(b => b.onclick = () => { S.pscope = b.dataset.scope; remember.set('pscope', S.pscope); render(); });
-    $$('[data-layout]', root).forEach(b => b.onclick = () => { S.layout = b.dataset.layout; remember.set('layout', S.layout); render(); });
-    if (layout === 'cards') bindCards(root, field);
-    else {
-      const f = $('#cardFilter', root);
-      if (f) f.oninput = () => { S.cardFilter = f.value; const pos = f.selectionStart; render(); const f2 = $('#cardFilter'); if (f2) { f2.focus(); f2.setSelectionRange(pos, pos); } };
-    }
-    bindProjectLinks(root); bindQuickAdd(root);
+    return `<label class="f${value !== 'now' ? ' set' : ''}"><span>Week</span><select id="${id}">${options(opts, value)}</select></label>`;
   }
-
-  // ---------- Workload (managers): who carries how much ----------
+  const weeksOf = v => v === 'now' ? [THIS, NEXT] : [v];
+  /** A task is in a week; this week also holds unfinished tasks from earlier weeks. */
+  const inWeeks = (t, ws) => ws.some(w => w === THIS ? inView(t, 'this') : t.week === w);
+  /** The week a task shows in: an unfinished task from an earlier week is still open this week. */
+  const shownWeek = t => !isDone(t) && t.week < THIS ? THIS : t.week;
+  const searchOk = (t, q) => !q || (t.title + ' ' + project(t.projectId).name + ' ' + who(t) + ' ' + member(t.createdBy).name).toLowerCase().indexOf(q.toLowerCase()) !== -1;
+  /** Task rank inside a list: blocked, carried over, open, done. */
+  const rank = t => isBlocked(t) ? 0 : !isDone(t) && t.week < THIS ? 1 : isDone(t) ? 3 : 2;
+  function searchBox(key, placeholder) {
+    return `<input type="search" class="search f-search" id="q-${key}" data-search="${key}" placeholder="${esc(placeholder)}" value="${esc(S.search[key] || '')}" autocomplete="off">`;
+  }
+  function layoutSeg(list, value) {
+    return `<div class="seg layout-seg" role="group" aria-label="Layout">${list.map(l => `<button type="button" data-layout="${l[0]}" class="${value === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>`;
+  }
+  /** Filters and searches: change the state and draw again (the search box keeps its cursor). */
+  function bindFilters(root, onChange) {
+    $$('[data-search]', root).forEach(i => i.oninput = () => {
+      S.search[i.dataset.search] = i.value;
+      const pos = i.selectionStart; render();
+      const again = $('#q-' + i.dataset.search); if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+    });
+    $$('.filters select', root).forEach(s => s.onchange = () => { onChange(s.id, s.value); render(); });
+  }
+  function bindJoin(root) {
+    $$('[data-join]', root).forEach(b => b.onclick = async e => {
+      e.stopPropagation();
+      S.lastWrite = Date.now();
+      if (await guard(() => Api.joinProject(b.dataset.join).then(() => true))) toast('You joined ' + project(b.dataset.join).name);
+      render();
+    });
+    $$('[data-addto]', root).forEach(b => b.onclick = e => { e.stopPropagation(); quickAddSheet({ pid: b.dataset.addto }); });
+    $$('[data-sheet]', root).forEach(b => b.onclick = () => { S.open[b.dataset.sheet] = true; S.sheetTask = b.dataset.sheet; render(); });
+  }
+  const statusPill = p => `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>`;
+  const joined = pid => myProjectIds().indexOf(pid) !== -1;
 
   /**
-   * One row per person in the department (or on one of its open projects): open projects, this
-   * week's open / blocked / carried tasks, next week planned, last update. Overloaded = on at least
-   * 10 open projects and twice the team's median.
+   * Tasks grouped by project. opts.byTeam: inside each project, one group per team (PLC, AVEVA,
+   * BMS, ...). opts.others(p): tasks of other teams on the same project (shown when unfolded).
+   * Two weeks: each group is split into "This week" and "Next week".
    */
-  function workloadHtml(week) {
-    const openP = deptProjects().filter(p => CLOSED.indexOf(p.status) === -1);
-    const openIds = openP.map(p => p.id);
-    const people = S.data.team.filter(m => m.active && (m.departmentId === curDept() || S.data.assignments.some(a => a.userId === m.id && openIds.indexOf(a.projectId) !== -1)));
-    const rows = people.map(m => {
-      const ts = S.data.tasks.filter(t => ownersOf(t).indexOf(m.id) !== -1 && inDept(project(t.projectId)));
-      const cur = ts.filter(t => !isDone(t) && (t.week === week || (week === THIS && t.week < week)));
-      return { m: m, projects: S.data.assignments.filter(a => a.userId === m.id && openIds.indexOf(a.projectId) !== -1).length,
-        open: cur.length, blocked: cur.filter(isBlocked).length, carried: cur.filter(t => t.week < week).length,
-        done: ts.filter(t => isDone(t) && t.week === week).length, next: ts.filter(t => t.week === shiftWeek(week, 1)).length,
-        last: ts.reduce((x, t) => t.version && t.version > x ? t.version : x, '') };
-    });
-    const sorted = rows.map(r => r.projects).sort((a, b) => a - b);
-    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-    const heavy = r => r.projects >= 10 && r.projects >= 2 * Math.max(1, median);
-    const units = Array.from(new Set(rows.map(r => r.m.unit || 'Other'))).sort();
-    const shown = rows.filter(r => !S.unitFilter || (r.m.unit || 'Other') === S.unitFilter)
-      .sort((a, b) => b.projects - a.projects || b.open - a.open || a.m.name.localeCompare(b.m.name));
-    const n = (v, cls) => `<td class="${cls || ''}${v ? '' : ' zero'}">${v}</td>`;
-    return { keys: [], html: `<div class="card workload">
-      <div class="wl-head"><p class="muted small">Sorted by open projects. ${rows.filter(heavy).length ? `<b class="wl-heavy-note">${rows.filter(heavy).length} overloaded</b> (10+ projects and twice the team’s usual ${median}).` : `Team’s usual: ${median} projects each.`}</p>
-        ${units.length > 1 ? `<select id="unitFilter" aria-label="Team"><option value="">All teams</option>${units.map(u => `<option${S.unitFilter === u ? ' selected' : ''}>${esc(u)}</option>`).join('')}</select>` : ''}</div>
-      <div class="wl-scroll"><table class="wl-table"><thead><tr><th>Person</th><th>Projects</th><th>Open</th><th>Blocked</th><th>Carried</th><th>Done</th><th>Next week</th><th>Last update</th></tr></thead>
-      <tbody>${shown.map(r => `<tr class="${heavy(r) ? 'heavy' : ''}"><td><strong>${esc(r.m.name)}</strong>${heavy(r) ? ' <span class="hb hb-blocked">Overloaded</span>' : ''}<br><small class="muted">${esc(personInfo(r.m) || '')}</small></td>
-        ${n(r.projects, 'big')}${n(r.open)}${n(r.blocked, 'bad')}${n(r.carried, 'warn')}${n(r.done, 'ok')}${n(r.next)}<td class="muted small">${ago(r.last)}</td></tr>`).join('')}</tbody></table></div></div>` };
+  function byProjectHtml(tasks, ws, opts) {
+    const groups = {};
+    tasks.forEach(t => { (groups[t.projectId] = groups[t.projectId] || []).push(t); });
+    const order = Object.keys(groups).sort((a, b) =>
+      Math.min(...groups[a].map(rank)) - Math.min(...groups[b].map(rank)) || project(a).name.localeCompare(project(b).name));
+    const rows = list => {
+      const sorted = list.slice().sort((a, b) => rank(a) - rank(b));
+      if (ws.length < 2) return sorted.map(t => taskHtml(t, opts.showOwner)).join('');
+      return ws.map(w => {
+        const inW = sorted.filter(t => shownWeek(t) === w);
+        return inW.length ? `<p class="wk-label">${w === THIS ? 'This week' : 'Next week'} · ${wnum(w)}</p>${inW.map(t => taskHtml(t, opts.showOwner)).join('')}` : '';
+      }).join('');
+    };
+    const card = pid => {
+      const p = project(pid);
+      const own = groups[pid];
+      const extra = opts.others && S.showOthers[pid] ? opts.others(p) : [];
+      const all = own.concat(extra);
+      const otherCount = opts.others ? opts.others(p).length : 0;
+      const body = opts.byTeam
+        ? teamKeys().filter(k => all.some(t => taskTeam(t) === k)).map(k => {
+          const list = all.filter(t => taskTeam(t) === k);
+          return `<div class="tgroup"><h4 class="tgroup-head">${teamChip(k)}<small>${list.length} ${list.length === 1 ? 'task' : 'tasks'}</small></h4>${rows(list)}</div>`;
+        }).join('')
+        : `<div class="tgroup">${rows(own)}</div>`;
+      return `<section class="pcard${S.project === pid ? ' selected' : ''}">
+        <header class="pcard-head"><button type="button" class="pcard-name" data-project="${esc(pid)}">${esc(p.name)}</button>${statusPill(p)}
+          <span class="tchips">${teamsOnProject(pid).map(k => teamChip(k, myTeamKey() === k)).join('')}</span>
+          <span class="pcard-actions no-print">${joined(pid) ? '' : `<button type="button" class="ghost small-btn" data-join="${esc(pid)}">Join</button>`}${CLOSED.indexOf(p.status) === -1 ? `<button type="button" class="secondary small-btn" data-addto="${esc(pid)}">${icon('plus')} Task</button>` : ''}</span></header>
+        ${body}
+        ${otherCount ? `<p class="others no-print">Other teams on this project: ${Array.from(new Set(opts.others(p).map(taskTeam))).map(k => teamChip(k) + ' ' + opts.others(p).filter(t => taskTeam(t) === k).length).join(' ')}
+          <button type="button" class="text-btn" data-others="${esc(pid)}">${S.showOthers[pid] ? 'Hide' : 'Show'}</button></p>` : ''}
+      </section>`;
+    };
+    return order.map(card).join('');
+  }
+  function bindOthers(root) {
+    $$('[data-others]', root).forEach(b => b.onclick = () => { S.showOthers[b.dataset.others] = !S.showOthers[b.dataset.others]; render(); });
   }
 
-  // ---------- Meeting (managers): health, blocked, no update, minutes ----------
+  /** Projects in view with no tasks: folded into one line at the bottom, with Join and + Task. */
+  function quietProjectsHtml(list, label) {
+    if (!list.length) return '';
+    const open = !!S.showQuiet;
+    return `<section class="quiet-projects">
+      <button type="button" class="quiet-toggle" id="quietToggle" aria-expanded="${open}">${icon(open ? 'down' : 'chevron')}<span>${esc(label)} <small>(${list.length} ${list.length === 1 ? 'project' : 'projects'})</small></span></button>
+      ${open ? list.map(p => `<div class="qrow"><button type="button" class="pcard-name" data-project="${esc(p.id)}">${esc(p.name)}</button>${statusPill(p)}
+        <span class="tchips">${teamsOnProject(p.id).map(k => teamChip(k)).join('') || '<span class="muted small">No team on it yet</span>'}</span>
+        <span class="pcard-actions">${joined(p.id) ? '' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button></span></div>`).join('') : ''}
+    </section>`;
+  }
+  function bindQuiet(root) { const q = $('#quietToggle', root); if (q) q.onclick = () => { S.showQuiet = !S.showQuiet; render(); }; }
 
-  function viewMeeting(root) {
-    const week = S.mtgWeek;
-    const key = mkey(week);
-    if (!(key in S.minutes)) loadMinutes(week);
-    const saved = S.minutes[key];
-    const hasSaved = !!(saved && saved.snapshot);
-    const manager = canManage(curDept());
-    const m = buildMinutes(week);
-    const projects = deptProjects().filter(p => CLOSED.indexOf(p.status) === -1 || m.rows.some(r => r.id === p.id && !r.silent))
-      .map(p => ({ p: p, h: healthOf(p, week) }));
-    const count = f => projects.filter(x => !S.leadFilter || (projectLead(x.p) || {}).id === S.leadFilter).filter(x => f === 'all' ? true : f === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(f) !== -1).length;
-    const filter = S.hfilter || 'all';
-    const leads = Array.from(new Set(projects.map(x => projectLead(x.p)).filter(Boolean))).sort((a, b) => a.name.localeCompare(b.name));
-    const byLead = x => !S.leadFilter || (projectLead(x.p) || {}).id === S.leadFilter;
-    const shown = projects.filter(byLead).filter(x => filter === 'all' || (filter === 'ok' ? !x.h.flags.length : x.h.flags.indexOf(filter) !== -1))
-      .sort((a, b) => HEALTH[a.h.key].rank - HEALTH[b.h.key].rank || (a.h.last < b.h.last ? 1 : -1));
-    const quiet = week <= THIS ? quietPeople(week) : [];
-    const chip = (f, label, cls) => `<button type="button" class="hchip${filter === f ? ' on' : ''} ${cls || ''}" data-hf="${f}"><b>${count(f)}</b> ${label}</button>`;
-    const savedBy = hasSaved ? `${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}` : '';
-    const note = hasSaved
-      ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${savedBy}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
-      : week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : '';
-    const pr = { High: 0, Medium: 1, Low: 2 };
-    const blocked = S.data.tasks.filter(t => isBlocked(t) && inDept(project(t.projectId)) && relevant(t) && (t.week === week || (week === THIS && t.week < week)))
-      .sort((a, b) => a.week.localeCompare(b.week) || (pr[project(a.projectId).priority] || 1) - (pr[project(b.projectId).priority] || 1));
-    const units = {};
-    quiet.forEach(q => { (units[q.m.unit || 'Other'] = units[q.m.unit || 'Other'] || []).push(q); });
-    const detail = S.mdetail || 'project';
-    const rowsWithTasks = m.rows.filter(r => !r.silent);
-    const cards = detail === 'person' ? personCards(rowsWithTasks, week, true) : detail === 'load' ? workloadHtml(week) : projectCards(rowsWithTasks, week, true, 'active');
-    root.innerHTML = `
-      ${weekBar()}
-      <div class="actions-row no-print"><button type="button" class="primary" id="copyEmail">Copy as email</button><button type="button" class="secondary" id="printMom">Print / PDF</button>${manager && week <= THIS ? `<button type="button" class="secondary" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}<button type="button" class="ghost" id="archiveBtn">Past minutes</button></div>
-      ${note}
-      <div class="mtg-layout">
-        <div class="mtg-main">
-          ${leads.length > 1 ? `<label class="lead-filter no-print">Lead <select id="leadFilter"><option value="">Everyone</option>${leads.map(l => `<option value="${esc(l.id)}"${S.leadFilter === l.id ? ' selected' : ''}>${esc(l.name)} (${projects.filter(x => (projectLead(x.p) || {}).id === l.id).length})</option>`).join('')}</select></label>` : ''}
-          <div class="hchips no-print">${chip('all', 'projects')}${chip('blocked', 'blocked', 'bad')}${chip('late', 'past end date', 'bad')}${chip('stale', 'carried 2+ weeks', 'warn')}${chip('quiet', 'no update', 'warn')}${chip('ok', 'on track', 'ok')}</div>
-          <p class="muted small mtg-sum-line">${m.summary.moved} ${m.summary.moved === 1 ? 'project' : 'projects'} moved this week · ${m.summary.done} ${m.summary.done === 1 ? 'task' : 'tasks'} done · ${m.summary.blocked} blocked · ${quiet.length} ${quiet.length === 1 ? 'person' : 'people'} with no update</p>
-          <div class="prows htable">${shown.map(x => projectRowHtml(x.p, x.h)).join('') || '<div class="empty"><h3>Nothing here</h3></div>'}</div>
-        </div>
-        <aside class="mtg-side">
-          <section class="card warn"><h3 class="card-title">Blocked (${blocked.length})</h3>
-            ${blocked.length ? `<ul class="plain blk-list">${blocked.slice(0, S.blockedAll ? blocked.length : 6).map(t => `<li><button type="button" class="blk-item" data-project="${esc(t.projectId)}" data-open-task="${esc(t.id)}">
-              <strong>${esc(t.title)}</strong><span class="muted small">${esc(project(t.projectId).name)} · ${esc(who(t) || member(t.createdBy).name)}</span>
-              <span class="small"><span class="since">since week ${wnum(t.week)}</span> · ${t.blockNote ? esc(t.blockNote) : '<span class="no-reason">no reason given</span>'}</span></button></li>`).join('')}</ul>
-              ${blocked.length > 6 ? `<button type="button" class="text-btn" id="blockedAll">${S.blockedAll ? 'Show fewer' : 'Show all ' + blocked.length}</button>` : ''}` : '<p class="muted small">Nothing blocked.</p>'}
-          </section>
-          ${week <= THIS ? `<section class="card quiet"><h3 class="card-title">No update ${week === THIS ? 'yet' : ''} (${quiet.length})</h3>
-            ${quiet.length ? `<p class="muted small" style="margin:0 0 8px">Nothing of theirs added or changed in week ${wnum(week)}.</p>
-              ${Object.keys(units).sort().map(u => `<p class="q-unit">${esc(u)}</p><ul class="plain q-list">${units[u].map(q => `<li><span>${esc(q.m.name)}${q.onProject ? '' : ' <small class="muted">· on no project</small>'}</span><small class="muted">${q.last ? 'last ' + ago(q.last) : 'never'}</small></li>`).join('')}</ul>`).join('')}
-              ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}` : '<p class="muted small">Everyone has updated.</p>'}
-          </section>` : ''}
-        </aside>
-      </div>
-      <div class="board-tools no-print mtg-detail-tools">
-        <h3 class="mtg-detail-title">Walk through the week</h3>
-        <div class="seg board-seg"><button type="button" data-detail="project" class="${detail === 'project' ? 'on' : ''}">By project</button><button type="button" data-detail="person" class="${detail === 'person' ? 'on' : ''}">By person</button><button type="button" data-detail="load" class="${detail === 'load' ? 'on' : ''}">Workload</button></div>
-        ${detail === 'load' ? '' : '<span class="fold-all"><button type="button" class="text-btn" id="unfoldAll">Expand all</button><button type="button" class="text-btn" id="foldAll">Collapse all</button></span>'}
-      </div>
-      ${detail === 'load' ? cards.html : `<div class="board-grid">${cards.html}</div>`}`;
-    document.body.dataset.layout = 'list';
-    bindWeekBar(root);
-    $$('[data-hf]', root).forEach(b => b.onclick = () => { S.hfilter = b.dataset.hf === S.hfilter ? 'all' : b.dataset.hf; render(); });
-    $$('[data-detail]', root).forEach(b => b.onclick = () => { S.mdetail = b.dataset.detail; render(); });
-    $$('[data-fold]', root).forEach(b => b.onclick = () => { setCollapsed([b.dataset.fold], !collapsed()[b.dataset.fold]); render(); });
-    const fa = $('#foldAll', root); if (fa) fa.onclick = () => { setCollapsed(cards.keys, true); render(); };
-    const ua = $('#unfoldAll', root); if (ua) ua.onclick = () => { setCollapsed(cards.keys, false); render(); };
-    const lf = $('#leadFilter', root); if (lf) lf.onchange = () => { S.leadFilter = lf.value || null; render(); };
-    const uf = $('#unitFilter', root); if (uf) uf.onchange = () => { S.unitFilter = uf.value || null; render(); };
-    const ba = $('#blockedAll', root); if (ba) ba.onclick = () => { S.blockedAll = !S.blockedAll; render(); };
-    $$('[data-open-task]', root).forEach(b => b.addEventListener('click', () => { S.open[b.dataset.openTask] = true; }, true));
-    // Phone: tabs above each project's two weeks jump between them; the tab follows a swipe
-    $$('.wk2', root).forEach(g => {
-      const tabs = g.previousElementSibling && g.previousElementSibling.classList.contains('wk-tabs') ? $$('button', g.previousElementSibling) : [];
-      if (!tabs.length) return;
-      const mark = () => {
-        const i = g.scrollLeft > g.scrollWidth / 4 ? 1 : 0;
-        tabs.forEach((b, k) => b.classList.toggle('on', k === i));
-        const col = g.children[i];
-        if (col) g.style.height = col.offsetHeight + 'px';
-      };
-      tabs.forEach((b, k) => b.onclick = () => { g.scrollTo({ left: k ? g.scrollWidth : 0, behavior: 'smooth' }); });
-      g.addEventListener('scroll', mark, { passive: true });
-      mark();
+  /** Board: one column per status; drag a task you may change to another column. */
+  const BOARD = [['To Do', 'To do'], ['In Progress', 'Doing'], ['Blocked', 'Blocked'], ['Done', 'Done']];
+  function boardHtml(tasks, showTeam) {
+    return `<div class="board4">${BOARD.map(([s, label]) => {
+      const list = tasks.filter(t => t.status === s).sort((a, b) => rank(a) - rank(b) || project(a.projectId).name.localeCompare(project(b.projectId).name));
+      return `<section class="bcol" data-col="${s}"><h3 class="bcol-head">${label}<small>${list.length}</small></h3>
+        ${list.map(t => `<button type="button" class="bcard" data-sheet="${esc(t.id)}"${canEditTask(t) ? ` draggable="true" data-drag="${esc(t.id)}"` : ''}>
+          <span class="bcard-title">${esc(t.title)}</span>
+          <span class="bcard-meta">${showTeam ? teamChip(taskTeam(t)) : ''}<span class="grow">${esc(project(t.projectId).name)}</span>${t.week < THIS && !isDone(t) ? `<span class="tag-carry">wk ${wnum(t.week)}</span>` : ''}${showTeam ? `<span class="avatar xs" title="${esc(member(ownersOf(t)[0]).name)}">${esc(initials(member(ownersOf(t)[0]).name))}</span>` : ''}</span>
+        </button>`).join('') || '<p class="muted small bcol-empty">Nothing here</p>'}</section>`;
+    }).join('')}</div>`;
+  }
+  function bindBoard(root) {
+    $$('[data-drag]', root).forEach(c => {
+      c.ondragstart = e => { e.dataTransfer.setData('text/plain', c.dataset.drag); c.classList.add('dragging'); };
+      c.ondragend = () => c.classList.remove('dragging');
     });
-    $('#printMom', root).onclick = () => window.print();
-    $('#copyEmail', root).onclick = () => copyEmail(m);
-    $('#archiveBtn', root).onclick = minutesArchive;
+    $$('.bcol', root).forEach(col => {
+      col.ondragover = e => { e.preventDefault(); col.classList.add('drop'); };
+      col.ondragleave = () => col.classList.remove('drop');
+      col.ondrop = e => {
+        e.preventDefault(); col.classList.remove('drop');
+        const t = findTask(e.dataTransfer.getData('text/plain'));
+        if (!t || !canEditTask(t) || t.status === col.dataset.col) return;
+        updateTask(t, x => Object.assign({ status: col.dataset.col }, x.week < THIS ? { week: THIS } : {}));
+      };
+    });
+  }
+
+  /** By person: each person (in the filter) and their tasks, grouped by project. */
+  function byPersonHtml(tasks, people) {
+    const cards = people.map(m => {
+      const mine = tasks.filter(t => ownersOf(t).indexOf(m.id) !== -1);
+      if (!mine.length) return '';
+      const pids = Array.from(new Set(mine.map(t => t.projectId))).sort((a, b) => project(a).name.localeCompare(project(b).name));
+      return `<section class="card person-card"><h3 class="card-title"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(m.name)}${teamChip(teamKeyOf(m))}</h3>
+        ${personInfo(m) ? `<p class="muted small person-info">${esc(personInfo(m))}</p>` : ''}
+        ${pids.map(pid => `<p class="wk-label"><button type="button" class="link-btn" data-project="${esc(pid)}">${esc(project(pid).name)}</button></p>${mine.filter(t => t.projectId === pid).sort((a, b) => rank(a) - rank(b)).map(t => taskHtml(t, true)).join('')}`).join('')}
+      </section>`;
+    }).join('');
+    const none = people.filter(m => !tasks.some(t => ownersOf(t).indexOf(m.id) !== -1));
+    return `<div class="people-grid">${cards}</div>${none.length ? `<p class="muted small no-tasks">No tasks: ${none.map(m => esc(m.name)).join(', ')}</p>` : ''}`;
+  }
+
+  /** Table: one row per task; click a column heading to sort. */
+  function tableHtml(tasks) {
+    const keys = {
+      task: t => t.title.toLowerCase(), project: t => project(t.projectId).name.toLowerCase(), team: t => teamLabel(taskTeam(t)),
+      person: t => member(ownersOf(t)[0]).name, week: t => shownWeek(t), status: t => BOARD.findIndex(b => b[0] === t.status),
+    };
+    const k = keys[S.sort] ? S.sort : 'project';
+    const list = tasks.slice().sort((a, b) => keys[k](a) < keys[k](b) ? -1 : keys[k](a) > keys[k](b) ? 1 : 0);
+    const th = (id, label) => `<th><button type="button" class="th-btn${k === id ? ' on' : ''}" data-sort="${id}">${label}${k === id ? ' ↓' : ''}</button></th>`;
+    return `<div class="table-wrap"><table class="ttable"><thead><tr>${th('task', 'Task')}${th('project', 'Project')}${th('team', 'Team')}${th('person', 'Person')}${th('week', 'Week')}${th('status', 'Status')}</tr></thead>
+      <tbody>${list.map(t => `<tr class="${isDone(t) ? 'done' : ''}"><td class="tt"><button type="button" class="link-btn" data-sheet="${esc(t.id)}">${esc(t.title)}</button></td>
+        <td><button type="button" class="link-btn muted-link" data-project="${esc(t.projectId)}">${esc(project(t.projectId).name)}</button></td><td>${teamChip(taskTeam(t))}</td>
+        <td>${esc(ownersOf(t).map(id => member(id).name).join(', '))}</td><td class="num">${wnum(shownWeek(t))}${t.week < shownWeek(t) ? ' <span class="tag-carry">from ' + wnum(t.week) + '</span>' : ''}</td>
+        <td><span class="st st-${slug(t.status)}">${esc((BOARD.find(b => b[0] === t.status) || [t.status, t.status])[1])}</span></td></tr>`).join('')}</tbody></table></div>
+      ${list.length ? '' : '<div class="empty"><h3>No tasks match these filters</h3></div>'}`;
+  }
+  function bindTable(root) { $$('[data-sort]', root).forEach(b => b.onclick = () => { S.sort = b.dataset.sort; render(); }); }
+
+  // ---------- My tasks (everyone) ----------
+
+  function viewMy(root) {
+    if (!S.myLayout) S.myLayout = remember.get('my-layout') === 'board' ? 'board' : 'project';
+    const wsel = S.myWeek || 'now';
+    const ws = weeksOf(wsel);
+    const mine = S.data.tasks.filter(t => ownersOf(t).indexOf(me().id) !== -1);
+    const tasks = mine.filter(t => inWeeks(t, ws) && searchOk(t, S.search.my));
+    // Carried 2+ weeks: one tap each to keep (moves it to this week), finish or drop it.
+    const review = ws.indexOf(THIS) !== -1 ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
+    const day = new Date().getDay();
+    const planHint = ws.indexOf(THIS) !== -1 && (day === 0 || day >= 4) && !mine.some(t => t.week === NEXT) && remember.get('plan-dismissed') !== NEXT;
+    const body = S.myLayout === 'board' ? boardHtml(tasks, false) : (byProjectHtml(tasks, ws, { showOwner: true }) ||
+      `<div class="empty"><h3>No tasks ${wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)}${S.search.my ? ' match' : ''}</h3><p>Tap <b>+ Add task</b> to add one, on any project.</p></div>`);
+    root.innerHTML = `
+      <div class="page-title"><h2>My tasks</h2><p class="muted">Your tasks this week and next.</p></div>
+      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</div>
+      ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
+        <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
+      ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
+        <p class="muted small" style="margin:0 0 8px">Still doing these? Keep them for this week, mark them done, or drop them.</p>
+        ${review.map(t => `<div class="rv-row"><div class="rv-text"><strong>${esc(t.title)}</strong><small class="muted">${esc(project(t.projectId).name)} · since week ${wnum(t.week)}</small></div>
+          <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canEditTask(t) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
+      </section>` : ''}
+      <div class="plist">${body}</div>`;
+    bindFilters(root, (id, v) => { if (id === 'myWeek') S.myWeek = v; });
+    $$('[data-layout]', root).forEach(b => b.onclick = () => { S.myLayout = b.dataset.layout; remember.set('my-layout', S.myLayout); render(); });
+    bindTasks(root); bindProjectLinks(root); bindJoin(root); bindBoard(root);
+    $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
+    $$('[data-done-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.doneTask), { status: 'Done', week: THIS }); toast('Done ✔'); });
+    $$('[data-drop-task]', root).forEach(b => b.onclick = async () => {
+      if (!confirm('Drop this task? It is deleted.')) return;
+      S.lastWrite = Date.now();
+      if (await guard(() => Api.deleteTask(b.dataset.dropTask).then(() => true))) toast('Dropped');
+      render();
+    });
+    const plan = $('#planNext', root); if (plan) plan.onclick = () => quickAddSheet({ week: NEXT });
+    const later = $('#planLater', root); if (later) later.onclick = () => { remember.set('plan-dismissed', NEXT); render(); };
+  }
+
+  // ---------- Team (admins and department admins): the weekly meeting ----------
+
+  /** The Team filter: everyone, a department, or one team (PLC, AVEVA, BMS, UI/UX, Dev, Management). */
+  function teamFilterSelect() {
+    const opts = [{ value: 'all', label: 'All teams' }];
+    departments().forEach(d => {
+      const cols = deptTeams(d.id);
+      opts.push({ value: 'dept:' + d.id, label: d.name + (cols.length > 1 ? ' (all)' : '') });
+      if (cols.length > 1) cols.forEach(c => opts.push({ value: 'team:' + d.id + ':' + c, label: '  ' + teamLabel(d.id + ':' + c) }));
+    });
+    opts.push({ value: 'team:' + MGMT, label: 'Management' });
+    return `<label class="f${teamFilter() !== 'all' ? ' set' : ''}"><span>Team</span><select id="teamFilter">${options(opts, teamFilter())}</select></label>`;
+  }
+  /** People in the Team filter (active ones). */
+  const filterPeople = () => S.data.team.filter(m => m.active && teamMatch(teamKeyOf(m))).sort((a, b) => a.name.localeCompare(b.name));
+  function personSelect(people) {
+    const v = people.some(m => m.id === S.who) ? S.who : 'all';
+    return `<label class="f${v !== 'all' ? ' set' : ''}"><span>Person</span><select id="whoFilter"><option value="all">Everyone</option>${people.map(m =>
+      `<option value="${esc(m.id)}"${m.id === v ? ' selected' : ''}>${esc(m.name)}${m.id === me().id ? ' (me)' : ''}</option>`).join('')}</select></label>`;
+  }
+  /**
+   * People in the filter with no update in the week: none of their tasks (created by or assigned
+   * to them) was added or changed that week. A task someone else created for them and nobody has
+   * touched since doesn't count as their update.
+   */
+  function quietPeople(week, people) {
+    const theirs = m => S.data.tasks.filter(t => t.createdBy === m.id || t.assigneeIds.indexOf(m.id) !== -1);
+    const counts = (t, m) => touchedIn(t, week) && !(t.createdBy !== m.id && t.createdRaw && t.createdRaw === t.version);
+    return people.filter(m => m.role !== 'Admin' && !theirs(m).some(t => counts(t, m)))
+      .map(m => ({ m: m, last: theirs(m).reduce((x, t) => t.version && t.version > x ? t.version : x, '') }));
+  }
+
+  function viewTeam(root) {
+    if (!S.teamLayout) S.teamLayout = ['board', 'person', 'table'].indexOf(remember.get('team-layout')) !== -1 ? remember.get('team-layout') : 'project';
+    const wsel = S.teamWeek || 'now';
+    const ws = weeksOf(wsel);
+    const week = wsel === 'now' ? THIS : wsel;   // the week of the minutes
+    const people = filterPeople();
+    const whoOk = id => S.who === 'all' || !people.some(m => m.id === S.who) || id === S.who;
+    const inFilter = t => teamMatch(taskTeam(t)) && whoOk(ownersOf(t)[0]);
+    const tasks = S.data.tasks.filter(t => inWeeks(t, ws) && inFilter(t) && searchOk(t, S.search.team));
+    // Projects in view: "Our projects" = the filter's people are on it or have tasks in it.
+    const ours = p => tasks.some(t => t.projectId === p.id) || projectTeam(p.id).some(m => m.active !== false && teamMatch(teamKeyOf(m)) && whoOk(m.id));
+    const pool = S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1 && (S.tscope === 'all' || ours(p)))
+      .filter(p => !S.search.team || (p.name + ' ' + p.client).toLowerCase().indexOf(S.search.team.toLowerCase()) !== -1 || tasks.some(t => t.projectId === p.id));
+    const quietP = pool.filter(p => !tasks.some(t => t.projectId === p.id)).sort((a, b) => a.name.localeCompare(b.name));
+    const filtered = teamFilter() !== 'all' || S.who !== 'all';
+    const others = p => filtered ? S.data.tasks.filter(t => t.projectId === p.id && inWeeks(t, ws) && !inFilter(t)) : [];
+    // Meeting numbers and minutes (minutes are per department: pick one in the Team filter)
+    const d = filterDept();
+    const key = d ? d + ':' + week : null;
+    if (key && !(key in S.minutes)) loadMinutes(week);
+    const saved = key ? S.minutes[key] : undefined;
+    const hasSaved = !!(saved && saved.snapshot);
+    const weekTasks = S.data.tasks.filter(t => inWeeks(t, [week]) && inFilter(t));
+    const blocked = weekTasks.filter(isBlocked).length, done = weekTasks.filter(isDone).length;
+    const quiet = week <= THIS ? quietPeople(week, people.filter(m => whoOk(m.id))) : [];
+    const lay = S.teamLayout;
+    const body = lay === 'board' ? boardHtml(tasks, true)
+      : lay === 'person' ? byPersonHtml(tasks, people.filter(m => whoOk(m.id)))
+        : lay === 'table' ? tableHtml(tasks)
+          : (byProjectHtml(tasks, ws, { byTeam: true, showOwner: false, others: filtered ? others : null }) || '<div class="empty"><h3>No tasks match these filters</h3></div>') +
+            quietProjectsHtml(quietP, 'No tasks ' + (wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)));
+    const scopeSeg = `<div class="seg scope-seg" role="group" aria-label="Which projects"><button type="button" data-scope="ours" class="${S.tscope !== 'all' ? 'on' : ''}">Our projects</button><button type="button" data-scope="all" class="${S.tscope === 'all' ? 'on' : ''}">All projects</button></div>`;
+    root.innerHTML = `
+      <div class="page-title"><h2>${d ? esc(dept(d).name) + ' team' : teamFilter() === 'team:' + MGMT ? 'Management' : 'All teams'}${teamFilter().indexOf('team:') === 0 && teamFilter() !== 'team:' + MGMT ? ' · ' + esc(teamLabel(teamFilter().slice(5))) : ''}</h2>
+        <p class="muted">The weekly meeting: walk through each project, then save the minutes.</p></div>
+      <div class="filters">${weekSelect('teamWeek', wsel, 8)}${teamFilterSelect()}${personSelect(people)}${scopeSeg}${searchBox('team', 'Search tasks or projects')}
+        ${layoutSeg([['project', 'By project'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table']], lay)}</div>
+      <div class="meetbar">
+        <span class="stat bad"><b>${blocked}</b> blocked</span><span class="stat ok"><b>${done}</b> done</span><span class="stat"><b>${weekTasks.length - done}</b> open</span>
+        ${week <= THIS ? `<details class="stat warn quiet-names"><summary><b>${quiet.length}</b> no update</summary>${quiet.length ? `<ul class="plain">${quiet.map(q => `<li>${esc(q.m.name)} <small class="muted">${q.last ? 'last ' + ago(q.last) : 'never'}</small></li>`).join('')}</ul>
+          ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}` : '<p class="muted small">Everyone has updated.</p>'}</details>` : ''}
+        <span class="meet-actions no-print">${d ? `<button type="button" class="secondary small-btn" id="copyEmail">Copy as email</button>
+          ${canManage(d) && week <= THIS ? `<button type="button" class="primary small" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}
+          <button type="button" class="ghost small-btn" id="archiveBtn">Past minutes</button>` : '<span class="muted small">Pick a department in <b>Team</b> to email or save its minutes.</span>'}</span>
+      </div>
+      ${hasSaved ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
+        : d && week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : ''}
+      <div class="plist">${body}</div>`;
+    bindFilters(root, (id, v) => {
+      if (id === 'teamWeek') S.teamWeek = v;
+      if (id === 'teamFilter') { S.tfilter = v; S.who = 'all'; }
+      if (id === 'whoFilter') S.who = v;
+    });
+    $$('[data-layout]', root).forEach(b => b.onclick = () => { S.teamLayout = b.dataset.layout; remember.set('team-layout', S.teamLayout); render(); });
+    $$('[data-scope]', root).forEach(b => b.onclick = () => { S.tscope = b.dataset.scope; render(); });
+    bindTasks(root); bindProjectLinks(root); bindJoin(root); bindOthers(root); bindQuiet(root); bindBoard(root); bindTable(root);
     const remind = $('#copyReminder', root);
     if (remind) remind.onclick = () => copyText(
       'Hi ' + quiet.map(x => x.m.name.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0]).join(', ') +
       ' — please add your tasks for week ' + wnum(week) + ' in Weekly Tasks before the meeting: ' + location.origin + location.pathname,
       'Reminder copied — paste it into your team chat');
+    if (!d) return;
+    $('#copyEmail', root).onclick = () => copyEmail(buildMinutes(week));
+    $('#archiveBtn', root).onclick = minutesArchive;
     const view = $('#viewSaved', root); if (view) view.onclick = () => savedMinutesSheet(saved);
     const save = $('#saveMins', root);
     if (save) save.onclick = async () => {
       if (hasSaved && !confirm('Replace the saved minutes for week ' + wnum(week) + ' with today’s tasks?')) return;
       save.disabled = true;
-      const rec = await guard(() => Api.saveMinutes(week, buildMinutes(week), curDept()));
+      const rec = await guard(() => Api.saveMinutes(week, buildMinutes(week), d));
       save.disabled = false;
       if (rec) { S.minutes[key] = rec; toast('Minutes saved'); render(); }
     };
-    bindProjectLinks(root); bindTasks(root);
+  }
+
+  // ---------- Projects (everyone): find a project, join it, add a task ----------
+
+  function viewProjects(root) {
+    const st = S.pstatus || 'open';
+    const q = (S.search.projects || '').toLowerCase();
+    const list = S.data.projects.filter(p => (st === 'all' || (st === 'closed') === (CLOSED.indexOf(p.status) !== -1)) &&
+      (!q || (p.name + ' ' + p.client + ' ' + p.id + ' ' + p.type).toLowerCase().indexOf(q) !== -1))
+      .sort((a, b) => joined(b.id) - joined(a.id) || a.name.localeCompare(b.name));
+    const count = pid => S.data.tasks.filter(t => t.projectId === pid && inView(t, 'this')).length;
+    const row = p => {
+      const team = projectTeam(p.id).filter(m => m.active !== false);
+      return `<div class="prow2${S.project === p.id ? ' selected' : ''}">
+        <button type="button" class="prow2-main" data-project="${esc(p.id)}"><strong>${esc(p.name)}</strong><small class="muted">${esc([p.id, p.client].filter(Boolean).join(' · '))}</small></button>
+        ${statusPill(p)}
+        <span class="tchips">${teamsOnProject(p.id).map(k => teamChip(k, myTeamKey() === k)).join('') || '<span class="muted small">No team yet</span>'}</span>
+        <span class="prow2-nums muted small">${team.length} ${team.length === 1 ? 'person' : 'people'} · ${count(p.id)} ${isManager() ? '' : 'of my '}${count(p.id) === 1 ? 'task' : 'tasks'} this week</span>
+        <span class="pcard-actions">${joined(p.id) ? '<span class="joined">✓ Joined</span>' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}${CLOSED.indexOf(p.status) === -1 ? `<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button>` : ''}</span>
+      </div>`;
+    };
+    root.innerHTML = `
+      <div class="page-title"><h2>Projects</h2><p class="muted">${isManager() ? 'Every project and the teams on it. Join one, or add a task to it.' : 'Every project. Join one or add a task to it; you see your own tasks.'}</p></div>
+      <div class="filters">${searchBox('projects', 'Find a project')}
+        <div class="seg" role="group" aria-label="Status">${[['open', 'Open'], ['closed', 'Closed'], ['all', 'All']].map(s => `<button type="button" data-pstatus="${s[0]}" class="${st === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div></div>
+      <div class="prows2">${list.map(row).join('') || '<div class="empty"><h3>No projects match</h3></div>'}</div>`;
+    bindFilters(root, () => {});
+    $$('[data-pstatus]', root).forEach(b => b.onclick = () => { S.pstatus = b.dataset.pstatus; render(); });
+    bindProjectLinks(root); bindJoin(root);
+  }
+
+  // ---------- Manage (admins: everything · department admins: their own department) ----------
+
+  function viewManage(root) {
+    const tabs = [['people', 'People'], ['projects', 'Projects']].concat(isAdmin() ? [['depts', 'Departments & teams']] : []).concat([['external', '3rd parties']]);
+    if (!tabs.some(t => t[0] === S.manageTab)) S.manageTab = 'people';
+    const tab = S.manageTab;
+    root.innerHTML = `
+      <div class="page-title"><h2>Manage</h2><p class="muted">${isAdmin() ? 'Everything, in every department.' : esc(dept(me().departmentId).name) + ' department.'}</p></div>
+      <div class="mtabs" role="tablist">${tabs.map(t => `<button type="button" role="tab" data-tab="${t[0]}" class="${tab === t[0] ? 'on' : ''}" aria-selected="${tab === t[0]}">${t[1]}</button>`).join('')}</div>
+      <div id="manageBody"></div>`;
+    $$('[data-tab]', root).forEach(b => b.onclick = () => { S.manageTab = b.dataset.tab; render(); });
+    const body = $('#manageBody', root);
+    if (tab === 'people') renderPeople(body); else if (tab === 'projects') renderProjects(body);
+    else if (tab === 'depts') renderDepts(body); else renderContacts(body);
+  }
+
+  /** The people this manager manages: admins everyone, a department admin their own department. */
+  const managedPeople = () => S.data.team.filter(m => isAdmin() || m.departmentId === me().departmentId);
+  /** "Automation · PLC" choices for a person's team; a department admin only has their own department. */
+  function teamChoices(m) {
+    const ds = isAdmin() ? departments() : [dept(me().departmentId)];
+    return ds.reduce((a, d) => a.concat(deptTeams(d.id).map(c => ({ value: d.id + ':' + c, label: (ds.length > 1 ? d.name + ' · ' : '') + teamLabel(d.id + ':' + c) }))), []);
+  }
+  const lastTaskWeek = id => S.data.tasks.filter(t => ownersOf(t).indexOf(id) !== -1).reduce((w, t) => t.week > w ? t.week : w, '');
+
+  function renderPeople(root) {
+    const scope = managedPeople();
+    const keys = Array.from(new Set(scope.map(teamKeyOf))).sort((a, b) => teamKeys().indexOf(a) - teamKeys().indexOf(b));
+    const mt = keys.indexOf(S.mteam) !== -1 ? S.mteam : 'all';
+    const q = (S.search.people || '').toLowerCase();
+    const people = scope.filter(m => (mt === 'all' || teamKeyOf(m) === mt) && (!q || (m.name + ' ' + m.username + ' ' + m.title + ' ' + m.unit).toLowerCase().indexOf(q) !== -1))
+      .sort((a, b) => keys.indexOf(teamKeyOf(a)) - keys.indexOf(teamKeyOf(b)) || a.name.localeCompare(b.name));
+    const roles = isAdmin() ? ['Member', 'Dept admin', 'Admin'] : ['Member', 'Dept admin'];
+    const row = m => {
+      const locked = m.id === me().id || (m.role === 'Admin' && !isAdmin());
+      const tc = teamChoices(m);
+      const lw = lastTaskWeek(m.id);
+      return `<tr class="${m.active ? '' : 'off'}">
+        <td class="tt"><span class="who"><span class="avatar sm">${esc(initials(m.name))}</span><span><strong>${esc(m.name)}</strong><small class="muted">${esc(m.title || m.username)}</small></span></span></td>
+        <td>${tc.length > 1 && !locked ? `<select class="cell" data-pteam="${esc(m.id)}" aria-label="Team of ${esc(m.name)}">${options(tc, m.departmentId + ':' + (deptTeams(m.departmentId).indexOf(m.team) !== -1 ? m.team : deptTeams(m.departmentId)[0]))}</select>` : teamChip(teamKeyOf(m))}</td>
+        <td>${locked ? esc(m.role) : `<select class="cell" data-prole="${esc(m.id)}" aria-label="Role of ${esc(m.name)}">${options(roles, m.role)}</select>`}</td>
+        <td class="num">${S.data.assignments.filter(a => a.userId === m.id).length}</td>
+        <td class="num">${lw ? wnum(lw) + (lw < THIS ? ' <span class="tag-carry">quiet</span>' : '') : '—'}</td>
+        <td><button type="button" class="switch${m.active ? ' on' : ''}" data-pactive="${esc(m.id)}" aria-label="${esc(m.name)} can sign in" aria-pressed="${m.active}"${locked ? ' disabled' : ''}><i></i></button></td>
+        <td>${locked && m.id !== me().id ? '' : `<button type="button" class="ghost small-btn" data-pedit="${esc(m.id)}">${m.id === me().id ? 'Edit' : 'Edit · password'}</button>`}</td></tr>`;
+    };
+    root.innerHTML = `<div class="filters"><label class="f${mt !== 'all' ? ' set' : ''}"><span>Team</span><select id="mteam"><option value="all">All${isAdmin() ? ' teams' : ''}</option>${keys.map(k => `<option value="${esc(k)}"${k === mt ? ' selected' : ''}>${esc(teamLabel(k))}</option>`).join('')}</select></label>
+        ${searchBox('people', 'Search people, titles or teams')}<span class="grow"></span><button type="button" class="primary small" id="addPerson">${icon('plus')} Add person</button></div>
+      <div class="table-wrap"><table class="ttable mtable"><thead><tr><th>Name</th><th>Team</th><th>Role</th><th>Projects</th><th>Last task (wk)</th><th>Can sign in</th><th></th></tr></thead>
+        <tbody>${people.map(row).join('')}</tbody></table></div>
+      ${people.length ? '' : '<div class="empty"><h3>Nobody matches</h3></div>'}
+      <p class="muted small m-note">${isAdmin() ? 'You see everyone. Department admins see only their own department and cannot make anyone Admin.' : 'You see the people in ' + esc(dept(me().departmentId).name) + '. Ask an admin to move someone to another department.'}</p>`;
+    bindFilters(root, (id, v) => { if (id === 'mteam') S.mteam = v; });
+    $('#addPerson', root).onclick = () => memberForm({ role: 'Member', active: true, departmentId: me().departmentId });
+    const save = async (m, change, msg) => {
+      const rec = Object.assign({}, m, change, { isNew: false });
+      if (await guard(() => Api.saveMember(rec).then(() => true))) toast(msg);
+      render();
+    };
+    $$('[data-pteam]', root).forEach(s => s.onchange = () => {
+      const m = member(s.dataset.pteam); const [d, t] = [s.value.split(':')[0], s.value.slice(s.value.indexOf(':') + 1)];
+      save(m, { departmentId: d, team: dept(d).teams.length > 1 ? t : '' }, m.name + ' → ' + teamLabel(s.value));
+    });
+    $$('[data-prole]', root).forEach(s => s.onchange = () => { const m = member(s.dataset.prole); save(m, { role: s.value }, m.name + ' is now ' + s.value); });
+    $$('[data-pactive]', root).forEach(b => b.onclick = () => {
+      const m = member(b.dataset.pactive);
+      save(m, { active: !m.active }, m.name + (m.active ? ' can no longer sign in' : ' can sign in again'));
+    });
+    $$('[data-pedit]', root).forEach(b => b.onclick = () => memberForm(member(b.dataset.pedit)));
+  }
+
+  function renderProjects(root) {
+    const st = S.projectFilter || 'open';
+    const q = (S.search.mprojects || '').toLowerCase();
+    const list = S.data.projects.filter(p => (st === 'all' || (st === 'closed') === (CLOSED.indexOf(p.status) !== -1)) &&
+      (!q || (p.name + ' ' + p.client + ' ' + p.id).toLowerCase().indexOf(q) !== -1)).sort((a, b) => a.name.localeCompare(b.name));
+    root.innerHTML = `<div class="filters">${searchBox('mprojects', 'Search projects')}
+        <div class="seg" role="group" aria-label="Status">${[['open', 'Open'], ['closed', 'Closed'], ['all', 'All']].map(s => `<button type="button" data-mstatus="${s[0]}" class="${st === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div>
+        <span class="grow"></span><button type="button" class="primary small" id="addProject">${icon('plus')} Add project</button></div>
+      <div class="table-wrap"><table class="ttable mtable"><thead><tr><th>Project</th><th>Status</th><th>Client</th><th>Teams on it</th><th>People</th><th>Tasks this week</th><th></th></tr></thead>
+        <tbody>${list.map(p => `<tr><td class="tt"><button type="button" class="link-btn" data-project="${esc(p.id)}"><strong>${esc(p.name)}</strong></button><small class="muted block-small">${esc(p.id)}</small></td>
+          <td><select class="cell" data-pstat="${esc(p.id)}" aria-label="Status of ${esc(p.name)}">${options(PROJECT_STATUSES, p.status)}</select></td>
+          <td>${esc(p.client)}</td><td><span class="tchips">${teamsOnProject(p.id).map(k => teamChip(k)).join('') || '<span class="muted small">none yet</span>'}</span></td>
+          <td class="num">${S.data.assignments.filter(a => a.projectId === p.id).length}</td><td class="num">${S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length}</td>
+          <td><button type="button" class="ghost small-btn" data-medit="${esc(p.id)}">Edit</button></td></tr>`).join('')}</tbody></table></div>
+      ${list.length ? '' : '<div class="empty"><h3>No projects match</h3></div>'}
+      <p class="muted small m-note">Projects are shared by every team: teams appear on a project when their people join it or add tasks. Admins and department admins add and edit projects; only an admin deletes one.</p>`;
+    bindFilters(root, () => {});
+    $$('[data-mstatus]', root).forEach(b => b.onclick = () => { S.projectFilter = b.dataset.mstatus; render(); });
+    $('#addProject', root).onclick = () => projectForm({ type: 'Other', status: 'In Progress', priority: 'Medium', assigned: [] });
+    $$('[data-pstat]', root).forEach(s => s.onchange = async () => {
+      const p = project(s.dataset.pstat);
+      if (await guard(() => Api.saveProject(Object.assign({}, p, { status: s.value }), [], []).then(() => true))) toast(p.name + ' → ' + s.value);
+      render();
+    });
+    $$('[data-medit]', root).forEach(b => b.onclick = () => {
+      const p = project(b.dataset.medit);
+      projectForm(Object.assign({}, p, { assigned: S.data.assignments.filter(a => a.projectId === p.id).map(a => a.userId) }));
+    });
+    bindProjectLinks(root);
+  }
+
+  function renderDepts(root) {
+    root.innerHTML = `<div class="depts">${departments().map(d => {
+      const ppl = S.data.team.filter(m => m.departmentId === d.id && m.active);
+      const leads = ppl.filter(m => m.role === 'Dept admin');
+      return `<section class="card dept-card"><h3 class="card-title">${esc(d.name)} <small class="muted">${ppl.length} people</small></h3>
+        <h4>Teams (the columns of its meeting email)</h4><div class="tchips">${deptTeams(d.id).map(c => teamChip(d.id + ':' + c)).join('')}</div>
+        <h4>Department admins</h4><p class="small">${leads.map(m => esc(m.name)).join(', ') || '<span class="muted">None yet</span>'}</p></section>`;
+    }).join('')}
+      <section class="card dept-card"><h3 class="card-title">Management <small class="muted">${S.data.team.filter(m => m.role === 'Admin' && m.active).length} admins</small></h3>
+        <p class="small muted">Admins manage every department. Their own tasks show under the Management team.</p></section></div>
+      <p class="muted small m-note">To add a department or rename a team, ask for it to be set up in the database (it changes the meeting email columns).</p>`;
+  }
+
+  /** Saved minutes, read-only: one block per project, one column per team. */
+  function savedRowsHtml(m) {
+    const teams = m.teams || ['PLC', 'Dev'];   // minutes saved before departments: PLC | Dev
+    const li = it => `<li class="${it.blocked ? 'blk' : ''}">${it.kind === 'done' ? '✔ ' : it.kind === 'next' ? '→ ' : ''}${esc(it.title)} <small class="muted">${esc(it.who)}</small>${it.blocked ? ` <span class="tag-block">blocked: ${esc(it.note || 'no reason given')}</span>` : ''}</li>`;
+    return (m.rows || []).map(r => `<section class="card saved-row"><h3 class="card-title">${esc(r.name)} ${r.status ? `<span class="pstatus ps-${slug(r.status)}">${esc(r.status)}</span>` : ''}</h3>
+      ${r.silent ? '<p class="muted small">No update this week</p>' : `<div class="saved-cols">${teams.map(k => {
+        const c = (r.cols || {})[k] || { done: [], doing: [], next: [] };
+        const items = c.done.concat(c.doing, c.next);
+        return `<div><h4>${esc(k)}</h4>${items.length ? `<ul class="plain saved-list">${items.map(li).join('')}</ul>` : '<p class="muted small">—</p>'}</div>`;
+      }).join('')}</div>`}</section>`).join('') || '<div class="empty"><h3>Nothing in these minutes</h3></div>';
   }
 
   /** Same layout as the "Weekly Progress Check & Action Plan" email; inline styles so it pastes into Zoho / Outlook. */
@@ -1619,42 +1592,6 @@
     dlg.showModal();
   }
 
-  // ---------- Manage: projects & team (admins and department admins) ----------
-
-  /** Manage (admins), opened from the settings button; a link leads back to the board. */
-  function viewManage(root) {
-    renderManage(root);
-    root.insertAdjacentHTML('afterbegin', `<a href="#/" class="back">${icon('left')} Weekly board</a>`);
-  }
-
-  function renderManage(root) {
-    const tab = S.manageTab;
-    const addLabel = { projects: 'Project', team: 'Member', external: '3rd party' }[tab];
-    const d = dept(manageDept());
-    // Admins pick the department to manage; a department admin manages their own.
-    const deptRow = !manyDepts() ? '' : isAdmin()
-      ? `<div class="seg dept-seg" aria-label="Department">${departments().map(x =>
-        `<button type="button" data-dept="${esc(x.id)}" class="${x.id === d.id ? 'on' : ''}">${esc(x.name)}</button>`).join('')}</div>`
-      : `<p class="muted small" style="margin:-8px 0 12px">${esc(d.name)} department</p>`;
-    root.innerHTML = `
-      <div class="page-head"><h2>Manage</h2>
-        <button type="button" class="primary small" id="addBtn">${icon('plus')} ${addLabel}</button></div>
-      ${tab === 'external' ? '' : deptRow}
-      <div class="segmented">
-        <button type="button" data-tab="projects" class="${tab === 'projects' ? 'on' : ''}">Projects</button>
-        <button type="button" data-tab="team" class="${tab === 'team' ? 'on' : ''}">Team</button>
-        <button type="button" data-tab="external" class="${tab === 'external' ? 'on' : ''}">3rd parties</button>
-      </div>
-      <div id="manageBody"></div>`;
-    $$('[data-tab]', root).forEach(b => b.addEventListener('click', () => { S.manageTab = b.dataset.tab; render(); }));
-    $$('[data-dept]', root).forEach(b => b.addEventListener('click', () => { S.dept = b.dataset.dept; render(); }));
-    $('#addBtn', root).addEventListener('click', () => tab === 'projects'
-      ? projectForm({ type: d.projectTypes[0] || 'Other', status: 'In Progress', priority: 'Medium', assigned: [], departmentId: d.id })
-      : tab === 'team' ? memberForm({ role: 'Member', active: true, departmentId: d.id }) : contactForm({}));
-    const body = $('#manageBody', root);
-    if (tab === 'projects') renderProjects(body); else if (tab === 'team') renderTeam(body); else renderContacts(body);
-  }
-
   /** 3rd parties: people without an account who can still be assigned tasks. */
   function renderContacts(root) {
     const count = id => S.data.tasks.filter(t => t.contactIds.indexOf(id) !== -1).length;
@@ -1696,57 +1633,19 @@
     }
   }
 
-  function renderProjects(root) {
-    const filters = ['Open'].concat(PROJECT_STATUSES).concat(['All']);
-    const q = S.projectSearch.toLowerCase();
-    const all = S.data.projects.filter(p => p.departmentId === manageDept());
-    const list = all.filter(p =>
-      (S.projectFilter === 'All' || (S.projectFilter === 'Open' ? CLOSED.indexOf(p.status) === -1 : p.status === S.projectFilter)) &&
-      (!q || (p.name + ' ' + p.client + ' ' + p.id).toLowerCase().indexOf(q) !== -1));
-    root.innerHTML = `
-      <input type="search" class="search" id="projectSearch" placeholder="Search projects" value="${esc(S.projectSearch)}">
-      <div class="chips scroll">${filters.map(f => {
-        const n = f === 'All' ? all.length : f === 'Open' ? all.filter(p => CLOSED.indexOf(p.status) === -1).length : all.filter(p => p.status === f).length;
-        return `<button type="button" class="chip${S.projectFilter === f ? ' on' : ''}" data-filter="${esc(f)}">${esc(f)} <small>${n}</small></button>`;
-      }).join('')}</div>
-      <div class="grid">${list.map(p => {
-        const team = S.data.assignments.filter(a => a.projectId === p.id).map(a => member(a.userId));
-        return `
-          <button type="button" class="card list-card" data-edit="${esc(p.id)}">
-            <span class="row-between"><strong>${esc(p.name)}</strong><span class="prio prio-${slug(p.priority)}" title="${esc(p.priority)} priority">${esc(p.priority)}</span></span>
-            <span class="meta"><span class="badge type-${slug(p.type)}">${esc(p.type)}</span>${esc(p.id)}${p.client ? ' · ' + esc(p.client) : ''}</span>
-            <span class="row-between">
-              <span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>
-              <span class="avatars">${team.slice(0, 4).map(m => `<span class="avatar sm" title="${esc(m.name)}">${esc(initials(m.name))}</span>`).join('')}${team.length > 4 ? `<span class="avatar sm more">+${team.length - 4}</span>` : ''}</span>
-            </span>
-          </button>`;
-      }).join('') || '<div class="empty"><h3>No projects match</h3></div>'}</div>`;
-    const search = $('#projectSearch', root);
-    search.addEventListener('input', () => {
-      S.projectSearch = search.value;
-      const pos = search.selectionStart;
-      renderProjects(root);
-      const s2 = $('#projectSearch', root); s2.focus(); s2.setSelectionRange(pos, pos);
-    });
-    $$('[data-filter]', root).forEach(b => b.addEventListener('click', () => { S.projectFilter = b.dataset.filter; renderProjects(root); }));
-    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => {
-      const p = S.data.projects.find(x => x.id === b.dataset.edit);
-      projectForm(Object.assign({}, p, { assigned: S.data.assignments.filter(a => a.projectId === p.id).map(a => a.userId) }));
-    }));
-  }
-
   function projectForm(values) {
-    const d = dept(values.departmentId || manageDept());
-    // The department's own types first; admins can also pick another department's types.
-    const types = Array.from(new Set(d.projectTypes.concat(isAdmin() ? departments().reduce((a, x) => a.concat(x.projectTypes), []) : [])
+    // Projects are shared: every department's project types, your own department's first.
+    const d = dept(values.departmentId || me().departmentId);
+    const types = Array.from(new Set(dept(me().departmentId).projectTypes.concat(departments().reduce((a, x) => a.concat(x.projectTypes), []))
       .concat(values.type ? [values.type] : [])));
+    // A department admin puts only their own people on a project (and takes only them off).
+    const original = (values.assigned || []).filter(leadsPerson);
     openForm({
       title: values.id ? 'Edit project' : 'New project',
-      values: Object.assign({}, values, { departmentId: d.id }),
+      values: Object.assign({}, values, { assigned: original }),
       fields: [
         { name: 'name', label: 'Project name', required: true, wide: true },
         { name: 'id', label: 'Project ID (blank = auto)', readonly: !!values.id },
-        ...(isAdmin() && manyDepts() ? [{ name: 'departmentId', label: 'Department', type: 'select', options: departments().map(x => ({ value: x.id, label: x.name })) }] : []),
         { name: 'type', label: 'Type', type: 'select', options: types.length ? types : PROJECT_TYPES },
         { name: 'status', label: 'Status', type: 'chips', options: PROJECT_STATUSES },
         { name: 'priority', label: 'Priority', type: 'chips', options: PRIORITIES },
@@ -1754,58 +1653,24 @@
         { name: 'manager', label: 'Project manager' },
         { name: 'startDate', label: 'Start date', type: 'date' },
         { name: 'endDate', label: 'End date', type: 'date' },
-        { name: 'assigned', label: 'Assigned engineers', type: 'checklist',
-          options: groupPeople(S.data.team.filter(m => m.active), d.id)
+        { name: 'assigned', label: isAdmin() ? 'People on the project' : 'Your people on the project', type: 'checklist',
+          options: groupPeople(S.data.team.filter(m => m.active && leadsPerson(m.id)), d.id)
             .reduce((a, g) => a.concat(g.people.map(m => ({ value: m.id, label: m.name, hint: m.title, group: g.label }))), []) },
         { name: 'notes', label: 'Notes', type: 'textarea' },
       ],
       onSubmit: async v => {
         if (!v.name) throw new Error('Project name is required.');
-        v.departmentId = v.departmentId || d.id;
-        await Api.saveProject(v, v.assigned, values.assigned || []);
+        v.departmentId = values.departmentId || '';
+        await Api.saveProject(v, v.assigned, original);
         toast('Project saved');
         render();
       },
     });
   }
 
-  function renderTeam(root) {
-    const d = dept(manageDept());
-    const subTeams = d.teams.length > 1;
-    const q = (S.teamSearch || '').toLowerCase();
-    const people = S.data.team.filter(m => m.departmentId === d.id &&
-      (!q || (m.name + ' ' + m.username + ' ' + m.title + ' ' + m.unit).toLowerCase().indexOf(q) !== -1));
-    const card = m => {
-      const n = S.data.assignments.filter(a => a.userId === m.id).length;
-      return `
-        <button type="button" class="card list-card member${m.active ? '' : ' inactive'}" data-edit="${esc(m.id)}">
-          <span class="avatar">${esc(initials(m.name))}</span>
-          <span class="member-info"><strong>${esc(m.name)}</strong><span class="muted">${esc(m.title || m.username)}</span></span>
-          <span class="member-side">${!subTeams ? '' : m.team ? `<span class="badge">${esc(m.team)}</span>` : '<span class="badge off">No team</span>'}${m.role !== 'Member' ? `<span class="badge">${esc(m.role)}</span>` : ''}${m.active ? '' : '<span class="badge off">Inactive</span>'}<small class="muted">${n} project${n === 1 ? '' : 's'}</small></span>
-        </button>`;
-    };
-    // One section per org-chart team (e.g. "B.A Execution Team B", "Back Office").
-    root.innerHTML = `<input type="search" class="search" id="teamSearch" placeholder="Search people, titles or teams" value="${esc(S.teamSearch || '')}">
-      ${groupPeople(people, d.id).map(g => `<h4 class="team-group">${esc(g.label)} <span>${g.people.length}</span></h4>
-        <div class="grid">${g.people.map(card).join('')}</div>`).join('')
-      || `<div class="empty"><h3>${q ? 'Nobody matches' : 'Nobody in ' + esc(d.name) + ' yet'}</h3>${q ? '' : '<p>Tap <b>+ Member</b> to add someone.</p>'}</div>`}`;
-    const search = $('#teamSearch', root);
-    search.addEventListener('input', () => {
-      S.teamSearch = search.value;
-      const pos = search.selectionStart;
-      renderTeam(root);
-      const s2 = $('#teamSearch', root); s2.focus(); s2.setSelectionRange(pos, pos);
-    });
-    $$('[data-edit]', root).forEach(b => b.addEventListener('click', () => {
-      const m = S.data.team.find(x => x.id === b.dataset.edit);
-      if (m.role === 'Admin' && !isAdmin()) return toast('Only an admin can change an admin.', true);
-      memberForm(m);
-    }));
-  }
-
   function memberForm(values) {
     const isNew = !values.id;
-    const d = dept(values.departmentId || manageDept());
+    const d = dept(values.departmentId || me().departmentId);
     openForm({
       title: isNew ? 'New member' : 'Edit member',
       values: Object.assign({}, values, { departmentId: d.id }),
@@ -1874,43 +1739,41 @@
     });
   }
 
+
   // ---------- Shell ----------
 
-  // Three screens (bottom bar on a phone, tabs on a computer); Manage is behind the settings button.
+  // Left side on a computer, bottom bar on a phone. Each page has one job.
   const TABS = [
-    { id: 'week', label: 'My week', icon: 'tasks', view: viewWeek },
-    { id: 'projects', label: 'Projects', icon: 'projects', view: viewProjectList },
-    { id: 'meeting', label: 'Meeting', icon: 'meeting', view: viewMeeting, manager: true },
-    { id: 'manage', label: 'Manage', view: viewManage, manager: true, hidden: true },
+    { id: 'my', label: 'My tasks', icon: 'tasks', view: viewMy },
+    { id: 'team', label: 'Team', icon: 'meeting', view: viewTeam, manager: true },
+    { id: 'projects', label: 'Projects', icon: 'projects', view: viewProjects },
+    { id: 'manage', label: 'Manage', icon: 'manage', view: viewManage, manager: true },
   ];
+  const OLD_ROUTES = { week: 'my', tasks: 'my', meeting: 'team' };
 
-  /** The screen in the address (#/week, #/projects, #/meeting, #/manage); managers start on Meeting. */
+  /** The page in the address (#/my, #/team, #/projects, #/manage); managers start on Team. */
   function currentTab() {
     const allowed = TABS.filter(t => !t.manager || isManager());
-    const id = location.hash.replace(/^#\/?/, '').replace(/^tasks$/, 'week') || (isManager() ? 'meeting' : 'week');
+    let id = location.hash.replace(/^#\/?/, '') || (isManager() ? 'team' : 'my');
+    id = OLD_ROUTES[id] || id;
     return allowed.find(t => t.id === id) || allowed[0];
   }
 
   function render() {
     if (!S.data) return;
     const tab = currentTab();
-    // No tabs: one page for everyone; admins open Manage from the settings button.
-    const gear = $('#settingsBtn');
-    gear.hidden = !isManager();
-    gear.innerHTML = icon('settings');
-    gear.classList.toggle('on', tab.id === 'manage');
-    gear.setAttribute('aria-label', tab.id === 'manage' ? 'Back to the weekly board' : 'Settings (Manage)');
     $('#avatarBtn').textContent = initials(me().name);
     $('#avatarBtn').title = me().name;
+    $('#addTaskBtn').hidden = tab.id === 'manage';
     document.body.dataset.tab = tab.id;
-    $('#appnav').innerHTML = TABS.filter(t => !t.hidden && (!t.manager || isManager())).map(t =>
+    $('#appnav').innerHTML = TABS.filter(t => !t.manager || isManager()).map(t =>
       `<a href="#/${t.id}" class="${t.id === tab.id ? 'on' : ''}"${t.id === tab.id ? ' aria-current="page"' : ''}>${icon(t.icon)}<span>${t.label}</span></a>`).join('');
     // Text half-typed into an "add" box survives the redraw (e.g. ticking a task meanwhile).
     const kept = {};
     const keepSel = '#view [data-keep], #dialog[data-mode="task"] [data-keep]';
     $$(keepSel).forEach(i => { if (i.value) kept[i.dataset.keep] = i.value; });
     tab.view($('#view'));
-    if (tab.id !== 'manage') renderPanel($('#view')); else document.body.classList.remove('panel-open');
+    if (tab.id !== 'manage' || S.project) renderPanel($('#view')); else document.body.classList.remove('panel-open');
     renderTaskSheet();
     $$(keepSel).forEach(i => { if (kept[i.dataset.keep] && !i.value) i.value = kept[i.dataset.keep]; });
     if (kept['add-title']) { const f = $('#addForm'); if (f) f.classList.add('expanded'); }
@@ -1925,14 +1788,9 @@
     err.hidden = !message;
   }
 
-  function bindSettings() {
-    $('#settingsBtn').onclick = () => { location.hash = currentTab().id === 'manage' ? '#/' : '#/manage'; };
-  }
-
   function showApp() {
     $('#loginView').hidden = true;
     document.body.classList.add('signed-in');
-    bindSettings();
     render();
   }
 
@@ -1994,6 +1852,7 @@
       }
     });
     $('#avatarBtn').addEventListener('click', accountSheet);
+    $('#addTaskBtn').addEventListener('click', () => quickAddSheet({}));
     window.addEventListener('session-expired', e => { S.data = null; showLogin(e.detail); });
     window.addEventListener('hashchange', () => { S.project = null; S.minutes = {}; render(); window.scrollTo(0, 0); });
     // Esc closes the project panel (unless a form or sheet is open over it).

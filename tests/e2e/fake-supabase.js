@@ -112,7 +112,9 @@
     const me = sessionUser();
     if (name === 'app_bootstrap') {
       const r = { me, team: db.profiles, departments: db.departments, projects: db.projects, assignments: db.assignments, updates: [],
-        tasks: db.tasks.filter(t => !a.p_since || t.week >= a.p_since || t.status !== 'Done'), contacts: db.contacts };
+        // Like the database: employees get only their own tasks; admins and department admins get all.
+        tasks: db.tasks.filter(t => (!a.p_since || t.week >= a.p_since || t.status !== 'Done') &&
+          (me.role !== 'member' || t.created_by === me.id || (t.assignee_ids || []).indexOf(me.id) !== -1)), contacts: db.contacts };
       save(); return { data: clone(r), error: null };
     }
     if (name === 'admin_save_project') {

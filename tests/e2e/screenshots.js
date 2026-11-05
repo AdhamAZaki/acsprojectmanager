@@ -63,20 +63,20 @@ function demo() {
   await page.waitForSelector('#loginView:not([hidden])');
   await page.screenshot({ path: path.join(OUT, '1-login.png') });
 
-  await signIn(page, url + '#/week', 'adham');
-  await page.waitForSelector('.mw-title');
+  await signIn(page, url + '#/my', 'adham');
+  await page.waitForSelector('.page-title');
   await page.screenshot({ path: path.join(OUT, '2-board.png') });
   await page.click('#view [data-toggle] >> text=Build the filter overview');
   await page.waitForSelector('dialog[data-mode="task"][open]');
   await page.screenshot({ path: path.join(OUT, '2b-task-sheet.png') });
   await page.click('dialog [data-close]');
-  await page.goto(url + '#/meeting');
-  await page.waitForSelector('.hchips');
+  await page.goto(url + '#/team');
+  await page.waitForSelector('.meetbar');
   await page.screenshot({ path: path.join(OUT, '3-by-person.png') });
 
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.reload();
-  await page.waitForSelector('.hchips');
+  await page.waitForSelector('.meetbar');
   await page.screenshot({ path: path.join(OUT, '4-board-wide.png') });
 
   await browser.close();
