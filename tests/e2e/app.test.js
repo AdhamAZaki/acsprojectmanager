@@ -256,6 +256,12 @@ async function manage(browser, url) {
   await page.click('#dialog button[type=submit]');
   await sleep(400);
   ok((await db(page)).projects.some(p => p.name === 'Harbor Water Plant'), 'add a project (shared by every team)');
+  const hw = (await db(page)).projects.find(p => p.name === 'Harbor Water Plant');
+  await page.click(`[data-medit="${hw.id}"]`);
+  page.once('dialog', d => d.accept());
+  await page.click('#deleteProject');
+  await sleep(400);
+  ok(!(await db(page)).projects.some(p => p.id === hw.id) && !(await page.isVisible(`[data-medit="${hw.id}"]`)), 'admin deletes a project (Manage › Projects › Edit › Delete project)');
   await page.click('[data-tab="depts"]');
   ok(await page.isVisible('.dept-card >> text=AVEVA') && await page.isVisible('.dept-card >> text=Management'), 'Departments & teams lists every team');
   await ctx.close();
@@ -268,6 +274,10 @@ async function manage(browser, url) {
   const names = await p2.$$eval('.mtable tbody .who strong', s => s.map(x => x.textContent));
   ok(names.length === 2 && names.every(n => /GUI/.test(n)), 'department admin manages only her department’s people');
   ok(!(await p2.$$eval('.mtable [data-prole] option', os => os.map(o => o.textContent))).includes('Admin'), 'department admin cannot make anyone Admin');
+  await p2.click('[data-tab="projects"]');
+  await p2.click('[data-medit="PRJ-0002"]');
+  ok(await p2.locator('#deleteProject').count() === 0, 'department admins have no Delete project button');
+  await p2.click('#dialog [data-cancel]');
   await c2.close();
 }
 

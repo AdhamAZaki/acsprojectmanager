@@ -1666,6 +1666,25 @@
         render();
       },
     });
+    // Admins only: delete the project. Its tasks go with it, so it asks first and offers "Canceled" instead.
+    if (values.id && isAdmin()) {
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'ghost danger-text block'; del.id = 'deleteProject'; del.textContent = 'Delete project';
+      del.addEventListener('click', async () => {
+        const n = S.data.tasks.filter(t => t.projectId === values.id).length;
+        if (!confirm('Delete ' + values.name + '?\n\nIts ' + n + ' task' + (n === 1 ? '' : 's') + ' and its team list are deleted for good, also from past weeks.' +
+          '\n\nTo keep its history, set the status to Canceled instead.')) return;
+        S.lastWrite = Date.now();
+        try {
+          await Api.deleteProject(values.id);
+          $('#dialog').close();
+          if (S.project === values.id) S.project = null;
+          toast(values.name + ' deleted');
+          render();
+        } catch (e) { toast(e.message, true); }
+      });
+      $('#dialog .sheet-body').appendChild(del);
+    }
   }
 
   function memberForm(values) {
