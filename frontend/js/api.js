@@ -328,6 +328,18 @@
      * ticked when the form was opened. Only the difference is sent, so people who joined
      * in the meantime stay on the project.
      */
+    /** Deletes a project with its tasks and team list (admins only). */
+    async deleteProject(id) {
+      return write(async () => {
+        const rows = check(await sb.from('projects').delete().eq('id', id).select('id'));
+        if (!rows.length) throw new ApiError('Only an admin can delete a project.', 403);
+        data.projects = data.projects.filter(p => p.id !== id);
+        data.assignments = data.assignments.filter(a => a.projectId !== id);
+        data.tasks = data.tasks.filter(t => t.projectId !== id);
+        writeCache();
+      });
+    },
+
     async saveProject(p, userIds, originalIds) {
       return write(async () => {
         const add = uniq(userIds);
