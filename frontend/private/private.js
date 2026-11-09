@@ -1,7 +1,8 @@
 // Private tasks: a small tracker for one person, in its own Supabase project.
 // * Your private tasks live only in the private project (one owner, rows readable by the owner only).
-// * Linked to ACS (the shared tracker) one way: your DONE tasks in ACS are copied in automatically
-//   (this week and last week) when you open the page, or with "Copy my done tasks from ACS".
+// * Linked to ACS (the shared tracker) one way: your ACS tasks (last, this and next week, and anything
+//   still open from before) are copied in when you open the page, and the copies follow ACS: a task
+//   changed or done there is updated here. Use "Update from ACS" for another week.
 // * A private task goes to ACS only when you press "Send to ACS" on it.
 // The ACS sign-in is the same one as the ACS app on this site, so if you are signed in there,
 // the link works without signing in again.
@@ -56,20 +57,33 @@
     const projects = check(await A.from('projects').select('id,name,status').order('name'));
     S.acs = { me: me, projects: projects };
   }
-  /** Copies your Done tasks of these weeks from ACS (once each; never the other way). */
-  async function pullDone(weeks, quiet) {
+  /**
+   * Copies your ACS tasks here, one way: the weeks given (default: last, this and next week) plus
+   * anything still open from earlier weeks. Copies already here follow ACS (title, week, status,
+   * project). Tasks you sent from here to ACS stay as they are. Nothing is ever written to ACS.
+   */
+  async function pullAcs(weeks, quiet) {
     if (!S.acs) return;
     const me = S.acs.me.id;
-    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by').eq('status', 'Done').in('week', weeks));
-    const mine = rows.filter(t => (t.assignee_ids || []).indexOf(me) !== -1 || (!(t.assignee_ids || []).length && t.created_by === me));
-    const have = new Set(S.tasks.map(t => t.acs_task_id).filter(Boolean));
-    const add = mine.filter(t => !have.has(t.id)).map(t => ({
-      week: t.week, title: t.title, status: 'Done', source: 'acs', acs_task_id: t.id,
-      project: (S.acs.projects.find(p => p.id === t.project_id) || { name: '' }).name,
-    }));
+    const ws = weeks || [LAST, THIS, NEXT];
+    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by'));
+    const mine = rows.filter(t => ((t.assignee_ids || []).indexOf(me) !== -1 || (!(t.assignee_ids || []).length && t.created_by === me)) &&
+      (ws.indexOf(t.week) !== -1 || (t.status !== 'Done' && t.week < THIS)));
+    const pname = t => (S.acs.projects.find(p => p.id === t.project_id) || { name: '' }).name;
+    const byAcs = {};
+    S.tasks.forEach(t => { if (t.acs_task_id) byAcs[t.acs_task_id] = t; });
+    const add = [], upd = [];
+    mine.forEach(t => {
+      const v = { week: t.week, title: t.title, status: t.status, project: pname(t) };
+      const have = byAcs[t.id];
+      if (!have) add.push(Object.assign({ source: 'acs', acs_task_id: t.id }, v));
+      else if (have.source === 'acs' && Object.keys(v).some(k => have[k] !== v[k])) upd.push({ id: have.id, v: v });
+    });
     if (add.length) check(await P.from('private_tasks').upsert(add, { onConflict: 'acs_task_id', ignoreDuplicates: true }));
+    for (const u of upd) check(await P.from('private_tasks').update(u.v).eq('id', u.id));
     await loadTasks();
-    if (!quiet || add.length) toast(add.length ? add.length + ' done task' + (add.length === 1 ? '' : 's') + ' copied from ACS' : 'Nothing new to copy from ACS');
+    const msg = [add.length ? add.length + ' copied' : '', upd.length ? upd.length + ' updated' : ''].filter(Boolean).join(', ');
+    if (!quiet || msg) toast(msg ? 'From ACS: ' + msg : 'Up to date with ACS');
   }
 
   // ---------- Screens ----------
@@ -125,13 +139,13 @@
       <div class="filters">
         <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)]]
           .map(o => `<option value="${o[0]}"${o[0] === S.week ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
-        ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Copy my done tasks from ACS (${S.week === 'now' ? 'week ' + wnum(LAST) + '–' + wnum(THIS) : 'week ' + wnum(S.week)})</button>` : ''}
+        ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Update from ACS${S.week === 'now' ? '' : ' (week ' + wnum(S.week) + ')'}</button>` : ''}
       </div>
       ${Object.keys(groups).sort().map(g => `<section class="card"><h3 class="card-title">${esc(g)}</h3>${groups[g].sort((a, b) => rank(a) - rank(b)).map(row).join('')}</section>`).join('')
         || '<div class="empty"><h3>No private tasks in these weeks</h3><p>Add one above.</p></div>'}
       <section class="card"><h3 class="card-title">Link to ACS</h3>
-        ${S.acs ? `<p class="small">Linked as <b>${esc(S.acs.me.name)}</b>. Your done ACS tasks are copied here when you open this page. Nothing goes to ACS unless you press <b>Send to ACS</b> on a task.</p>`
-          : `<p class="small muted" style="margin-bottom:8px">Sign in to ACS to copy your done tasks here and to send a task there. (If you are signed in to the ACS app in this browser, this happens by itself.)</p>
+        ${S.acs ? `<p class="small">Linked as <b>${esc(S.acs.me.name)}</b>. Your ACS tasks are copied here (and kept up to date) when you open this page. Nothing goes to ACS unless you press <b>Send to ACS</b> on a task.</p>`
+          : `<p class="small muted" style="margin-bottom:8px">Sign in to ACS to copy your ACS tasks here and to send a task there. (If you are signed in to the ACS app in this browser, this happens by itself.)</p>
           <form class="pv-link" id="linkForm"><input name="username" placeholder="ACS username" autocomplete="off" required><input name="password" type="password" placeholder="ACS password" autocomplete="off" required><button class="secondary small-btn" type="submit">Link</button></form>`}
       </section>`;
     bind();
@@ -165,7 +179,7 @@
     });
     $$('[data-send]').forEach(b => b.onclick = () => sendDialog(S.tasks.find(t => t.id === b.dataset.send)));
     const pull = $('#pullBtn');
-    if (pull) pull.onclick = () => run(() => pullDone(S.week === 'now' ? [LAST, THIS] : [S.week])).then(render);
+    if (pull) pull.onclick = () => run(() => pullAcs(S.week === 'now' ? null : [S.week])).then(render);
     const link = $('#linkForm');
     if (link) link.onsubmit = async e => {
       e.preventDefault();
@@ -173,7 +187,7 @@
       const email = u.indexOf('@') !== -1 ? u : u + '@' + acsCfg.EMAIL_DOMAIN;
       const res = await A.auth.signInWithPassword({ email: email, password: link.elements.password.value });
       if (res.error) return toast('ACS: wrong username or password.', true);
-      await run(async () => { await loadAcs(); await pullDone([LAST, THIS]); });
+      await run(async () => { await loadAcs(); await pullAcs(); });
       render();
     };
   }
@@ -213,7 +227,7 @@
   async function start() {
     const { data } = await P.auth.getSession();
     if (!data.session) return showLogin();
-    await run(async () => { await loadTasks(); await loadAcs().catch(() => { S.acs = null; }); if (S.acs) await pullDone([LAST, THIS], true); });
+    await run(async () => { await loadTasks(); await loadAcs().catch(() => { S.acs = null; }); if (S.acs) await pullAcs(null, true); });
     render();
   }
 

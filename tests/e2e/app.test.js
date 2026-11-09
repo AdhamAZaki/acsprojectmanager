@@ -373,6 +373,12 @@ async function privateTracker(browser, url) {
   await page.reload();
   await page.waitForSelector('#addForm');
   ok((await db(page)).private_tasks.filter(t => t.title === T1).length === 1, 'copying from ACS never duplicates');
+  ok((await db(page)).private_tasks.some(t => t.title === 'Test the duty and standby pump logic' || t.source === 'acs'), 'open ACS tasks are copied too');
+  await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).status = 'Blocked'; window.__db.save(); }, T1);
+  await page.reload();
+  await page.waitForSelector('#addForm');
+  ok((await db(page)).private_tasks.find(t => t.title === T1).status === 'Blocked', 'a copy follows ACS: changed there, updated here');
+  ok((await db(page)).tasks.find(t => t.title === 'Private: plan the team restructure') === undefined, '...and nothing private goes to ACS');
   ok(errors.length === 0, 'private tracker: no page errors (' + errors.join('; ') + ')');
   await ctx.close();
 }
