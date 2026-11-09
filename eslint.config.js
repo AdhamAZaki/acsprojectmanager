@@ -34,7 +34,7 @@ const rules = {
 };
 
 module.exports = [
-  { files: ['frontend/js/**/*.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: asGlobals(browser) }, rules },
+  { files: ['frontend/js/**/*.js', 'frontend/private/**/*.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: asGlobals(browser) }, rules },
   { files: ['frontend/sw.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: asGlobals(worker) }, rules },
   // fake-supabase.js runs in the browser; the rest of the tests and scripts run in Node.
   { files: ['tests/e2e/fake-supabase.js'], languageOptions: { ecmaVersion: 2022, sourceType: 'script', globals: asGlobals(browser) }, rules },

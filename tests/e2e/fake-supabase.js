@@ -51,6 +51,7 @@
       ],
       contacts: [],
       meetings: [],
+      private_tasks: [],   // the private tracker's own project
       log: [],
     };
   }
@@ -62,6 +63,8 @@
 
   const ctl = { delay: 0, failNextUpdate: false, listeners: [] };
   const sessionUser = () => { const id = localStorage.getItem('fake-session'); return id ? db.profiles.find(p => p.id === id) : null; };
+  // The private tracker's project has one owner: whoever signs in to it with the password "private-password".
+  const privateUser = () => localStorage.getItem('fake-session-private');
   const clone = x => JSON.parse(JSON.stringify(x));
   const wait = () => new Promise(r => setTimeout(r, ctl.delay));
 
@@ -71,9 +74,10 @@
   Query.prototype.select = function () { if (this.op === 'select') this.op = 'select'; this.returning = true; return this; };
   Query.prototype.insert = function (row) { this.op = 'insert'; this.payload = row; return this; };
   Query.prototype.update = function (row) { this.op = 'update'; this.payload = row; return this; };
-  Query.prototype.upsert = function (row) { this.op = 'insert'; this.payload = row; return this; };
+  Query.prototype.upsert = function (row, o) { this.op = 'insert'; this.payload = row; this.upsertKey = o && o.ignoreDuplicates ? o.onConflict : null; return this; };
   Query.prototype.delete = function () { this.op = 'delete'; return this; };
   Query.prototype.eq = function (c, v) { this.filters.push(r => r[c] === v); return this; };
+  Query.prototype.in = function (c, vs) { this.filters.push(r => vs.indexOf(r[c]) !== -1); return this; };
   Query.prototype.ilike = function (c, v) { this.filters.push(r => String(r[c]).toLowerCase() === String(v).toLowerCase()); return this; };
   Query.prototype.not = function (c, op, v) { this.filters.push(r => r[c] !== null && r[c] !== undefined); return this; };
   Query.prototype.order = function () { return this; };
@@ -83,15 +87,24 @@
   Query.prototype.then = function (ok, bad) { return this.run().then(ok, bad); };
   Query.prototype.run = async function () {
     await wait();
-    const rows = db[this.table];
+    if (this.priv) {   // private project: only its own table, only the signed-in owner's rows (RLS)
+      if (this.table !== 'private_tasks' || !privateUser()) return { data: null, error: { message: 'permission denied' } };
+      this.filters.push(r => r.owner === privateUser());
+    }
+    const rows = db[this.table] || (db[this.table] = []);
     const match = r => this.filters.every(f => f(r));
     let out;
     db.log.push({ table: this.table, op: this.op, payload: clone(this.payload) });
     if (this.op === 'select') out = rows.filter(match);
     if (this.op === 'insert') {
       const now = ts();
-      const r = Object.assign({ id: uid(), created_at: now, updated_at: now, created_by: (sessionUser() || {}).id }, clone(this.payload));
-      rows.push(r); out = [r];
+      const me = this.priv ? privateUser() : (sessionUser() || {}).id;
+      out = [];
+      (Array.isArray(this.payload) ? this.payload : [this.payload]).forEach(p => {
+        if (this.upsertKey && rows.some(x => x[this.upsertKey] === p[this.upsertKey])) return;
+        const r = Object.assign({ id: uid(), created_at: now, updated_at: now }, this.priv ? { owner: me } : { created_by: me }, clone(p));
+        rows.push(r); out.push(r);
+      });
     }
     if (this.op === 'update') {
       if (ctl.failNextUpdate) { ctl.failNextUpdate = false; return { data: null, error: { message: 'Simulated failure' } }; }
@@ -135,6 +148,20 @@
     return { data: null, error: { message: 'unknown rpc ' + name } };
   }
 
+  function privateClient() {
+    return {
+      auth: {
+        async getSession() { const u = privateUser(); return { data: { session: u ? { user: { id: u } } : null } }; },
+        async signInWithPassword({ password }) {
+          if (password !== 'private-password') return { error: { message: 'Invalid login credentials' } };
+          localStorage.setItem('fake-session-private', 'owner-1'); return { data: {}, error: null };
+        },
+        async signOut() { localStorage.removeItem('fake-session-private'); return {}; },
+      },
+      from: t => { const q = new Query(t); q.priv = true; return q; },
+    };
+  }
+
   window.__db = {
     get: () => db, save, ctl, ts,
     emit: table => ctl.listeners.forEach(f => f(table)),
@@ -142,7 +169,8 @@
   };
 
   window.supabase = {
-    createClient() {
+    createClient(url) {
+      if (window.PRIVATE_CONFIG && url === window.PRIVATE_CONFIG.URL) return privateClient();
       return {
         auth: {
           async getSession() { const u = sessionUser(); return { data: { session: u ? { user: { id: u.id } } : null } }; },
