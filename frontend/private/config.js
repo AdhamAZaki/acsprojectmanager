@@ -5,5 +5,5 @@ window.PRIVATE_CONFIG = {
   // Supabase → the private project → Project Settings → API → Project URL
   URL: 'https://tvfbdzjsogxintijxsuv.supabase.co',
   // Supabase → the private project → Project Settings → API Keys → Publishable key
-  KEY: '',
+  KEY: 'sb_publishable_fIPaQzXO-W8NhuCDfro2tA_sS-ZFK1X',
 };
