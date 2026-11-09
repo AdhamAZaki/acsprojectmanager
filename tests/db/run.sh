@@ -35,6 +35,13 @@ if sed "s/v_password     text    := 'CHANGE-ME'/v_password     text    := 'Local
 fi
 echo "PASS: import template refuses to run with the example names"
 
+echo "== private tracker (its own database)"
+"${PSQL[@]}" -d postgres -c "drop database if exists ${DB}_private" -c "create database ${DB}_private"
+"${PSQL[@]}" -d ${DB}_private -f tests/db/supabase-mock.sql
+"${PSQL[@]}" -d ${DB}_private -f supabase/private-setup.sql >/dev/null
+"${PSQL[@]}" -d ${DB}_private --single-transaction -f supabase/private-setup.sql >/dev/null
+PGOPTIONS='-c client_min_messages=notice' "${PSQL[@]}" -d ${DB}_private -f tests/db/private.test.sql 2>&1 | sed -n 's/^.*NOTICE:  //p; /^psql:/p'
+
 echo "== checks"
 PGOPTIONS='-c client_min_messages=notice' "${PSQL[@]}" -d $DB -f tests/db/security.test.sql 2>&1 \
   | sed -n 's/^.*NOTICE:  //p; /^psql:/p; /All database checks passed/p'

@@ -335,11 +335,53 @@ async function weekRollover(browser, url) {
   await ctx.close();
 }
 
+// ---------- Private tracker (its own database; one-way link to ACS) ----------
+async function privateTracker(browser, url) {
+  const ctx = await newApp(browser);
+  await ctx.route(/private\/config\.js/, r => r.fulfill({ contentType: 'application/javascript', body: "window.PRIVATE_CONFIG = { URL: 'https://private.test', KEY: 'test-key' };" }));
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await signIn(page, url + '#/my', 'adham');   // signed in to ACS on this site
+  await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).status = 'Done'; window.__db.save(); }, T1);
+  await page.goto(url + 'private/');
+  await page.fill('input[name=email]', 'adham@example.com');
+  await page.fill('input[name=password]', 'wrong');
+  await page.click('#loginForm button[type=submit]');
+  await page.waitForSelector('.login .error');
+  ok(true, 'private tracker: a wrong password is refused');
+  await page.fill('input[name=password]', 'private-password');
+  await page.click('#loginForm button[type=submit]');
+  await page.waitForSelector('#addForm');
+  ok(await page.isVisible(`.pv-row:has-text("${T1}") .pv-tag.acs`), 'private tracker: my done ACS task is copied in by itself (one way)');
+  await page.fill('#addForm input[name=title]', 'Private: plan the team restructure');
+  await page.fill('#addForm input[name=project]', 'Management');
+  await page.click('#addForm button[type=submit]');
+  await page.waitForSelector('.pv-row >> text=Private: plan the team restructure');
+  let d = await db(page);
+  ok(d.private_tasks.some(t => t.title === 'Private: plan the team restructure') && !d.tasks.some(t => /restructure/.test(t.title)), 'a private task stays private (not in ACS)');
+  await page.fill('#addForm input[name=title]', 'Prepare the client presentation');
+  await page.click('#addForm button[type=submit]');
+  await page.waitForSelector('.pv-row >> text=Prepare the client presentation');
+  await page.click('.pv-row:has-text("Prepare the client presentation") [data-send]');
+  await page.selectOption('#sendForm select[name=project]', 'PRJ-0001');
+  await page.click('#sendForm button[type=submit]');
+  await page.waitForSelector('.pv-row:has-text("Prepare the client presentation") .pv-tag.sent');
+  d = await db(page);
+  const sent = d.tasks.find(t => t.title === 'Prepare the client presentation');
+  ok(sent && sent.project_id === 'PRJ-0001' && sent.assignee_ids.join() === d.users.adm.id, 'Send to ACS: one chosen task becomes my ACS task');
+  await page.reload();
+  await page.waitForSelector('#addForm');
+  ok((await db(page)).private_tasks.filter(t => t.title === T1).length === 1, 'copying from ACS never duplicates');
+  ok(errors.length === 0, 'private tracker: no page errors (' + errors.join('; ') + ')');
+  await ctx.close();
+}
+
 (async () => {
   const { server, url } = await serve();
   const browser = await launch();
   try {
-    for (const t of [myTasks, employee, teamPage, noUpdate, manage, sidePanel, phone, weekRollover]) {
+    for (const t of [myTasks, employee, teamPage, noUpdate, manage, sidePanel, phone, weekRollover, privateTracker]) {
       try { await t(browser, url); } catch (e) { ok(false, t.name + ' crashed: ' + e.message.split('\n')[0]); }
     }
   } finally {
