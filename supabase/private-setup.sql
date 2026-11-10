@@ -20,6 +20,9 @@ create table if not exists public.private_tasks (
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now()
 );
+-- Details (added later; safe to run again): what blocks a task, and its sub-steps.
+alter table public.private_tasks add column if not exists block_note text not null default '';
+alter table public.private_tasks add column if not exists subtasks jsonb not null default '[]'::jsonb;   -- [{ "t": "text", "done": false }]
 create index if not exists private_tasks_week_idx on public.private_tasks (owner, week);
 
 create or replace function public.private_touch() returns trigger language plpgsql set search_path = public as $$

@@ -31,7 +31,8 @@
   const THIS = isoWeek(new Date()), NEXT = shiftWeek(THIS, 1), LAST = shiftWeek(THIS, -1);
 
   // ---------- State ----------
-  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, busy: false };
+  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, q: '', layout: 'project', sort: 'status', open: null, details: undefined };
+  try { S.layout = ['board', 'table'].indexOf(localStorage.getItem('pv-layout')) !== -1 ? localStorage.getItem('pv-layout') : 'project'; } catch (e) { /* blocked */ }
   let P = null, A = null;   // private and ACS Supabase clients
 
   function toast(msg, isError) {
@@ -48,6 +49,8 @@
   // ---------- Data ----------
   async function loadTasks() {
     S.tasks = check(await P.from('private_tasks').select('*').order('created_at'));
+    // Blocked reasons, notes and sub-steps need the newer setup script; until it is run, they are off.
+    if (S.details === undefined) S.details = !(await P.from('private_tasks').select('subtasks').limit(1)).error;
   }
   /** The ACS side: who you are there and the project list, if you are signed in to ACS on this site. */
   async function loadAcs() {
@@ -66,7 +69,7 @@
     if (!S.acs) return;
     const me = S.acs.me.id;
     const ws = weeks || [LAST, THIS, NEXT];
-    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by'));
+    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by,block_note,subtasks'));
     const mine = rows.filter(t => ((t.assignee_ids || []).indexOf(me) !== -1 || (!(t.assignee_ids || []).length && t.created_by === me)) &&
       (ws.indexOf(t.week) !== -1 || (t.status !== 'Done' && t.week < THIS)));
     const pname = t => (S.acs.projects.find(p => p.id === t.project_id) || { name: '' }).name;
@@ -74,10 +77,11 @@
     S.tasks.forEach(t => { if (t.acs_task_id) byAcs[t.acs_task_id] = t; });
     const add = [], upd = [];
     mine.forEach(t => {
-      const v = { week: t.week, title: t.title, status: t.status, project: pname(t) };
+      const v = Object.assign({ week: t.week, title: t.title, status: t.status, project: pname(t) },
+        S.details ? { block_note: t.block_note || '', subtasks: t.subtasks || [] } : {});
       const have = byAcs[t.id];
       if (!have) add.push(Object.assign({ source: 'acs', acs_task_id: t.id }, v));
-      else if (have.source === 'acs' && Object.keys(v).some(k => have[k] !== v[k])) upd.push({ id: have.id, v: v });
+      else if (have.source === 'acs' && Object.keys(v).some(k => JSON.stringify(have[k]) !== JSON.stringify(v[k]))) upd.push({ id: have.id, v: v });
     });
     if (add.length) check(await P.from('private_tasks').upsert(add, { onConflict: 'acs_task_id', ignoreDuplicates: true }));
     for (const u of upd) check(await P.from('private_tasks').update(u.v).eq('id', u.id));
@@ -109,24 +113,72 @@
 
   const inWeeks = (t, ws) => ws.some(w => w === THIS ? (t.week === THIS || (t.week < THIS && t.status !== 'Done')) : t.week === w);
   const weeksOf = v => v === 'now' ? [THIS, NEXT] : [v];
+  const STATUSES = [['To Do', 'To do'], ['In Progress', 'Doing'], ['Blocked', 'Blocked'], ['Done', 'Done']];
+  const label = s => (STATUSES.find(x => x[0] === s) || [s, s])[1];
+  const REASONS = ['Waiting for someone', 'Approval', 'Information', 'Budget', 'Time'];
+  const slug = v => String(v || '').toLowerCase().replace(/[^a-z]+/g, '-');
+  const rank = t => t.status === 'Blocked' ? 0 : t.week < THIS && t.status !== 'Done' ? 1 : t.status === 'Done' ? 3 : 2;
+  const subs = t => Array.isArray(t.subtasks) ? t.subtasks : [];
+  const isCopy = t => t.source === 'acs';   // copied from ACS: ACS is the source, change it there
+  const searchOk = t => !S.q || (t.title + ' ' + t.project + ' ' + (t.notes || '')).toLowerCase().indexOf(S.q.toLowerCase()) !== -1;
+  const projectNames = () => Array.from(new Set(S.tasks.map(t => t.project).filter(Boolean)
+    .concat(S.acs ? S.acs.projects.filter(p => p.status !== 'Done' && p.status !== 'Canceled').map(p => p.name) : []))).sort();
+
+  /** Small tags after a task's title: carried over, blocked (with the reason), sub-steps, next week, ACS. */
+  function tags(t, ws) {
+    const n = subs(t).length, d = subs(t).filter(x => x.done).length;
+    return [
+      t.week < THIS && t.status !== 'Done' ? `<span class="tag-carry">from week ${wnum(t.week)}</span>` : '',
+      t.status === 'Blocked' ? `<span class="tag-block">Blocked${t.block_note ? ': ' + esc(t.block_note) : ''}</span>` : '',
+      t.status === 'In Progress' ? '<span class="st st-in-progress">Doing</span>' : '',
+      n ? `<span class="pv-tag">☑ ${d}/${n}</span>` : '',
+      ws && ws.length > 1 && t.week === NEXT ? '<span class="pv-tag">next week</span>' : '',
+      isCopy(t) ? '<span class="pv-tag acs">from ACS</span>' : t.acs_task_id ? '<span class="pv-tag sent">sent to ACS</span>' : '',
+    ].join('');
+  }
+
+  function byProjectHtml(list, ws) {
+    const groups = {};
+    list.forEach(t => { (groups[t.project || 'No project'] = groups[t.project || 'No project'] || []).push(t); });
+    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}">
+      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${isCopy(t) ? ' disabled title="Copied from ACS: change it in ACS"' : ''} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
+      <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}</button>
+      <span class="pv-tags">${tags(t, ws)}</span></div>`;
+    return Object.keys(groups).sort().map(g => `<section class="card"><h3 class="card-title">${esc(g)} <small class="muted">${groups[g].length}</small></h3>
+      ${groups[g].sort((a, b) => rank(a) - rank(b)).map(row).join('')}</section>`).join('');
+  }
+  function boardHtml(list) {
+    return `<div class="board4">${STATUSES.map(([st, lab]) => {
+      const col = list.filter(t => t.status === st).sort((a, b) => rank(a) - rank(b));
+      return `<section class="bcol" data-col="${st}"><h3 class="bcol-head">${lab}<small>${col.length}</small></h3>
+        ${col.map(t => `<button type="button" class="bcard" data-open="${t.id}"${isCopy(t) ? '' : ` draggable="true" data-drag="${t.id}"`}>
+          <span class="bcard-title">${esc(t.title)}</span><span class="bcard-meta"><span class="grow">${esc(t.project || 'No project')}</span>${tags(t)}</span></button>`).join('') || '<p class="muted small bcol-empty">Nothing here</p>'}
+      </section>`;
+    }).join('')}</div>`;
+  }
+  function tableHtml(list) {
+    const keys = { task: t => t.title.toLowerCase(), project: t => (t.project || '').toLowerCase(), week: t => t.week,
+      status: t => STATUSES.findIndex(x => x[0] === t.status), source: t => t.source + (t.acs_task_id ? '1' : '0') };
+    const k = keys[S.sort] ? S.sort : 'status';
+    const rows = list.slice().sort((a, b) => keys[k](a) < keys[k](b) ? -1 : keys[k](a) > keys[k](b) ? 1 : rank(a) - rank(b));
+    const th = (id, l) => `<th><button type="button" class="th-btn${k === id ? ' on' : ''}" data-sort="${id}">${l}${k === id ? ' ↓' : ''}</button></th>`;
+    return `<div class="table-wrap"><table class="ttable"><thead><tr>${th('task', 'Task')}${th('project', 'Project')}${th('week', 'Week')}${th('status', 'Status')}${th('source', 'Where')}</tr></thead>
+      <tbody>${rows.map(t => `<tr class="${t.status === 'Done' ? 'done' : ''}"><td class="tt"><button type="button" class="link-btn" data-open="${t.id}">${esc(t.title)}</button>${t.status === 'Blocked' && t.block_note ? ` <small class="muted">— ${esc(t.block_note)}</small>` : ''}</td>
+        <td>${esc(t.project)}</td><td class="num">${wnum(t.week)}</td><td><span class="st st-${slug(t.status)}">${label(t.status)}</span></td>
+        <td>${isCopy(t) ? 'from ACS' : t.acs_task_id ? 'sent to ACS' : 'private'}</td></tr>`).join('')}</tbody></table></div>`;
+  }
 
   function render() {
     document.body.classList.add('signed-in');
     $('#outBtn').hidden = false;
     const ws = weeksOf(S.week);
-    const list = S.tasks.filter(t => inWeeks(t, ws));
-    const groups = {};
-    list.forEach(t => { (groups[t.project || 'No project'] = groups[t.project || 'No project'] || []).push(t); });
-    const names = Array.from(new Set(S.tasks.map(t => t.project).filter(Boolean).concat(S.acs ? S.acs.projects.filter(p => p.status !== 'Done' && p.status !== 'Canceled').map(p => p.name) : []))).sort();
-    const rank = t => t.status === 'Blocked' ? 0 : t.status === 'Done' ? 2 : 1;
-    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}">
-      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}" aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
-      <span class="pv-title">${esc(t.title)}${t.week !== THIS && t.week < THIS && t.status !== 'Done' ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}</span>
-      ${ws.length > 1 && t.week === NEXT ? '<span class="pv-tag">next week</span>' : ''}
-      ${t.source === 'acs' ? '<span class="pv-tag acs">from ACS</span>' : t.acs_task_id ? '<span class="pv-tag sent">sent to ACS</span>' : S.acs ? `<button type="button" class="ghost small-btn" data-send="${t.id}">Send to ACS</button>` : ''}
-      <button type="button" class="pv-icon" data-del="${t.id}" aria-label="Delete">×</button></div>`;
+    const list = S.tasks.filter(t => inWeeks(t, ws) && searchOk(t));
+    const names = projectNames();
+    const body = !list.length ? `<div class="empty"><h3>No tasks${S.q ? ' match' : ' in these weeks'}</h3><p>Add one above.</p></div>`
+      : S.layout === 'board' ? boardHtml(list) : S.layout === 'table' ? tableHtml(list) : byProjectHtml(list, ws);
     $('#view').innerHTML = `
       <div class="page-title"><h2>Private tasks</h2><span class="pv-lock">Only you</span></div>
+      ${S.details === false ? '<div class="mtg-note warn"><span>Run the updated <b>private-setup.sql</b> once in the private project’s SQL Editor to turn on blocked reasons, notes and sub-steps.</span></div>' : ''}
       <form class="card pv-add" id="addForm">
         <input name="title" placeholder="A private task" autocomplete="off" required>
         <div class="pv-add-row">
@@ -137,23 +189,38 @@
         </div>
       </form>
       <div class="filters">
-        <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)]]
+        <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)], [shiftWeek(THIS, -2), 'Week ' + wnum(shiftWeek(THIS, -2))], [shiftWeek(THIS, -3), 'Week ' + wnum(shiftWeek(THIS, -3))]]
           .map(o => `<option value="${o[0]}"${o[0] === S.week ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
+        <input type="search" class="search f-search" id="pvSearch" placeholder="Search" value="${esc(S.q)}" autocomplete="off">
         ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Update from ACS${S.week === 'now' ? '' : ' (week ' + wnum(S.week) + ')'}</button>` : ''}
+        <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'By project'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>
       </div>
-      ${Object.keys(groups).sort().map(g => `<section class="card"><h3 class="card-title">${esc(g)}</h3>${groups[g].sort((a, b) => rank(a) - rank(b)).map(row).join('')}</section>`).join('')
-        || '<div class="empty"><h3>No private tasks in these weeks</h3><p>Add one above.</p></div>'}
-      <section class="card"><h3 class="card-title">Link to ACS</h3>
+      <div class="plist">${body}</div>
+      <section class="card" style="margin-top:14px"><h3 class="card-title">Link to ACS</h3>
         ${S.acs ? `<p class="small">Linked as <b>${esc(S.acs.me.name)}</b>. Your ACS tasks are copied here (and kept up to date) when you open this page. Nothing goes to ACS unless you press <b>Send to ACS</b> on a task.</p>`
           : `<p class="small muted" style="margin-bottom:8px">Sign in to ACS to copy your ACS tasks here and to send a task there. (If you are signed in to the ACS app in this browser, this happens by itself.)</p>
           <form class="pv-link" id="linkForm"><input name="username" placeholder="ACS username" autocomplete="off" required><input name="password" type="password" placeholder="ACS password" autocomplete="off" required><button class="secondary small-btn" type="submit">Link</button></form>`}
       </section>`;
     bind();
+    if (S.open) renderSheet();
+  }
+
+  /** Save a change to one private task: shown at once, undone if the save fails. */
+  async function save(t, change) {
+    const before = Object.assign({}, t);
+    Object.assign(t, change); render();
+    const saved = await run(async () => check(await P.from('private_tasks').update(change).eq('id', t.id).select().single()));
+    Object.assign(t, saved || before); render();
   }
 
   function bind() {
     $$('[data-aw]').forEach(b => b.onclick = () => { S.addWeek = b.dataset.aw; keepAdd(render); });
     $('#pvWeek').onchange = e => { S.week = e.target.value; render(); };
+    const q = $('#pvSearch');
+    q.oninput = () => { S.q = q.value; const p = q.selectionStart; render(); const q2 = $('#pvSearch'); q2.focus(); q2.setSelectionRange(p, p); };
+    $$('[data-layout]').forEach(b => b.onclick = () => { S.layout = b.dataset.layout; try { localStorage.setItem('pv-layout', S.layout); } catch (e) { /* blocked */ } render(); });
+    $$('[data-sort]').forEach(b => b.onclick = () => { S.sort = b.dataset.sort; render(); });
+    $$('[data-open]').forEach(b => b.onclick = () => { S.open = b.dataset.open; renderSheet(); });
     $('#addForm').onsubmit = async e => {
       e.preventDefault();
       const f = e.target;
@@ -167,17 +234,21 @@
       $('#addForm').elements.project.value = project;   // the next task often goes to the same project
       $('#addForm').elements.title.focus();
     };
-    $$('[data-done]').forEach(b => b.onclick = async () => {
+    $$('[data-done]').forEach(b => b.onclick = () => {
       const t = S.tasks.find(x => x.id === b.dataset.done);
-      const change = t.status === 'Done' ? { status: 'To Do' } : { status: 'Done', week: t.week < THIS ? THIS : t.week };
-      const saved = await run(async () => check(await P.from('private_tasks').update(change).eq('id', t.id).select().single()));
-      if (saved) { Object.assign(t, saved); render(); }
+      save(t, t.status === 'Done' ? { status: 'To Do' } : { status: 'Done', week: t.week < THIS ? THIS : t.week });
     });
-    $$('[data-del]').forEach(b => b.onclick = async () => {
-      if (!confirm('Delete this private task?')) return;
-      if (await run(async () => check(await P.from('private_tasks').delete().eq('id', b.dataset.del)))) { S.tasks = S.tasks.filter(t => t.id !== b.dataset.del); render(); }
+    // Board: drag a private task to another column
+    $$('[data-drag]').forEach(c => { c.ondragstart = e => e.dataTransfer.setData('text/plain', c.dataset.drag); });
+    $$('.bcol').forEach(col => {
+      col.ondragover = e => { e.preventDefault(); col.classList.add('drop'); };
+      col.ondragleave = () => col.classList.remove('drop');
+      col.ondrop = e => {
+        e.preventDefault(); col.classList.remove('drop');
+        const t = S.tasks.find(x => x.id === e.dataTransfer.getData('text/plain'));
+        if (t && !isCopy(t) && t.status !== col.dataset.col) save(t, Object.assign({ status: col.dataset.col }, t.week < THIS ? { week: THIS } : {}));
+      };
     });
-    $$('[data-send]').forEach(b => b.onclick = () => sendDialog(S.tasks.find(t => t.id === b.dataset.send)));
     const pull = $('#pullBtn');
     if (pull) pull.onclick = () => run(() => pullAcs(S.week === 'now' ? null : [S.week])).then(render);
     const link = $('#linkForm');
@@ -198,6 +269,79 @@
     if (v) { const g = $('#addForm'); g.elements.title.value = v.t; g.elements.project.value = v.p; }
   }
 
+  /**
+   * One task, in a sheet: status (blocked with a reason), title, notes, sub-steps, week, project,
+   * Send to ACS and Delete. A copy from ACS is shown read-only: it is changed in ACS.
+   */
+  function renderSheet() {
+    const dlg = $('#dialog');
+    const t = S.tasks.find(x => x.id === S.open);
+    if (!t) { S.open = null; if (dlg.open) dlg.close(); return; }
+    const ro = isCopy(t), det = S.details !== false;
+    const scroll = dlg.open && $('.sheet-body', dlg) ? $('.sheet-body', dlg).scrollTop : 0;
+    // Keep what is being typed when a save redraws the sheet: the new sub-step, and the box in use.
+    const typed = {};
+    if (dlg.open) {
+      const ns = $('#pvNewSub', dlg); if (ns && ns.value) typed.pvNewSub = ns.value;
+      const fx = document.activeElement;
+      if (fx && dlg.contains(fx) && fx.id && /INPUT|TEXTAREA/.test(fx.tagName)) { typed[fx.id] = fx.value; typed.focus = fx.id; }
+    }
+    dlg.innerHTML = `<div class="sheet pv-sheet"><header class="sheet-head"><span></span><h3>${ro ? 'From ACS' : 'Private task'} · week ${wnum(t.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+      <div class="sheet-body">
+        ${ro ? `<p class="mtg-note"><span>Copied from ACS. Change it in the ACS app; this copy follows it.</span><a class="text-btn" href="../#/my">Open ACS</a></p>
+          <h3 class="pv-sheet-title">${esc(t.title)}</h3>
+          <p class="small"><span class="st st-${slug(t.status)}">${label(t.status)}</span> ${esc(t.project)}</p>
+          ${t.status === 'Blocked' ? `<p class="small tag-block-note">Blocked: ${esc(t.block_note || 'no reason given')}</p>` : ''}
+          ${subs(t).length ? `<ul class="plain subs-ro">${subs(t).map(x => `<li class="${x.done ? 'done' : ''}">${x.done ? '✔' : '○'} ${esc(x.t)}</li>`).join('')}</ul>` : ''}`
+        : `<label class="field">Task<textarea id="pvTitle" rows="2" maxlength="300">${esc(t.title)}</textarea></label>
+          <p class="qa-label">Status</p>
+          <div class="seg pv-status">${STATUSES.map(([st, lab]) => `<button type="button" data-st="${st}" class="${t.status === st ? 'on' : ''}">${lab}</button>`).join('')}</div>
+          ${t.status === 'Blocked' && det ? `<div class="block-box"><p class="small"><strong>What is blocking it?</strong></p>
+            <div class="chips">${REASONS.map(r => `<button type="button" class="chip${t.block_note === r ? ' on' : ''}" data-reason="${esc(r)}">${esc(r)}</button>`).join('')}</div>
+            <input id="pvBlock" placeholder="Or type the reason" value="${esc(t.block_note || '')}"></div>` : ''}
+          <p class="qa-label">Week</p>
+          <div class="seg">${[THIS, NEXT].map(w => `<button type="button" data-wk="${w}" class="${t.week === w ? 'on' : ''}">${w === THIS ? 'This week' : 'Next week'} · ${wnum(w)}</button>`).join('')}</div>
+          <label class="field" style="margin-top:12px">Project or topic<input id="pvProject" list="pvProjects2" value="${esc(t.project)}" autocomplete="off"><datalist id="pvProjects2">${projectNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+          ${det ? `<p class="qa-label">Sub-steps</p>
+          <div class="subs">${subs(t).map((x, i) => `<label class="sub"><input type="checkbox" data-sub="${i}"${x.done ? ' checked' : ''}><span class="${x.done ? 'done' : ''}">${esc(x.t)}</span><button type="button" data-subdel="${i}" aria-label="Remove sub-step">×</button></label>`).join('')}
+            <div class="inline"><input id="pvNewSub" placeholder="Add a sub-step" autocomplete="off"><button type="button" class="secondary" id="pvAddSub">Add</button></div></div>
+          <label class="field" style="margin-top:12px">Notes<textarea id="pvNotes" rows="3" placeholder="Details, links, who to talk to…">${esc(t.notes || '')}</textarea></label>` : ''}
+          <div class="actions-row" style="margin-top:14px">${t.acs_task_id ? '<span class="pv-tag sent">sent to ACS</span>' : S.acs ? '<button type="button" class="secondary small-btn" id="pvSend">Send to ACS</button>' : ''}
+            <button type="button" class="ghost danger-text small-btn" id="pvDelete">Delete task</button></div>`}
+      </div></div>`;
+    $('[data-close]', dlg).onclick = () => dlg.close();
+    dlg.onclose = () => { S.open = null; };
+    if (!ro) {
+      const title = $('#pvTitle', dlg);
+      title.onchange = () => { const v = title.value.replace(/\s+/g, ' ').trim(); if (v && v !== t.title) save(t, { title: v }); else title.value = t.title; };
+      $$('[data-st]', dlg).forEach(b => b.onclick = () => save(t, Object.assign({ status: b.dataset.st }, t.week < THIS ? { week: THIS } : {})));
+      $$('[data-reason]', dlg).forEach(b => b.onclick = () => save(t, { block_note: b.dataset.reason }));
+      const bn = $('#pvBlock', dlg); if (bn) bn.onchange = () => save(t, { block_note: bn.value.trim() });
+      $$('[data-wk]', dlg).forEach(b => b.onclick = () => save(t, { week: b.dataset.wk }));
+      const pr = $('#pvProject', dlg); pr.onchange = () => save(t, { project: pr.value.trim() });
+      const notes = $('#pvNotes', dlg); if (notes) notes.onchange = () => save(t, { notes: notes.value });
+      $$('[data-sub]', dlg).forEach(c => c.onchange = () => save(t, { subtasks: subs(t).map((x, i) => i === Number(c.dataset.sub) ? { t: x.t, done: c.checked } : x) }));
+      $$('[data-subdel]', dlg).forEach(b => b.onclick = () => save(t, { subtasks: subs(t).filter((x, i) => i !== Number(b.dataset.subdel)) }));
+      const addSub = () => {
+        const i = $('#pvNewSub', dlg); const v = i.value.trim(); if (!v) return;
+        i.value = '';
+        save(t, { subtasks: subs(t).concat({ t: v, done: false }) }).then(() => { const n = $('#pvNewSub'); if (n) n.focus(); });
+      };
+      const as = $('#pvAddSub', dlg); if (as) { as.onclick = addSub; $('#pvNewSub', dlg).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addSub(); } }; }
+      const send = $('#pvSend', dlg); if (send) send.onclick = () => { dlg.close(); sendDialog(t); };
+      $('#pvDelete', dlg).onclick = async () => {
+        if (!confirm('Delete this private task?')) return;
+        if (await run(async () => { check(await P.from('private_tasks').delete().eq('id', t.id)); return true; })) {
+          S.tasks = S.tasks.filter(x => x.id !== t.id); dlg.close(); render();
+        }
+      };
+    }
+    if (!dlg.open) dlg.showModal();
+    const sb = $('.sheet-body', dlg); if (sb) sb.scrollTop = scroll;
+    Object.keys(typed).forEach(id => { const el = id !== 'focus' && $('#' + id, dlg); if (el) el.value = typed[id]; });
+    if (typed.focus && $('#' + typed.focus, dlg)) $('#' + typed.focus, dlg).focus();
+  }
+
   /** Send one private task to ACS, on an ACS project you pick. It becomes a normal ACS task of yours. */
   function sendDialog(t) {
     const dlg = $('#dialog');
@@ -214,8 +358,9 @@
       const pid = e.target.elements.project.value;
       if (!pid) return;
       const ok = await run(async () => {
-        const acsTask = check(await A.from('tasks').insert({ project_id: pid, week: t.week < THIS ? THIS : t.week, title: t.title,
-          status: t.status === 'Done' ? 'Done' : 'To Do', assignee_ids: [S.acs.me.id], team: S.acs.me.team || null }).select('id').single());
+        const acsTask = check(await A.from('tasks').insert(Object.assign({ project_id: pid, week: t.week < THIS ? THIS : t.week, title: t.title,
+          status: t.status, assignee_ids: [S.acs.me.id], team: S.acs.me.team || null },
+          S.details ? { block_note: t.block_note || '', subtasks: subs(t), notes: t.notes || '' } : {})).select('id').single());
         Object.assign(t, check(await P.from('private_tasks').update({ acs_task_id: acsTask.id }).eq('id', t.id).select().single()));
         return true;
       });

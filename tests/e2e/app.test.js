@@ -360,10 +360,39 @@ async function privateTracker(browser, url) {
   await page.waitForSelector('.pv-row >> text=Private: plan the team restructure');
   let d = await db(page);
   ok(d.private_tasks.some(t => t.title === 'Private: plan the team restructure') && !d.tasks.some(t => /restructure/.test(t.title)), 'a private task stays private (not in ACS)');
+  // Details: status, blocked with a reason, sub-steps, notes
+  await page.click('[data-open]:has-text("Private: plan the team restructure")');
+  await page.waitForSelector('.pv-sheet');
+  await page.click('.pv-sheet [data-st="Blocked"]');
+  await page.waitForSelector('.pv-sheet [data-reason]');
+  await page.click('.pv-sheet [data-reason="Approval"]');
+  await page.fill('#pvNewSub', 'Draft the new structure');
+  await page.click('#pvAddSub');
+  await page.waitForSelector('.pv-sheet .sub >> text=Draft the new structure');
+  await page.fill('#pvNotes', 'Talk to HR first');
+  await page.click('.pv-sheet h3');   // leave the box: the note saves
+  await sleep(300);
+  const pt = (await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure');
+  ok(pt.status === 'Blocked' && pt.block_note === 'Approval' && pt.subtasks.length === 1 && pt.notes === 'Talk to HR first', 'private task details: blocked with a reason, a sub-step, notes');
+  await page.click('.pv-sheet [data-close]');
+  ok(await page.isVisible('.pv-row:has-text("Private: plan the team restructure") .tag-block >> text=Approval'), 'the list shows it is blocked, and why');
+  // Views: board (drag) and table (sort)
+  await page.click('[data-layout="board"]');
+  await page.waitForSelector('.board4');
+  await page.dragAndDrop('.bcard:has-text("Private: plan the team restructure")', '.bcol[data-col="In Progress"]');
+  await sleep(400);
+  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').status === 'In Progress', 'Board: drag a private task to Doing');
+  ok(await page.locator(`.bcard[draggable]:has-text("${T1}")`).count() === 0, 'Board: copies from ACS cannot be dragged (they follow ACS)');
+  await page.click('[data-layout="table"]');
+  await page.waitForSelector('.ttable');
+  await page.click('[data-sort="task"]');
+  ok(await page.isVisible('.th-btn.on >> text=Task'), 'Table: sort by a column');
+  await page.click('[data-layout="project"]');
   await page.fill('#addForm input[name=title]', 'Prepare the client presentation');
   await page.click('#addForm button[type=submit]');
   await page.waitForSelector('.pv-row >> text=Prepare the client presentation');
-  await page.click('.pv-row:has-text("Prepare the client presentation") [data-send]');
+  await page.click('[data-open]:has-text("Prepare the client presentation")');
+  await page.click('#pvSend');
   await page.selectOption('#sendForm select[name=project]', 'PRJ-0001');
   await page.click('#sendForm button[type=submit]');
   await page.waitForSelector('.pv-row:has-text("Prepare the client presentation") .pv-tag.sent');
@@ -388,7 +417,7 @@ async function privateTracker(browser, url) {
   const browser = await launch();
   try {
     for (const t of [myTasks, employee, teamPage, noUpdate, manage, sidePanel, phone, weekRollover, privateTracker]) {
-      try { await t(browser, url); } catch (e) { ok(false, t.name + ' crashed: ' + e.message.split('\n')[0]); }
+      try { await t(browser, url); } catch (e) { ok(false, t.name + ' crashed: ' + e.message.split('\n').slice(0, 4).join(' | ')); }
     }
   } finally {
     await browser.close();
