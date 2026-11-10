@@ -274,6 +274,15 @@
    * Send to ACS and Delete. A copy from ACS is shown read-only: it is changed in ACS.
    */
   function renderSheet() {
+    // A box losing focus while the sheet is redrawn fires its save, which redraws again: do that after.
+    if (renderSheet.busy) { renderSheet.again = true; return; }
+    renderSheet.busy = true;
+    try { drawSheet(); } finally {
+      renderSheet.busy = false;
+      if (renderSheet.again) { renderSheet.again = false; setTimeout(renderSheet, 0); }
+    }
+  }
+  function drawSheet() {
     const dlg = $('#dialog');
     const t = S.tasks.find(x => x.id === S.open);
     if (!t) { S.open = null; if (dlg.open) dlg.close(); return; }
@@ -313,13 +322,13 @@
     dlg.onclose = () => { S.open = null; };
     if (!ro) {
       const title = $('#pvTitle', dlg);
-      title.onchange = () => { const v = title.value.replace(/\s+/g, ' ').trim(); if (v && v !== t.title) save(t, { title: v }); else title.value = t.title; };
+      title.onchange = () => setTimeout(() => { const v = title.value.replace(/\s+/g, ' ').trim(); if (v && v !== t.title) save(t, { title: v }); else title.value = t.title; }, 0);
       $$('[data-st]', dlg).forEach(b => b.onclick = () => save(t, Object.assign({ status: b.dataset.st }, t.week < THIS ? { week: THIS } : {})));
       $$('[data-reason]', dlg).forEach(b => b.onclick = () => save(t, { block_note: b.dataset.reason }));
-      const bn = $('#pvBlock', dlg); if (bn) bn.onchange = () => save(t, { block_note: bn.value.trim() });
+      const bn = $('#pvBlock', dlg); if (bn) bn.onchange = () => { const v = bn.value.trim(); setTimeout(() => save(t, { block_note: v }), 0); };
       $$('[data-wk]', dlg).forEach(b => b.onclick = () => save(t, { week: b.dataset.wk }));
-      const pr = $('#pvProject', dlg); pr.onchange = () => save(t, { project: pr.value.trim() });
-      const notes = $('#pvNotes', dlg); if (notes) notes.onchange = () => save(t, { notes: notes.value });
+      const pr = $('#pvProject', dlg); pr.onchange = () => { const v = pr.value.trim(); setTimeout(() => save(t, { project: v }), 0); };
+      const notes = $('#pvNotes', dlg); if (notes) notes.onchange = () => { const v = notes.value; setTimeout(() => save(t, { notes: v }), 0); };
       $$('[data-sub]', dlg).forEach(c => c.onchange = () => save(t, { subtasks: subs(t).map((x, i) => i === Number(c.dataset.sub) ? { t: x.t, done: c.checked } : x) }));
       $$('[data-subdel]', dlg).forEach(b => b.onclick = () => save(t, { subtasks: subs(t).filter((x, i) => i !== Number(b.dataset.subdel)) }));
       const addSub = () => {
