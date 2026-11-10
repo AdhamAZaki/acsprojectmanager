@@ -16,6 +16,8 @@ select set_config('request.jwt.claim.sub', '11111111-1111-4111-8111-111111111111
 set role authenticated;
 insert into public.private_tasks (week, project, title) values ('2026-W46', 'Board', 'private plan');
 select pg_temp.ok((select count(*) from public.private_tasks) = 1, 'private tracker: the owner adds and reads a private task');
+update public.private_tasks set status = 'Blocked', block_note = 'Approval', subtasks = '[{"t": "step", "done": false}]' where title = 'private plan';
+select pg_temp.ok((select block_note = 'Approval' and jsonb_array_length(subtasks) = 1 from public.private_tasks), 'private tracker: blocked reason and sub-steps are saved');
 reset role;
 
 -- Someone signed in with a different (forged) id sees and changes nothing
