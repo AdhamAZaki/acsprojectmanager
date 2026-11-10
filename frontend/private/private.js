@@ -31,15 +31,14 @@
   const THIS = isoWeek(new Date()), NEXT = shiftWeek(THIS, 1), LAST = shiftWeek(THIS, -1);
 
   // ---------- State ----------
-  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, q: '', layout: 'project', sort: 'status', group: 'project', order: 'status', open: null, details: undefined };
+  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, q: '', layout: 'project', sort: 'status', group: 'project', col: 'status', order: 'status', fStatus: 'all', fProject: 'all', fSource: 'all', open: null, details: undefined };
   try {
     S.layout = ['board', 'table'].indexOf(localStorage.getItem('pv-layout')) !== -1 ? localStorage.getItem('pv-layout') : 'project';
     const v = JSON.parse(localStorage.getItem('pv-view') || '{}');
-    if (['project', 'status', 'created', 'modified', 'none'].indexOf(v.group) !== -1) S.group = v.group;
-    if (['status', 'new', 'old', 'modified'].indexOf(v.order) !== -1) S.order = v.order;
+    ['group', 'col', 'order', 'fStatus', 'fSource'].forEach(k => { if (typeof v[k] === 'string') S[k] = v[k]; });
   } catch (e) { /* blocked */ }
   /** Group and sort are remembered on this device. */
-  const remember = () => { try { localStorage.setItem('pv-view', JSON.stringify({ group: S.group, order: S.order })); } catch (e) { /* blocked */ } };
+  const remember = () => { try { localStorage.setItem('pv-view', JSON.stringify({ group: S.group, col: S.col, order: S.order, fStatus: S.fStatus, fSource: S.fSource })); } catch (e) { /* blocked */ } };
   let P = null, A = null;   // private and ACS Supabase clients
 
   function toast(msg, isError) {
@@ -136,11 +135,13 @@
     return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: y === new Date().getFullYear() ? undefined : 'numeric' });
   }
   const when = v => v ? new Date(v).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
-  const ORDERS = [['status', 'Status'], ['new', 'Newest first'], ['old', 'Oldest first'], ['modified', 'Recently changed']];
+  const ORDERS = [['status', 'Status'], ['new', 'Newest first'], ['old', 'Oldest first'], ['modified', 'Recently changed'], ['title', 'Title A–Z'], ['project', 'Project'], ['week', 'Week']];
   /** The chosen order inside a group or board column. */
   function ordered(list) {
     const by = { status: (a, b) => rank(a) - rank(b), new: (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
-      old: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''), modified: (a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') };
+      old: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''), modified: (a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''),
+      title: (a, b) => a.title.localeCompare(b.title), project: (a, b) => (a.project || '~').localeCompare(b.project || '~') || rank(a) - rank(b),
+      week: (a, b) => shownWeek(a).localeCompare(shownWeek(b)) || rank(a) - rank(b) };
     return list.slice().sort(by[S.order] || by.status);
   }
   const isCopy = t => t.source === 'acs';   // copied from ACS: ACS is the source, change it there
@@ -161,32 +162,114 @@
     ].join('');
   }
 
-  const GROUPS = [['project', 'Project'], ['status', 'Status'], ['created', 'Day created'], ['modified', 'Day last changed'], ['none', 'No grouping']];
-  /** The list: grouped by project, status, day created or day last changed; sorted inside each group. */
-  function listHtml(list, ws) {
-    const g = S.group;
-    const keyOf = t => g === 'status' ? t.status : g === 'created' ? dayKey(t.created_at) : g === 'modified' ? dayKey(t.updated_at) : g === 'none' ? '' : (t.project || 'No project');
-    const groups = {};
-    list.forEach(t => { const k = keyOf(t); (groups[k] = groups[k] || []).push(t); });
-    const keys = Object.keys(groups).sort((x, y) => g === 'status' ? STATUSES.findIndex(s2 => s2[0] === x) - STATUSES.findIndex(s2 => s2[0] === y)
-      : g === 'created' || g === 'modified' ? y.localeCompare(x) : x.localeCompare(y));
-    const title = k => g === 'status' ? label(k) : g === 'created' || g === 'modified' ? dayLabel(k) : g === 'none' ? 'All tasks' : k;
-    const stamp = t => g === 'created' ? 'created ' + when(t.created_at) : g === 'modified' || S.order === 'modified' ? 'changed ' + when(t.updated_at) : S.order === 'new' || S.order === 'old' ? 'created ' + when(t.created_at) : '';
-    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}">
-      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${isCopy(t) ? ' disabled title="Copied from ACS: change it in ACS"' : ''} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
-      <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}${g !== 'project' && t.project ? ` <small class="muted">· ${esc(t.project)}</small>` : ''}</button>
-      <span class="pv-tags">${tags(t, ws)}${stamp(t) ? `<small class="muted pv-when">${stamp(t)}</small>` : ''}</span></div>`;
-    return keys.map(k => `<section class="card"><h3 class="card-title">${esc(title(k))} <small class="muted">${groups[k].length}</small></h3>
-      ${ordered(groups[k]).map(row).join('')}</section>`).join('');
+  /** The week a task is in now: an unfinished task from an earlier week is still open this week. */
+  const shownWeek = t => t.week < THIS && t.status !== 'Done' ? THIS : t.week;
+  const whereOf = t => isCopy(t) ? 'acs' : t.acs_task_id ? 'sent' : 'private';
+  const WHERE = { private: 'Private', acs: 'From ACS', sent: 'Sent to ACS' };
+  /**
+   * What a list can be grouped by and a board split into columns by. `set` turns a group into the
+   * change made when a task is dragged into it (no `set`: that grouping is for looking only).
+   */
+  const FIELDS = {
+    status: { label: 'Status', key: t => t.status, keys: () => STATUSES.map(x => x[0]), title: label,
+      set: (k, t) => Object.assign({ status: k }, t.week < THIS ? { week: THIS } : {}) },
+    project: { label: 'Project', key: t => t.project || '', title: k => k || 'No project', set: k => ({ project: k }) },
+    week: { label: 'Week', key: shownWeek, keys: () => [THIS, NEXT],
+      title: k => 'Week ' + wnum(k) + (k === THIS ? ' · this week' : k === NEXT ? ' · next week' : k === LAST ? ' · last week' : ''), set: k => ({ week: k }) },
+    where: { label: 'Where', key: whereOf, keys: () => ['private', 'acs', 'sent'], title: k => WHERE[k] },
+    created: { label: 'Day created', key: t => dayKey(t.created_at), title: dayLabel, desc: true },
+    modified: { label: 'Day last changed', key: t => dayKey(t.updated_at), title: dayLabel, desc: true },
+    none: { label: 'No grouping', key: () => '', title: () => 'All tasks' },
+  };
+  /** Groups of tasks for a field, in order; the field's fixed groups (e.g. all statuses) even when empty. */
+  function groupsOf(list, f, withEmpty) {
+    const g = {};
+    if (withEmpty && f.keys) f.keys().forEach(k => { g[k] = []; });
+    list.forEach(t => { const k = f.key(t); (g[k] = g[k] || []).push(t); });
+    const fixed = f.keys ? f.keys() : [];
+    return Object.keys(g).sort((x, y) => {
+      const ix = fixed.indexOf(x), iy = fixed.indexOf(y);
+      if (ix !== -1 || iy !== -1) return (ix === -1 ? 99 : ix) - (iy === -1 ? 99 : iy) || x.localeCompare(y);
+      if (x === '' || y === '') return (x === '') - (y === '');   // "No project" last
+      return f.desc ? y.localeCompare(x) : x.localeCompare(y);
+    }).map(k => ({ key: k, title: f.title(k), tasks: ordered(g[k]) }));
   }
+  const grip = t => isCopy(t) ? '<span class="pv-grip off" title="Copied from ACS: change it in ACS">⋮⋮</span>' : '<span class="pv-grip" title="Drag to move">⋮⋮</span>';
+  const canDrop = f => !!f.set;
+
+  /** The list: grouped by any field, sorted inside each group; drag a row to another group to move it. */
+  function listHtml(list, ws) {
+    const fid = S.group, f = FIELDS[fid] || FIELDS.project;
+    const stamp = t => fid === 'created' || S.order === 'new' || S.order === 'old' ? 'created ' + when(t.created_at) : fid === 'modified' || S.order === 'modified' ? 'changed ' + when(t.updated_at) : '';
+    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}"${isCopy(t) ? '' : ` data-drag="${t.id}"`}>
+      ${grip(t)}
+      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${isCopy(t) ? ' disabled title="Copied from ACS: change it in ACS"' : ''} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
+      <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}${fid !== 'project' && t.project ? ` <small class="muted">· ${esc(t.project)}</small>` : ''}</button>
+      <span class="pv-tags">${tags(t, ws)}${stamp(t) ? `<small class="muted pv-when">${stamp(t)}</small>` : ''}</span></div>`;
+    return groupsOf(list, f, canDrop(f)).map(g => `<section class="card pv-group"${canDrop(f) ? ` data-drop="${fid}|${esc(g.key)}"` : ''}>
+      <h3 class="card-title">${esc(g.title)} <small class="muted">${g.tasks.length}</small></h3>
+      ${g.tasks.map(row).join('') || '<p class="muted small pv-empty">Drop a task here</p>'}</section>`).join('');
+  }
+  /** The board: one column per status, project, week, place or day; drag a card to another column. */
   function boardHtml(list) {
-    return `<div class="board4">${STATUSES.map(([st, lab]) => {
-      const col = ordered(list.filter(t => t.status === st));
-      return `<section class="bcol" data-col="${st}"><h3 class="bcol-head">${lab}<small>${col.length}</small></h3>
-        ${col.map(t => `<button type="button" class="bcard" data-open="${t.id}"${isCopy(t) ? '' : ` draggable="true" data-drag="${t.id}"`}>
-          <span class="bcard-title">${esc(t.title)}</span><span class="bcard-meta"><span class="grow">${esc(t.project || 'No project')}</span>${tags(t)}</span></button>`).join('') || '<p class="muted small bcol-empty">Nothing here</p>'}
-      </section>`;
-    }).join('')}</div>`;
+    const fid = S.col, f = FIELDS[fid] && fid !== 'none' ? FIELDS[fid] : FIELDS.status;
+    return `<div class="board4 pv-board">${groupsOf(list, f, true).map(g => `<section class="bcol" data-col="${esc(g.key)}"${canDrop(f) ? ` data-drop="${fid}|${esc(g.key)}"` : ''}>
+        <h3 class="bcol-head">${esc(g.title)}<small>${g.tasks.length}</small></h3>
+        ${g.tasks.map(t => `<button type="button" class="bcard" data-open="${t.id}"${isCopy(t) || !canDrop(f) ? '' : ` data-drag="${t.id}"`}>
+          <span class="bcard-title">${canDrop(f) ? grip(t) : ''}${esc(t.title)}</span><span class="bcard-meta"><span class="grow">${fid === 'project' ? '' : esc(t.project || 'No project')}</span>${tags(t)}</span></button>`).join('') || `<p class="muted small bcol-empty">${canDrop(f) ? 'Drop a task here' : 'Nothing here'}</p>`}
+      </section>`).join('')}</div>`;
+  }
+
+  /**
+   * Drag and drop with a mouse or a finger: hold a task (on a phone: its ⋮⋮ handle), move it over
+   * a group or column, let go. The task gets that group's status, project or week.
+   */
+  function enableDrag(root) {
+    $$('[data-drag]', root).forEach(el => {
+      el.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || e.target.closest('.pv-check')) return;
+        const onGrip = !!e.target.closest('.pv-grip');
+        if (e.pointerType !== 'mouse' && !onGrip) return;   // touch: only the handle drags, so the page still scrolls
+        const id = el.dataset.drag, x0 = e.clientX, y0 = e.clientY;
+        let ghost = null, over = null;
+        const move = ev => {
+          if (!ghost) {
+            if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+            ghost = el.cloneNode(true); ghost.classList.add('pv-ghost'); ghost.style.width = el.offsetWidth + 'px';
+            document.body.appendChild(ghost); el.classList.add('dragging'); document.body.classList.add('pv-dragging');
+          }
+          ev.preventDefault();
+          ghost.style.transform = 'translate(' + (ev.clientX - 24) + 'px,' + (ev.clientY - 18) + 'px)';
+          ghost.style.display = 'none';
+          const under = document.elementFromPoint(ev.clientX, ev.clientY);
+          ghost.style.display = '';
+          const tgt = under && under.closest('[data-drop]');
+          if (tgt !== over) { if (over) over.classList.remove('drop'); over = tgt; if (over) over.classList.add('drop'); }
+          // Scroll near the edges
+          if (ev.clientY < 70) window.scrollBy(0, -14); else if (ev.clientY > window.innerHeight - 70) window.scrollBy(0, 14);
+          const board = under && under.closest('.pv-board');
+          if (board) { const r = board.getBoundingClientRect(); if (ev.clientX < r.left + 50) board.scrollLeft -= 16; else if (ev.clientX > r.right - 50) board.scrollLeft += 16; }
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          if (!ghost) return;
+          ghost.remove(); el.classList.remove('dragging'); document.body.classList.remove('pv-dragging');
+          if (over) over.classList.remove('drop');
+          S.dragged = Date.now();   // the click that ends a drag does not open the task
+          if (over) dropOn(id, over.dataset.drop);
+        };
+        window.addEventListener('pointermove', move, { passive: false });
+        window.addEventListener('pointerup', up, { once: true });
+      });
+    });
+  }
+  function dropOn(id, target) {
+    const t = S.tasks.find(x => x.id === id);
+    const [fid, key] = [target.slice(0, target.indexOf('|')), target.slice(target.indexOf('|') + 1)];
+    const f = FIELDS[fid];
+    if (!t || isCopy(t) || !f || !f.set || f.key(t) === key) return;
+    save(t, f.set(key, t));
+    toast('Moved to ' + f.title(key));
   }
   function tableHtml(list) {
     const keys = { task: t => t.title.toLowerCase(), project: t => (t.project || '').toLowerCase(), week: t => t.week,
@@ -207,9 +290,14 @@
     document.body.classList.add('signed-in');
     $('#outBtn').hidden = false;
     const ws = weeksOf(S.week);
-    const list = S.tasks.filter(t => inWeeks(t, ws) && searchOk(t));
+    const statusOk = t => S.fStatus === 'all' || (S.fStatus === 'open' ? t.status !== 'Done' : t.status === S.fStatus);
+    const list = S.tasks.filter(t => inWeeks(t, ws) && searchOk(t) && statusOk(t) &&
+      (S.fProject === 'all' || (t.project || '') === S.fProject) && (S.fSource === 'all' || whereOf(t) === S.fSource));
+    const filtered = S.fStatus !== 'all' || S.fProject !== 'all' || S.fSource !== 'all';
+    const sel = (id, lab, value, opts, def) => `<label class="f${value !== def ? ' set' : ''}"><span>${lab}</span><select id="${id}">${opts.map(o => `<option value="${esc(o[0])}"${o[0] === value ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select></label>`;
+    const fieldOpts = noNone => Object.keys(FIELDS).filter(k => !(noNone && k === 'none')).map(k => [k, FIELDS[k].label]);
     const names = projectNames();
-    const body = !list.length ? `<div class="empty"><h3>No tasks${S.q ? ' match' : ' in these weeks'}</h3><p>Add one above.</p></div>`
+    const body = !list.length ? `<div class="empty"><h3>No tasks${S.q || filtered ? ' match' : ' in these weeks'}</h3><p>${filtered ? 'Change the filters, or add one above.' : 'Add one above.'}</p></div>`
       : S.layout === 'board' ? boardHtml(list) : S.layout === 'table' ? tableHtml(list) : listHtml(list, ws);
     $('#view').innerHTML = `
       <div class="page-title"><h2>Private tasks</h2><span class="pv-lock">Only you</span></div>
@@ -227,8 +315,13 @@
         <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)], [shiftWeek(THIS, -2), 'Week ' + wnum(shiftWeek(THIS, -2))], [shiftWeek(THIS, -3), 'Week ' + wnum(shiftWeek(THIS, -3))]]
           .map(o => `<option value="${o[0]}"${o[0] === S.week ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
         <input type="search" class="search f-search" id="pvSearch" placeholder="Search" value="${esc(S.q)}" autocomplete="off">
-        ${S.layout === 'project' ? `<label class="f${S.group !== 'project' ? ' set' : ''}"><span>Group</span><select id="pvGroup">${GROUPS.map(o => `<option value="${o[0]}"${o[0] === S.group ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>` : ''}
-        ${S.layout !== 'table' ? `<label class="f${S.order !== 'status' ? ' set' : ''}"><span>Sort</span><select id="pvOrder">${ORDERS.map(o => `<option value="${o[0]}"${o[0] === S.order ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>` : ''}
+        ${S.layout === 'project' ? sel('pvGroup', 'Group', S.group, fieldOpts(false), 'project') : ''}
+        ${S.layout === 'board' ? sel('pvCol', 'Columns', S.col, fieldOpts(true), 'status') : ''}
+        ${S.layout !== 'table' ? sel('pvOrder', 'Sort', S.order, ORDERS, 'status') : ''}
+        ${sel('pvFStatus', 'Status', S.fStatus, [['all', 'Any']].concat([['open', 'Open (not done)']], STATUSES), 'all')}
+        ${sel('pvFProject', 'Project', S.fProject, [['all', 'Any']].concat(Array.from(new Set(S.tasks.map(t => t.project || ''))).sort().map(p => [p, p || 'No project'])), 'all')}
+        ${sel('pvFSource', 'Where', S.fSource, [['all', 'Anywhere']].concat(Object.keys(WHERE).map(k => [k, WHERE[k]])), 'all')}
+        ${filtered ? '<button type="button" class="text-btn" id="pvClear">Clear filters</button>' : ''}
         ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Update from ACS${S.week === 'now' ? '' : ' (week ' + wnum(S.week) + ')'}</button>` : ''}
         <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'List'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>
       </div>
@@ -253,13 +346,15 @@
   function bind() {
     $$('[data-aw]').forEach(b => b.onclick = () => { S.addWeek = b.dataset.aw; keepAdd(render); });
     $('#pvWeek').onchange = e => { S.week = e.target.value; render(); };
-    const pg = $('#pvGroup'); if (pg) pg.onchange = () => { S.group = pg.value; remember(); render(); };
-    const po = $('#pvOrder'); if (po) po.onchange = () => { S.order = po.value; remember(); render(); };
+    [['pvGroup', 'group'], ['pvCol', 'col'], ['pvOrder', 'order'], ['pvFStatus', 'fStatus'], ['pvFProject', 'fProject'], ['pvFSource', 'fSource']].forEach(([id, k]) => {
+      const el = $('#' + id); if (el) el.onchange = () => { S[k] = el.value; remember(); render(); };
+    });
+    const clr = $('#pvClear'); if (clr) clr.onclick = () => { S.fStatus = 'all'; S.fProject = 'all'; S.fSource = 'all'; remember(); render(); };
     const q = $('#pvSearch');
     q.oninput = () => { S.q = q.value; const p = q.selectionStart; render(); const q2 = $('#pvSearch'); q2.focus(); q2.setSelectionRange(p, p); };
     $$('[data-layout]').forEach(b => b.onclick = () => { S.layout = b.dataset.layout; try { localStorage.setItem('pv-layout', S.layout); } catch (e) { /* blocked */ } render(); });
     $$('[data-sort]').forEach(b => b.onclick = () => { S.sort = b.dataset.sort; render(); });
-    $$('[data-open]').forEach(b => b.onclick = () => { S.open = b.dataset.open; renderSheet(); });
+    $$('[data-open]').forEach(b => b.onclick = () => { if (Date.now() - (S.dragged || 0) < 400) return; S.open = b.dataset.open; renderSheet(); });
     $('#addForm').onsubmit = async e => {
       e.preventDefault();
       const f = e.target;
@@ -277,17 +372,7 @@
       const t = S.tasks.find(x => x.id === b.dataset.done);
       save(t, t.status === 'Done' ? { status: 'To Do' } : { status: 'Done', week: t.week < THIS ? THIS : t.week });
     });
-    // Board: drag a private task to another column
-    $$('[data-drag]').forEach(c => { c.ondragstart = e => e.dataTransfer.setData('text/plain', c.dataset.drag); });
-    $$('.bcol').forEach(col => {
-      col.ondragover = e => { e.preventDefault(); col.classList.add('drop'); };
-      col.ondragleave = () => col.classList.remove('drop');
-      col.ondrop = e => {
-        e.preventDefault(); col.classList.remove('drop');
-        const t = S.tasks.find(x => x.id === e.dataTransfer.getData('text/plain'));
-        if (t && !isCopy(t) && t.status !== col.dataset.col) save(t, Object.assign({ status: col.dataset.col }, t.week < THIS ? { week: THIS } : {}));
-      };
-    });
+    enableDrag($('#view'));
     const pull = $('#pullBtn');
     if (pull) pull.onclick = () => run(() => pullAcs(S.week === 'now' ? null : [S.week])).then(render);
     const link = $('#linkForm');

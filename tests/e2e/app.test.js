@@ -391,6 +391,23 @@ async function privateTracker(browser, url) {
   await page.click('[data-layout="project"]');
   await page.selectOption('#pvGroup', 'created');
   ok(await page.isVisible('.card-title >> text=Today'), 'List: group by the day a task was created');
+  // Drag and drop in the list: grouped by week, drag a task to next week
+  await page.selectOption('#pvGroup', 'week');
+  await page.dragAndDrop('.pv-row[data-drag]:has-text("Private: plan the team restructure") .pv-grip', '.pv-group[data-drop^="week|"]:has(.card-title:has-text("next week"))');
+  await sleep(400);
+  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').week > (await db(page)).W, 'List: drag a task to Next week');
+  // Board by project: drag a task to another project's column
+  await page.click('[data-layout="board"]');
+  await page.selectOption('#pvCol', 'project');
+  await page.dragAndDrop('.bcard[data-drag]:has-text("Private: plan the team restructure")', '.bcol[data-col="Alpha Plant"]');
+  await sleep(400);
+  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').project === 'Alpha Plant', 'Board by project: drag a card to another project');
+  await page.selectOption('#pvCol', 'status');
+  await page.click('[data-layout="project"]');
+  // Filters
+  await page.selectOption('#pvFSource', 'acs');
+  ok(await page.locator('.pv-row').count() >= 1 && !(await page.isVisible('.pv-row >> text=Private: plan the team restructure')), 'Filter: only tasks from ACS');
+  await page.click('#pvClear');
   await page.selectOption('#pvGroup', 'project');
   await page.click('[data-layout="project"]');
   await page.fill('#addForm input[name=title]', 'Prepare the client presentation');
