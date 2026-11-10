@@ -20,6 +20,18 @@
     .pv-when { white-space: nowrap; }
     .pv-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; justify-content: flex-end; }
     .pv-stamps { margin: 0 0 10px; }
+    /* Drag and drop */
+    .pv-grip { cursor: grab; color: var(--muted); font-size: 14px; letter-spacing: -2px; padding: 4px 6px 4px 0; touch-action: none; user-select: none; flex: none; }
+    .pv-grip.off { opacity: .25; cursor: default; }
+    .bcard .pv-grip { margin-right: 4px; }
+    .pv-row[data-drag], .bcard[data-drag] { cursor: grab; }
+    .dragging { opacity: .35; }
+    .pv-ghost { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; opacity: .92; box-shadow: var(--shadow-2); background: var(--surface); border-radius: 10px; }
+    body.pv-dragging, body.pv-dragging * { cursor: grabbing !important; user-select: none; }
+    [data-drop].drop { outline: 2px dashed var(--brand-2); outline-offset: 2px; background: var(--brand-soft); }
+    .pv-empty { padding: 6px 0; }
+    .board4.pv-board { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(250px, 1fr); }
+    @media (max-width: 719px) { .board4.pv-board { grid-auto-columns: 82vw; } }
     /* The task opens in a side panel on a computer (a sheet on a phone) */
     @media (min-width: 900px) {
       dialog.pv-side { margin: 0 0 0 auto; width: min(520px, 100vw); max-width: 520px; height: 100dvh; max-height: 100dvh; border-radius: 0; border-left: 1px solid var(--border); }
