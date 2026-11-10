@@ -242,4 +242,6 @@
     start();
   }
   boot();
+  // Installable as its own app: the site's service worker (one level up) also serves this page.
+  if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('../sw.js').catch(() => {}));
 })();
