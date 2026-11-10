@@ -31,8 +31,15 @@
   const THIS = isoWeek(new Date()), NEXT = shiftWeek(THIS, 1), LAST = shiftWeek(THIS, -1);
 
   // ---------- State ----------
-  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, q: '', layout: 'project', sort: 'status', open: null, details: undefined };
-  try { S.layout = ['board', 'table'].indexOf(localStorage.getItem('pv-layout')) !== -1 ? localStorage.getItem('pv-layout') : 'project'; } catch (e) { /* blocked */ }
+  const S = { tasks: [], acs: null, week: 'now', addWeek: THIS, q: '', layout: 'project', sort: 'status', group: 'project', order: 'status', open: null, details: undefined };
+  try {
+    S.layout = ['board', 'table'].indexOf(localStorage.getItem('pv-layout')) !== -1 ? localStorage.getItem('pv-layout') : 'project';
+    const v = JSON.parse(localStorage.getItem('pv-view') || '{}');
+    if (['project', 'status', 'created', 'modified', 'none'].indexOf(v.group) !== -1) S.group = v.group;
+    if (['status', 'new', 'old', 'modified'].indexOf(v.order) !== -1) S.order = v.order;
+  } catch (e) { /* blocked */ }
+  /** Group and sort are remembered on this device. */
+  const remember = () => { try { localStorage.setItem('pv-view', JSON.stringify({ group: S.group, order: S.order })); } catch (e) { /* blocked */ } };
   let P = null, A = null;   // private and ACS Supabase clients
 
   function toast(msg, isError) {
@@ -69,7 +76,7 @@
     if (!S.acs) return;
     const me = S.acs.me.id;
     const ws = weeks || [LAST, THIS, NEXT];
-    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by,block_note,subtasks'));
+    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by,block_note,subtasks,created_at'));
     const mine = rows.filter(t => ((t.assignee_ids || []).indexOf(me) !== -1 || (!(t.assignee_ids || []).length && t.created_by === me)) &&
       (ws.indexOf(t.week) !== -1 || (t.status !== 'Done' && t.week < THIS)));
     const pname = t => (S.acs.projects.find(p => p.id === t.project_id) || { name: '' }).name;
@@ -80,7 +87,7 @@
       const v = Object.assign({ week: t.week, title: t.title, status: t.status, project: pname(t) },
         S.details ? { block_note: t.block_note || '', subtasks: t.subtasks || [] } : {});
       const have = byAcs[t.id];
-      if (!have) add.push(Object.assign({ source: 'acs', acs_task_id: t.id }, v));
+      if (!have) add.push(Object.assign({ source: 'acs', acs_task_id: t.id, created_at: t.created_at }, v));
       else if (have.source === 'acs' && Object.keys(v).some(k => JSON.stringify(have[k]) !== JSON.stringify(v[k]))) upd.push({ id: have.id, v: v });
     });
     if (add.length) check(await P.from('private_tasks').upsert(add, { onConflict: 'acs_task_id', ignoreDuplicates: true }));
@@ -119,6 +126,23 @@
   const slug = v => String(v || '').toLowerCase().replace(/[^a-z]+/g, '-');
   const rank = t => t.status === 'Blocked' ? 0 : t.week < THIS && t.status !== 'Done' ? 1 : t.status === 'Done' ? 3 : 2;
   const subs = t => Array.isArray(t.subtasks) ? t.subtasks : [];
+  // ---------- Created / last changed ----------
+  const dayKey = v => { const d = new Date(v); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+  function dayLabel(key) {
+    const today = dayKey(Date.now()), yest = dayKey(Date.now() - 86400000);
+    if (key === today) return 'Today';
+    if (key === yest) return 'Yesterday';
+    const [y, m, d] = key.split('-').map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: y === new Date().getFullYear() ? undefined : 'numeric' });
+  }
+  const when = v => v ? new Date(v).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—';
+  const ORDERS = [['status', 'Status'], ['new', 'Newest first'], ['old', 'Oldest first'], ['modified', 'Recently changed']];
+  /** The chosen order inside a group or board column. */
+  function ordered(list) {
+    const by = { status: (a, b) => rank(a) - rank(b), new: (a, b) => (b.created_at || '').localeCompare(a.created_at || ''),
+      old: (a, b) => (a.created_at || '').localeCompare(b.created_at || ''), modified: (a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') };
+    return list.slice().sort(by[S.order] || by.status);
+  }
   const isCopy = t => t.source === 'acs';   // copied from ACS: ACS is the source, change it there
   const searchOk = t => !S.q || (t.title + ' ' + t.project + ' ' + (t.notes || '')).toLowerCase().indexOf(S.q.toLowerCase()) !== -1;
   const projectNames = () => Array.from(new Set(S.tasks.map(t => t.project).filter(Boolean)
@@ -137,19 +161,27 @@
     ].join('');
   }
 
-  function byProjectHtml(list, ws) {
+  const GROUPS = [['project', 'Project'], ['status', 'Status'], ['created', 'Day created'], ['modified', 'Day last changed'], ['none', 'No grouping']];
+  /** The list: grouped by project, status, day created or day last changed; sorted inside each group. */
+  function listHtml(list, ws) {
+    const g = S.group;
+    const keyOf = t => g === 'status' ? t.status : g === 'created' ? dayKey(t.created_at) : g === 'modified' ? dayKey(t.updated_at) : g === 'none' ? '' : (t.project || 'No project');
     const groups = {};
-    list.forEach(t => { (groups[t.project || 'No project'] = groups[t.project || 'No project'] || []).push(t); });
+    list.forEach(t => { const k = keyOf(t); (groups[k] = groups[k] || []).push(t); });
+    const keys = Object.keys(groups).sort((x, y) => g === 'status' ? STATUSES.findIndex(s2 => s2[0] === x) - STATUSES.findIndex(s2 => s2[0] === y)
+      : g === 'created' || g === 'modified' ? y.localeCompare(x) : x.localeCompare(y));
+    const title = k => g === 'status' ? label(k) : g === 'created' || g === 'modified' ? dayLabel(k) : g === 'none' ? 'All tasks' : k;
+    const stamp = t => g === 'created' ? 'created ' + when(t.created_at) : g === 'modified' || S.order === 'modified' ? 'changed ' + when(t.updated_at) : S.order === 'new' || S.order === 'old' ? 'created ' + when(t.created_at) : '';
     const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}">
       <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${isCopy(t) ? ' disabled title="Copied from ACS: change it in ACS"' : ''} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
-      <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}</button>
-      <span class="pv-tags">${tags(t, ws)}</span></div>`;
-    return Object.keys(groups).sort().map(g => `<section class="card"><h3 class="card-title">${esc(g)} <small class="muted">${groups[g].length}</small></h3>
-      ${groups[g].sort((a, b) => rank(a) - rank(b)).map(row).join('')}</section>`).join('');
+      <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}${g !== 'project' && t.project ? ` <small class="muted">· ${esc(t.project)}</small>` : ''}</button>
+      <span class="pv-tags">${tags(t, ws)}${stamp(t) ? `<small class="muted pv-when">${stamp(t)}</small>` : ''}</span></div>`;
+    return keys.map(k => `<section class="card"><h3 class="card-title">${esc(title(k))} <small class="muted">${groups[k].length}</small></h3>
+      ${ordered(groups[k]).map(row).join('')}</section>`).join('');
   }
   function boardHtml(list) {
     return `<div class="board4">${STATUSES.map(([st, lab]) => {
-      const col = list.filter(t => t.status === st).sort((a, b) => rank(a) - rank(b));
+      const col = ordered(list.filter(t => t.status === st));
       return `<section class="bcol" data-col="${st}"><h3 class="bcol-head">${lab}<small>${col.length}</small></h3>
         ${col.map(t => `<button type="button" class="bcard" data-open="${t.id}"${isCopy(t) ? '' : ` draggable="true" data-drag="${t.id}"`}>
           <span class="bcard-title">${esc(t.title)}</span><span class="bcard-meta"><span class="grow">${esc(t.project || 'No project')}</span>${tags(t)}</span></button>`).join('') || '<p class="muted small bcol-empty">Nothing here</p>'}
@@ -158,13 +190,16 @@
   }
   function tableHtml(list) {
     const keys = { task: t => t.title.toLowerCase(), project: t => (t.project || '').toLowerCase(), week: t => t.week,
-      status: t => STATUSES.findIndex(x => x[0] === t.status), source: t => t.source + (t.acs_task_id ? '1' : '0') };
+      status: t => STATUSES.findIndex(x => x[0] === t.status), source: t => t.source + (t.acs_task_id ? '1' : '0'),
+      created: t => t.created_at || '', modified: t => t.updated_at || '' };
     const k = keys[S.sort] ? S.sort : 'status';
-    const rows = list.slice().sort((a, b) => keys[k](a) < keys[k](b) ? -1 : keys[k](a) > keys[k](b) ? 1 : rank(a) - rank(b));
+    const desc = k === 'created' || k === 'modified';   // dates: newest first
+    const rows = list.slice().sort((a, b) => (keys[k](a) < keys[k](b) ? -1 : keys[k](a) > keys[k](b) ? 1 : rank(a) - rank(b)) * (desc ? -1 : 1));
     const th = (id, l) => `<th><button type="button" class="th-btn${k === id ? ' on' : ''}" data-sort="${id}">${l}${k === id ? ' ↓' : ''}</button></th>`;
-    return `<div class="table-wrap"><table class="ttable"><thead><tr>${th('task', 'Task')}${th('project', 'Project')}${th('week', 'Week')}${th('status', 'Status')}${th('source', 'Where')}</tr></thead>
+    return `<div class="table-wrap"><table class="ttable"><thead><tr>${th('task', 'Task')}${th('project', 'Project')}${th('week', 'Week')}${th('status', 'Status')}${th('created', 'Created')}${th('modified', 'Last changed')}${th('source', 'Where')}</tr></thead>
       <tbody>${rows.map(t => `<tr class="${t.status === 'Done' ? 'done' : ''}"><td class="tt"><button type="button" class="link-btn" data-open="${t.id}">${esc(t.title)}</button>${t.status === 'Blocked' && t.block_note ? ` <small class="muted">— ${esc(t.block_note)}</small>` : ''}</td>
         <td>${esc(t.project)}</td><td class="num">${wnum(t.week)}</td><td><span class="st st-${slug(t.status)}">${label(t.status)}</span></td>
+        <td class="num">${when(t.created_at)}</td><td class="num">${when(t.updated_at)}</td>
         <td>${isCopy(t) ? 'from ACS' : t.acs_task_id ? 'sent to ACS' : 'private'}</td></tr>`).join('')}</tbody></table></div>`;
   }
 
@@ -175,7 +210,7 @@
     const list = S.tasks.filter(t => inWeeks(t, ws) && searchOk(t));
     const names = projectNames();
     const body = !list.length ? `<div class="empty"><h3>No tasks${S.q ? ' match' : ' in these weeks'}</h3><p>Add one above.</p></div>`
-      : S.layout === 'board' ? boardHtml(list) : S.layout === 'table' ? tableHtml(list) : byProjectHtml(list, ws);
+      : S.layout === 'board' ? boardHtml(list) : S.layout === 'table' ? tableHtml(list) : listHtml(list, ws);
     $('#view').innerHTML = `
       <div class="page-title"><h2>Private tasks</h2><span class="pv-lock">Only you</span></div>
       ${S.details === false ? '<div class="mtg-note warn"><span>Run the updated <b>private-setup.sql</b> once in the private project’s SQL Editor to turn on blocked reasons, notes and sub-steps.</span></div>' : ''}
@@ -192,8 +227,10 @@
         <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)], [shiftWeek(THIS, -2), 'Week ' + wnum(shiftWeek(THIS, -2))], [shiftWeek(THIS, -3), 'Week ' + wnum(shiftWeek(THIS, -3))]]
           .map(o => `<option value="${o[0]}"${o[0] === S.week ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
         <input type="search" class="search f-search" id="pvSearch" placeholder="Search" value="${esc(S.q)}" autocomplete="off">
+        ${S.layout === 'project' ? `<label class="f${S.group !== 'project' ? ' set' : ''}"><span>Group</span><select id="pvGroup">${GROUPS.map(o => `<option value="${o[0]}"${o[0] === S.group ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>` : ''}
+        ${S.layout !== 'table' ? `<label class="f${S.order !== 'status' ? ' set' : ''}"><span>Sort</span><select id="pvOrder">${ORDERS.map(o => `<option value="${o[0]}"${o[0] === S.order ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>` : ''}
         ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Update from ACS${S.week === 'now' ? '' : ' (week ' + wnum(S.week) + ')'}</button>` : ''}
-        <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'By project'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>
+        <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'List'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>
       </div>
       <div class="plist">${body}</div>
       <section class="card" style="margin-top:14px"><h3 class="card-title">Link to ACS</h3>
@@ -216,6 +253,8 @@
   function bind() {
     $$('[data-aw]').forEach(b => b.onclick = () => { S.addWeek = b.dataset.aw; keepAdd(render); });
     $('#pvWeek').onchange = e => { S.week = e.target.value; render(); };
+    const pg = $('#pvGroup'); if (pg) pg.onchange = () => { S.group = pg.value; remember(); render(); };
+    const po = $('#pvOrder'); if (po) po.onchange = () => { S.order = po.value; remember(); render(); };
     const q = $('#pvSearch');
     q.oninput = () => { S.q = q.value; const p = q.selectionStart; render(); const q2 = $('#pvSearch'); q2.focus(); q2.setSelectionRange(p, p); };
     $$('[data-layout]').forEach(b => b.onclick = () => { S.layout = b.dataset.layout; try { localStorage.setItem('pv-layout', S.layout); } catch (e) { /* blocked */ } render(); });
@@ -297,6 +336,7 @@
     }
     dlg.innerHTML = `<div class="sheet pv-sheet"><header class="sheet-head"><span></span><h3>${ro ? 'From ACS' : 'Private task'} · week ${wnum(t.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
       <div class="sheet-body">
+        <p class="muted small pv-stamps">Created ${when(t.created_at)} · last changed ${when(t.updated_at)}</p>
         ${ro ? `<p class="mtg-note"><span>Copied from ACS. Change it in the ACS app; this copy follows it.</span><a class="text-btn" href="../#/my">Open ACS</a></p>
           <h3 class="pv-sheet-title">${esc(t.title)}</h3>
           <p class="small"><span class="st st-${slug(t.status)}">${label(t.status)}</span> ${esc(t.project)}</p>
@@ -319,7 +359,7 @@
             <button type="button" class="ghost danger-text small-btn" id="pvDelete">Delete task</button></div>`}
       </div></div>`;
     $('[data-close]', dlg).onclick = () => dlg.close();
-    dlg.onclose = () => { S.open = null; };
+    dlg.onclose = () => { S.open = null; dlg.classList.remove('pv-side'); };
     if (!ro) {
       const title = $('#pvTitle', dlg);
       title.onchange = () => setTimeout(() => { const v = title.value.replace(/\s+/g, ' ').trim(); if (v && v !== t.title) save(t, { title: v }); else title.value = t.title; }, 0);
@@ -345,6 +385,7 @@
         }
       };
     }
+    dlg.classList.add('pv-side');   // a side panel on a computer, full screen on a phone
     if (!dlg.open) dlg.showModal();
     const sb = $('.sheet-body', dlg); if (sb) sb.scrollTop = scroll;
     Object.keys(typed).forEach(id => { const el = id !== 'focus' && $('#' + id, dlg); if (el) el.value = typed[id]; });

@@ -387,6 +387,11 @@ async function privateTracker(browser, url) {
   await page.waitForSelector('.ttable');
   await page.click('[data-sort="task"]');
   ok(await page.isVisible('.th-btn.on >> text=Task'), 'Table: sort by a column');
+  ok(await page.isVisible('.th-btn >> text=Created') && await page.isVisible('.th-btn >> text=Last changed'), 'Table: Created and Last changed columns');
+  await page.click('[data-layout="project"]');
+  await page.selectOption('#pvGroup', 'created');
+  ok(await page.isVisible('.card-title >> text=Today'), 'List: group by the day a task was created');
+  await page.selectOption('#pvGroup', 'project');
   await page.click('[data-layout="project"]');
   await page.fill('#addForm input[name=title]', 'Prepare the client presentation');
   await page.click('#addForm button[type=submit]');
