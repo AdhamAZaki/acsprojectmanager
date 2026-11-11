@@ -309,8 +309,6 @@
   function taskHtml(t, showOwner, inSheet) {
     const open = !!S.open[t.id] && (inSheet || !isPhone());
     const subDone = t.subtasks.filter(s => s.done).length;
-    const team = projectTeam(t.projectId);
-    const extra = t.assigneeIds.filter(id => !team.some(m => m.id === id)).map(member);
     const edit = canEditTask(t), full = isAdmin(), admin = full || leadsTask(t);
     const owners = ownersOf(t).map(id => member(id).name).join(', ');
     return `
@@ -352,16 +350,33 @@
           </div>
           <details class="people-fold"${S.peopleOpen[t.id] ? ' open' : ''} data-pfold="${t.id}">
             <summary><span class="muted small">People:</span> ${esc(who(t) || owners)} <span class="text-btn">Change</span></summary>
-            <div class="people">
-              ${team.concat(extra).filter(m => admin || m.id === me().id || t.assigneeIds.indexOf(m.id) !== -1).map(m => full || (admin && leadsPerson(m.id)) || m.id === me().id
-                ? `<label><input type="checkbox" data-asg="${t.id}:${m.id}"${t.assigneeIds.indexOf(m.id) !== -1 ? ' checked' : ''}><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</label>`
-                : `<span class="person-chip" title="Only an admin can change who is on a task"><span class="avatar sm">${esc(initials(m.name))}</span>${esc(shortName(m.name))}</span>`).join('')}
-              ${S.data.contacts.map(c => `<label class="ext"><input type="checkbox" data-ext="${t.id}:${c.id}"${t.contactIds.indexOf(c.id) !== -1 ? ' checked' : ''}>${esc(c.name)}</label>`).join('')}
-            </div>
-            <div class="inline"><input placeholder="Add someone outside the team" data-newext="${t.id}" data-keep="ext-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
+            ${peopleHtml(t, full, admin)}
+            <div class="inline"><input placeholder="Or type a new 3rd party (e.g. Eng. Moataz)" data-newext="${t.id}" data-keep="ext-${t.id}" autocomplete="off"><button type="button" class="secondary" data-addext="${t.id}">Add</button></div>
           </details>
           ${admin || t.createdBy === me().id ? `<div class="t-foot"><button type="button" class="ghost danger-text small-btn" data-del="${t.id}">Delete task</button></div>` : ''}
         </div>` : ''}
+      </div>`;
+  }
+
+  /**
+   * Who is on a task: name tags (name and team, × to take off) and one dropdown to add a person,
+   * grouped by team and shown as "Name — Team", so two people with the same name are told apart.
+   * You add or take off only people you may: yourself; a department admin their own people; an admin anyone.
+   */
+  function peopleHtml(t, full, admin) {
+    const may = m => full || (admin && leadsPerson(m.id)) || m.id === me().id;
+    const on = t.assigneeIds.map(member).filter(m => m.id);
+    const canAdd = S.data.team.filter(m => m.active && t.assigneeIds.indexOf(m.id) === -1 && may(m));
+    const groups = {};
+    canAdd.forEach(m => { const k = teamKeyOf(m); (groups[k] = groups[k] || []).push(m); });
+    const extOpts = S.data.contacts.filter(c => t.contactIds.indexOf(c.id) === -1);
+    const tags = on.map(m => `<span class="person-chip" title="${esc(personInfo(m))}"><span class="avatar xs">${esc(initials(m.name))}</span>${esc(m.name)} ${teamChip(teamKeyOf(m))}${may(m) ? `<button type="button" class="chip-x" data-unasg="${t.id}:${m.id}" aria-label="Take ${esc(m.name)} off this task">×</button>` : ''}</span>`)
+      .concat(liveContacts(t).map(id => `<span class="person-chip ext-person"><span class="avatar xs ext">${esc(initials(contact(id).name))}</span>${esc(contact(id).name)} <small class="muted">3rd party</small><button type="button" class="chip-x" data-unext="${t.id}:${id}" aria-label="Take ${esc(contact(id).name)} off this task">×</button></span>`));
+    return `<div class="people-tags">${tags.join('') || '<span class="muted small">Nobody yet</span>'}</div>
+      <div class="people-add">
+        ${canAdd.length ? `<select data-asgsel="${t.id}" aria-label="Add a person to this task"><option value="">+ Add a person…</option>${teamKeys().filter(k => groups[k]).map(k =>
+          `<optgroup label="${esc(teamLabel(k))}">${groups[k].sort((a, b) => a.name.localeCompare(b.name)).map(m => `<option value="${esc(m.id)}">${esc(m.name)} — ${esc(teamLabel(k))}${m.title ? ' · ' + esc(m.title) : ''}</option>`).join('')}</optgroup>`).join('')}</select>` : ''}
+        ${extOpts.length ? `<select data-extsel="${t.id}" aria-label="Add a 3rd party to this task"><option value="">+ Add a 3rd party…</option>${extOpts.map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.org ? ' — ' + esc(c.org) : ''}</option>`).join('')}</select>` : ''}
       </div>`;
   }
 
@@ -431,13 +446,25 @@
     };
     $$('[data-addsub]', root).forEach(b => b.onclick = () => addSub(b.dataset.addsub));
     $$('[data-newsub]', root).forEach(i => i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addSub(i.dataset.newsub); } });
-    $$('[data-asg]', root).forEach(c => c.onchange = () => {
-      const [tid, pid] = pair(c.dataset.asg); const t = findTask(tid); const on = c.checked;
-      updateTask(t, x => ({ assigneeIds: on ? addId(x.assigneeIds, pid) : x.assigneeIds.filter(y => y !== pid) }));
+    $$('[data-asgsel]', root).forEach(s => s.onchange = () => {
+      const pid = s.value; if (!pid) return;
+      S.peopleOpen[s.dataset.asgsel] = true;
+      updateTask(findTask(s.dataset.asgsel), x => ({ assigneeIds: addId(x.assigneeIds, pid) }));
     });
-    $$('[data-ext]', root).forEach(c => c.onchange = () => {
-      const [tid, cid] = pair(c.dataset.ext); const t = findTask(tid); const on = c.checked;
-      updateTask(t, x => ({ contactIds: on ? addId(x.contactIds, cid) : x.contactIds.filter(y => y !== cid) }));
+    $$('[data-unasg]', root).forEach(b => b.onclick = e => {
+      e.preventDefault();
+      const [tid, pid] = pair(b.dataset.unasg);
+      updateTask(findTask(tid), x => ({ assigneeIds: x.assigneeIds.filter(y => y !== pid) }));
+    });
+    $$('[data-extsel]', root).forEach(s => s.onchange = () => {
+      const cid = s.value; if (!cid) return;
+      S.peopleOpen[s.dataset.extsel] = true;
+      updateTask(findTask(s.dataset.extsel), x => ({ contactIds: addId(x.contactIds, cid) }));
+    });
+    $$('[data-unext]', root).forEach(b => b.onclick = e => {
+      e.preventDefault();
+      const [tid, cid] = pair(b.dataset.unext);
+      updateTask(findTask(tid), x => ({ contactIds: x.contactIds.filter(y => y !== cid) }));
     });
     const addExt = async tid => {
       const input = $(`[data-newext="${tid}"]`, root); const name = input.value.trim(); if (!name) return;
@@ -1022,7 +1049,7 @@
       const pos = i.selectionStart; render();
       const again = $('#q-' + i.dataset.search); if (again) { again.focus(); again.setSelectionRange(pos, pos); }
     });
-    $$('.filters select', root).forEach(s => s.onchange = () => { onChange(s.id, s.value); render(); });
+    $$('.filters select, .view-tools select', root).forEach(s => s.onchange = () => { onChange(s.id, s.value); render(); });
   }
   function bindJoin(root) {
     $$('[data-join]', root).forEach(b => b.onclick = async e => {
@@ -1230,8 +1257,9 @@
     const body = S.myLayout === 'board' ? boardHtml(tasks, false, S.myCol) : (byProjectHtml(tasks, ws, { showOwner: true }) ||
       `<div class="empty"><h3>No tasks ${wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)}${S.search.my ? ' match' : ''}</h3><p>Tap <b>+ Add task</b> to add one, on any project.</p></div>`);
     root.innerHTML = `
-      <div class="page-title"><h2>My tasks</h2><p class="muted">Your tasks this week and next.</p></div>
-      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}${S.myLayout === 'board' ? columnSelect('myCol', S.myCol, false) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</div>
+      <div class="page-title"><h2>My tasks</h2><p class="muted">Your tasks this week and next.</p>
+        <span class="view-tools">${S.myLayout === 'board' ? columnSelect('myCol', S.myCol, false) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</span></div>
+      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}</div>
       ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
         <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
       ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
@@ -1325,10 +1353,9 @@
     const scopeSeg = `<div class="seg scope-seg" role="group" aria-label="Which projects"><button type="button" data-scope="ours" class="${S.tscope !== 'all' ? 'on' : ''}">Our projects</button><button type="button" data-scope="all" class="${S.tscope === 'all' ? 'on' : ''}">All projects</button></div>`;
     root.innerHTML = `
       <div class="page-title"><h2>${d ? esc(dept(d).name) + ' team' : teamFilter() === 'team:' + MGMT ? 'Management' : 'All teams'}${teamFilter().indexOf('team:') === 0 && teamFilter() !== 'team:' + MGMT ? ' · ' + esc(teamLabel(teamFilter().slice(5))) : ''}</h2>
-        <p class="muted">The weekly meeting: walk through each project, then save the minutes.</p></div>
-      <div class="filters">${weekSelect('teamWeek', wsel, 8)}${teamFilterSelect()}${personSelect(people)}${scopeSeg}${searchBox('team', 'Search tasks or projects')}
-        ${lay === 'board' ? columnSelect('teamCol', S.teamCol, true) : ''}
-        ${layoutSeg([['project', 'By project'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table']], lay)}</div>
+        <p class="muted">The weekly meeting: walk through each project, then save the minutes.</p>
+        <span class="view-tools">${lay === 'board' ? columnSelect('teamCol', S.teamCol, true) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table']], lay)}</span></div>
+      <div class="filters">${weekSelect('teamWeek', wsel, 8)}${teamFilterSelect()}${personSelect(people)}${scopeSeg}${searchBox('team', 'Search tasks or projects')}</div>
       <div class="meetbar">
         <span class="stat bad"><b>${blocked}</b> blocked</span><span class="stat ok"><b>${done}</b> done</span><span class="stat"><b>${weekTasks.length - done}</b> open</span>
         ${week <= THIS ? `<details class="stat warn quiet-names"><summary><b>${quiet.length}</b> no update</summary>${quiet.length ? `<ul class="plain">${quiet.map(q => `<li>${esc(q.m.name)} <small class="muted">${q.last ? 'last ' + ago(q.last) : 'never'}</small></li>`).join('')}</ul>

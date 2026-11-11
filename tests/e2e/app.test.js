@@ -91,6 +91,17 @@ async function myTasks(browser, url) {
   await sleep(300);
   t1 = await task(page, T1);
   ok(t1.status === 'Done', 'tick a task done');
+  // People on a task: one dropdown ("Name — Team"), name tags with ×
+  await page.click(`[data-pfold="${t1.id}"] summary`);
+  const opt = await page.$eval(`[data-asgsel="${t1.id}"]`, s => Array.from(s.options).map(o => o.textContent).find(x => /Mona/.test(x)));
+  ok(/Mona PLC — PLC/.test(opt || ''), 'people dropdown shows “Name — Team” (' + opt + ')');
+  const monaId = (await db(page)).users.mona.id;
+  await page.selectOption(`[data-asgsel="${t1.id}"]`, monaId);
+  await sleep(400);
+  ok((await task(page, T1)).assignee_ids.indexOf(monaId) !== -1 && await page.isVisible(`.people-tags .person-chip:has-text("Mona PLC") .tchip`), 'add a person from the dropdown; they show as a name tag with their team');
+  await page.click(`[data-unasg="${t1.id}:${monaId}"]`);
+  await sleep(400);
+  ok((await task(page, T1)).assignee_ids.indexOf(monaId) === -1, 'take a person off with ×');
 
   // Board layout: four columns; drag a task to Doing
   await page.click('[data-layout="board"]');
