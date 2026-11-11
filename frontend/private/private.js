@@ -75,7 +75,7 @@
     if (!S.acs) return;
     const me = S.acs.me.id;
     const ws = weeks || [LAST, THIS, NEXT];
-    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by,block_note,subtasks,created_at'));
+    const rows = check(await A.from('tasks').select('id,project_id,week,title,status,assignee_ids,created_by,block_note,subtasks,notes,created_at'));
     const mine = rows.filter(t => ((t.assignee_ids || []).indexOf(me) !== -1 || (!(t.assignee_ids || []).length && t.created_by === me)) &&
       (ws.indexOf(t.week) !== -1 || (t.status !== 'Done' && t.week < THIS)));
     const pname = t => (S.acs.projects.find(p => p.id === t.project_id) || { name: '' }).name;
@@ -83,7 +83,7 @@
     S.tasks.forEach(t => { if (t.acs_task_id) byAcs[t.acs_task_id] = t; });
     const add = [], upd = [];
     mine.forEach(t => {
-      const v = Object.assign({ week: t.week, title: t.title, status: t.status, project: pname(t) },
+      const v = Object.assign({ week: t.week, title: t.title, status: t.status, project: pname(t), notes: t.notes || '' },
         S.details ? { block_note: t.block_note || '', subtasks: t.subtasks || [] } : {});
       const have = byAcs[t.id];
       if (!have) add.push(Object.assign({ source: 'acs', acs_task_id: t.id, created_at: t.created_at }, v));
@@ -144,7 +144,9 @@
       week: (a, b) => shownWeek(a).localeCompare(shownWeek(b)) || rank(a) - rank(b) };
     return list.slice().sort(by[S.order] || by.status);
   }
-  const isCopy = t => t.source === 'acs';   // copied from ACS: ACS is the source, change it there
+  const isCopy = t => t.source === 'acs';   // copied from ACS: ACS is the source
+  /** A private task, or a copy from ACS while ACS is linked (its changes are saved in ACS too). */
+  const editable = t => !isCopy(t) || !!S.acs;
   const searchOk = t => !S.q || (t.title + ' ' + t.project + ' ' + (t.notes || '')).toLowerCase().indexOf(S.q.toLowerCase()) !== -1;
   const projectNames = () => Array.from(new Set(S.tasks.map(t => t.project).filter(Boolean)
     .concat(S.acs ? S.acs.projects.filter(p => p.status !== 'Done' && p.status !== 'Canceled').map(p => p.name) : []))).sort();
@@ -194,16 +196,16 @@
       return f.desc ? y.localeCompare(x) : x.localeCompare(y);
     }).map(k => ({ key: k, title: f.title(k), tasks: ordered(g[k]) }));
   }
-  const grip = t => isCopy(t) ? '<span class="pv-grip off" title="Copied from ACS: change it in ACS">⋮⋮</span>' : '<span class="pv-grip" title="Drag to move">⋮⋮</span>';
+  const grip = t => !editable(t) ? '<span class="pv-grip off" title="Link ACS to change this task">⋮⋮</span>' : '<span class="pv-grip" title="Drag to move">⋮⋮</span>';
   const canDrop = f => !!f.set;
 
   /** The list: grouped by any field, sorted inside each group; drag a row to another group to move it. */
   function listHtml(list, ws) {
     const fid = S.group, f = FIELDS[fid] || FIELDS.project;
     const stamp = t => fid === 'created' || S.order === 'new' || S.order === 'old' ? 'created ' + when(t.created_at) : fid === 'modified' || S.order === 'modified' ? 'changed ' + when(t.updated_at) : '';
-    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}"${isCopy(t) ? '' : ` data-drag="${t.id}"`}>
+    const row = t => `<div class="pv-row${t.status === 'Done' ? ' done' : ''}"${editable(t) ? ` data-drag="${t.id}"` : ''}>
       ${grip(t)}
-      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${isCopy(t) ? ' disabled title="Copied from ACS: change it in ACS"' : ''} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
+      <button type="button" class="pv-check${t.status === 'Done' ? ' on' : ''}" data-done="${t.id}"${editable(t) ? '' : ' disabled title="Link ACS to change this task"'} aria-label="${t.status === 'Done' ? 'Mark as not done' : 'Mark as done'}">${t.status === 'Done' ? '✓' : ''}</button>
       <button type="button" class="pv-title link-btn" data-open="${t.id}">${esc(t.title)}${fid !== 'project' && t.project ? ` <small class="muted">· ${esc(t.project)}</small>` : ''}</button>
       <span class="pv-tags">${tags(t, ws)}${stamp(t) ? `<small class="muted pv-when">${stamp(t)}</small>` : ''}</span></div>`;
     return groupsOf(list, f, canDrop(f)).map(g => `<section class="card pv-group"${canDrop(f) ? ` data-drop="${fid}|${esc(g.key)}"` : ''}>
@@ -215,7 +217,7 @@
     const fid = S.col, f = FIELDS[fid] && fid !== 'none' ? FIELDS[fid] : FIELDS.status;
     return `<div class="board4 pv-board">${groupsOf(list, f, true).map(g => `<section class="bcol" data-col="${esc(g.key)}"${canDrop(f) ? ` data-drop="${fid}|${esc(g.key)}"` : ''}>
         <h3 class="bcol-head">${esc(g.title)}<small>${g.tasks.length}</small></h3>
-        ${g.tasks.map(t => `<button type="button" class="bcard" data-open="${t.id}"${isCopy(t) || !canDrop(f) ? '' : ` data-drag="${t.id}"`}>
+        ${g.tasks.map(t => `<button type="button" class="bcard" data-open="${t.id}"${!editable(t) || !canDrop(f) ? '' : ` data-drag="${t.id}"`}>
           <span class="bcard-title">${canDrop(f) ? grip(t) : ''}${esc(t.title)}</span><span class="bcard-meta"><span class="grow">${fid === 'project' ? '' : esc(t.project || 'No project')}</span>${tags(t)}</span></button>`).join('') || `<p class="muted small bcol-empty">${canDrop(f) ? 'Drop a task here' : 'Nothing here'}</p>`}
       </section>`).join('')}</div>`;
   }
@@ -267,7 +269,7 @@
     const t = S.tasks.find(x => x.id === id);
     const [fid, key] = [target.slice(0, target.indexOf('|')), target.slice(target.indexOf('|') + 1)];
     const f = FIELDS[fid];
-    if (!t || isCopy(t) || !f || !f.set || f.key(t) === key) return;
+    if (!t || !editable(t) || !f || !f.set || f.key(t) === key) return;
     save(t, f.set(key, t));
     toast('Moved to ' + f.title(key));
   }
@@ -339,7 +341,22 @@
   async function save(t, change) {
     const before = Object.assign({}, t);
     Object.assign(t, change); render();
-    const saved = await run(async () => check(await P.from('private_tasks').update(change).eq('id', t.id).select().single()));
+    const saved = await run(async () => {
+      // A copy from ACS: save the change in ACS first (as you), then here, so both stay the same.
+      if (isCopy(t)) {
+        const row = {};
+        ['title', 'status', 'week', 'block_note', 'notes', 'subtasks'].forEach(k => { if (k in change) row[k] = change[k]; });
+        if ('project' in change) {
+          const p = S.acs.projects.find(x => x.name.toLowerCase() === String(change.project || '').toLowerCase());
+          if (!p) throw new Error('There is no ACS project called “' + (change.project || '(none)') + '”. A task from ACS must stay on an ACS project.');
+          row.project_id = p.id;
+        }
+        const res = await A.from('tasks').update(row).eq('id', t.acs_task_id).select('id');
+        if (res.error) throw new Error('ACS: ' + res.error.message);
+        if (!res.data || !res.data.length) throw new Error('ACS did not accept the change (the task may have been deleted there).');
+      }
+      return check(await P.from('private_tasks').update(change).eq('id', t.id).select().single());
+    });
     Object.assign(t, saved || before); render();
   }
 
@@ -410,7 +427,8 @@
     const dlg = $('#dialog');
     const t = S.tasks.find(x => x.id === S.open);
     if (!t) { S.open = null; if (dlg.open) dlg.close(); return; }
-    const ro = isCopy(t), det = S.details !== false;
+    const ro = !editable(t), copy = isCopy(t), det = S.details !== false;
+    const acsProjects = S.acs ? S.acs.projects.filter(p => (p.status !== 'Done' && p.status !== 'Canceled') || p.name === t.project) : [];
     const scroll = dlg.open && $('.sheet-body', dlg) ? $('.sheet-body', dlg).scrollTop : 0;
     // Keep what is being typed when a save redraws the sheet: the new sub-step, and the box in use.
     const typed = {};
@@ -419,10 +437,11 @@
       const fx = document.activeElement;
       if (fx && dlg.contains(fx) && fx.id && /INPUT|TEXTAREA/.test(fx.tagName)) { typed[fx.id] = fx.value; typed.focus = fx.id; }
     }
-    dlg.innerHTML = `<div class="sheet pv-sheet"><header class="sheet-head"><span></span><h3>${ro ? 'From ACS' : 'Private task'} · week ${wnum(t.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
+    dlg.innerHTML = `<div class="sheet pv-sheet"><header class="sheet-head"><span></span><h3>${copy ? 'From ACS' : 'Private task'} · week ${wnum(t.week)}</h3><button type="button" class="text-btn strong" data-close>Done</button></header>
       <div class="sheet-body">
         <p class="muted small pv-stamps">Created ${when(t.created_at)} · last changed ${when(t.updated_at)}</p>
-        ${ro ? `<p class="mtg-note"><span>Copied from ACS. Change it in the ACS app; this copy follows it.</span><a class="text-btn" href="../#/my">Open ACS</a></p>
+        ${copy && !ro ? '<p class="mtg-note saved"><span>From ACS: what you change here is saved in ACS too.</span><a class="text-btn" href="../#/my">Open ACS</a></p>' : ''}
+        ${ro ? `<p class="mtg-note"><span>Copied from ACS. Link ACS at the bottom of the page to change it here, or change it in the ACS app.</span><a class="text-btn" href="../#/my">Open ACS</a></p>
           <h3 class="pv-sheet-title">${esc(t.title)}</h3>
           <p class="small"><span class="st st-${slug(t.status)}">${label(t.status)}</span> ${esc(t.project)}</p>
           ${t.status === 'Blocked' ? `<p class="small tag-block-note">Blocked: ${esc(t.block_note || 'no reason given')}</p>` : ''}
@@ -435,13 +454,14 @@
             <input id="pvBlock" placeholder="Or type the reason" value="${esc(t.block_note || '')}"></div>` : ''}
           <p class="qa-label">Week</p>
           <div class="seg">${[THIS, NEXT].map(w => `<button type="button" data-wk="${w}" class="${t.week === w ? 'on' : ''}">${w === THIS ? 'This week' : 'Next week'} · ${wnum(w)}</button>`).join('')}</div>
-          <label class="field" style="margin-top:12px">Project or topic<input id="pvProject" list="pvProjects2" value="${esc(t.project)}" autocomplete="off"><datalist id="pvProjects2">${projectNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>
+          ${copy ? `<label class="field" style="margin-top:12px">ACS project<select id="pvProject">${acsProjects.map(p => `<option value="${esc(p.name)}"${p.name === t.project ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}</select></label>`
+            : `<label class="field" style="margin-top:12px">Project or topic<input id="pvProject" list="pvProjects2" value="${esc(t.project)}" autocomplete="off"><datalist id="pvProjects2">${projectNames().map(n => `<option value="${esc(n)}">`).join('')}</datalist></label>`}
           ${det ? `<p class="qa-label">Sub-steps</p>
           <div class="subs">${subs(t).map((x, i) => `<label class="sub"><input type="checkbox" data-sub="${i}"${x.done ? ' checked' : ''}><span class="${x.done ? 'done' : ''}">${esc(x.t)}</span><button type="button" data-subdel="${i}" aria-label="Remove sub-step">×</button></label>`).join('')}
             <div class="inline"><input id="pvNewSub" placeholder="Add a sub-step" autocomplete="off"><button type="button" class="secondary" id="pvAddSub">Add</button></div></div>
           <label class="field" style="margin-top:12px">Notes<textarea id="pvNotes" rows="3" placeholder="Details, links, who to talk to…">${esc(t.notes || '')}</textarea></label>` : ''}
-          <div class="actions-row" style="margin-top:14px">${t.acs_task_id ? '<span class="pv-tag sent">sent to ACS</span>' : S.acs ? '<button type="button" class="secondary small-btn" id="pvSend">Send to ACS</button>' : ''}
-            <button type="button" class="ghost danger-text small-btn" id="pvDelete">Delete task</button></div>`}
+          ${copy ? '' : `<div class="actions-row" style="margin-top:14px">${t.acs_task_id ? '<span class="pv-tag sent">sent to ACS</span>' : S.acs ? '<button type="button" class="secondary small-btn" id="pvSend">Send to ACS</button>' : ''}
+            <button type="button" class="ghost danger-text small-btn" id="pvDelete">Delete task</button></div>`}`}
       </div></div>`;
     $('[data-close]', dlg).onclick = () => dlg.close();
     dlg.onclose = () => { S.open = null; dlg.classList.remove('pv-side'); };
@@ -463,7 +483,8 @@
       };
       const as = $('#pvAddSub', dlg); if (as) { as.onclick = addSub; $('#pvNewSub', dlg).onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); addSub(); } }; }
       const send = $('#pvSend', dlg); if (send) send.onclick = () => { dlg.close(); sendDialog(t); };
-      $('#pvDelete', dlg).onclick = async () => {
+      const del = $('#pvDelete', dlg);
+      if (del) del.onclick = async () => {
         if (!confirm('Delete this private task?')) return;
         if (await run(async () => { check(await P.from('private_tasks').delete().eq('id', t.id)); return true; })) {
           S.tasks = S.tasks.filter(x => x.id !== t.id); dlg.close(); render();

@@ -232,17 +232,20 @@ select test.ok(public.admin_save_project(jsonb_build_object('name', 'BMS lead pr
 select test.ok(public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Shared site', 'type', 'PLC'), '{}', '{}') ->> 'name' = 'Shared site',
   'department admin can edit a project first entered by another department (projects are shared)');
 select test.ok((select department_id from public.projects where id = 'PRJ-0002') = 'AUTO', 'editing a shared project keeps where it was first entered');
-select test.fails($$select public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Shared site'), array[test.uid('omar.test@advcontrolsys.com')], '{}')$$,
-  'only add or remove your own team', 'department admin cannot put another department''s person on a project through the project form');
+select public.admin_save_project(jsonb_build_object('id', 'PRJ-0002', 'name', 'Shared site'), array[test.uid('omar.test@advcontrolsys.com')], '{}');
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('omar.test@advcontrolsys.com')$$) = 1,
+  'department admin puts anyone (another department''s person) on a project through the project form');
 delete from public.projects where id = 'PRJ-0002';
 select test.ok(test.n($$select * from public.projects where id = 'PRJ-0002'$$) = 1, 'department admin cannot delete a project');
-select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'))$$,
-  'row-level security', 'department admin cannot put another department''s person on a project');
+insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('ahmed.test@advcontrolsys.com'));
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('ahmed.test@advcontrolsys.com')$$) = 1,
+  'department admin can put another department''s person on a project');
 insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'));
 select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('laila.test@advcontrolsys.com')$$) = 1,
   'department admin can put their own person on any project');
-select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('omar.test@advcontrolsys.com'))$$,
-  'row-level security', 'department admin cannot staff another department''s project with that department''s people');
+delete from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('omar.test@advcontrolsys.com');
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('omar.test@advcontrolsys.com')$$) = 0,
+  'department admin can take anyone off a project');
 insert into public.tasks (project_id, week, title, created_by, assignee_ids)
   values ('PRJ-0006', '2026-W45', 'lead planned task', test.uid('laila.test@advcontrolsys.com'), array[test.uid('laila.test@advcontrolsys.com')]);
 select test.ok(test.n($$select * from public.tasks where title = 'lead planned task'$$) = 1, 'department admin can add a task for someone in their department');
@@ -340,8 +343,9 @@ select test.fails($$update public.tasks set assignee_ids = assignee_ids || test.
   'only add or remove your own team', 'GUI dept admin cannot put a BMS person on a task');
 insert into public.assignments (project_id, user_id) values ('PRJ-0006', test.uid('sondos.test@advcontrolsys.com'));
 select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0006' and user_id = test.uid('sondos.test@advcontrolsys.com')$$) = 1, 'GUI dept admin puts her own person on a BMS project''s team');
-select test.fails($$insert into public.assignments (project_id, user_id) values ('PRJ-0002', test.uid('laila.test@advcontrolsys.com'))$$,
-  'row-level security', 'GUI dept admin cannot staff another department''s people');
+delete from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('laila.test@advcontrolsys.com');
+select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ-0002' and user_id = test.uid('laila.test@advcontrolsys.com')$$) = 0,
+  'GUI dept admin can take another department''s person off a project');
 select public.admin_save_minutes('2026-W45', '{"v": 1, "dept": "GUI"}', 'GUI');
 select test.ok(test.n($$select * from public.meetings where department_id = 'GUI' and snapshot is not null$$) = 1, 'GUI dept admin saves GUI minutes');
 reset role;

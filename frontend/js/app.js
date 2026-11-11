@@ -637,16 +637,14 @@
       <p class="muted small sp-meta">${[p.id, p.client, p.manager ? 'PM: ' + p.manager : '',
         p.startDate || p.endDate ? (p.startDate || '…') + ' → ' + (p.endDate || '…') : ''].filter(Boolean).map(esc).join(' · ')}</p>
       <div class="tchips sp-teams">${teamsOnProject(p.id).map(k => teamChip(k, myTeamKey() === k)).join('')}</div>
-      ${teamTags(p.id, { people: order.map(id => ({ id: id })) })}
+      ${isManager() ? teamEditor(p) : teamTags(p.id, { people: order.map(id => ({ id: id })) })}
       ${p.notes ? `<p class="sp-notes">${esc(p.notes)}</p>` : ''}
       ${weekSwitch(S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'this')).length, S.data.tasks.filter(t => t.projectId === p.id && inView(t, 'next')).length)}
       ${CLOSED.indexOf(p.status) === -1 ? addBar(p.id, projectTeam(p.id).concat(S.data.team.filter(m => projectTeam(p.id).indexOf(m) === -1))) : ''}
       ${order.map(id => `<section class="card"><h3 class="card-title"><span class="avatar sm">${esc(initials(member(id).name))}</span>${esc(member(id).name)}${member(id).team ? ` <span class="badge">${esc(member(id).team)}</span>` : ''}</h3>
         ${byPerson[id].sort((a, b) => isDone(a) - isDone(b)).map(t => taskHtml(t, true)).join('')}</section>`).join('')
         || `<div class="empty"><h3>No tasks ${S.which === 'next' ? 'planned for next week' : 'this week'}</h3></div>`}
-      ${isManager() ? `<details class="sp-fold"${S.teamOpen ? ' open' : ''} data-spfold="team"><summary>Team (${projectTeam(p.id).length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</summary>${teamEditor(p)}</details>` : ''}
       ${historyHtml(p)}`;
-    $$('[data-spfold="team"]', root).forEach(d => d.ontoggle = () => { S.teamOpen = d.open; });
     $('#backBtn', root).onclick = closePanel;
     const leave = $('#leaveBtn', root);
     if (leave) leave.onclick = async () => {
@@ -672,15 +670,16 @@
     </details>`;
   }
 
-  /** Admins: who is on the project. Tap × to take someone off, or pick a person to add. */
+  /**
+   * Admins and team leaders (department admins): who is on the project, at the top of its panel.
+   * Tap × to take someone off, or pick anyone in the company to add. Employees only see the names.
+   */
   function teamEditor(p) {
     const team = projectTeam(p.id);
-    // On another department's project, a department admin adds and removes only their own people.
-    const may = m => leadsPerson(m.id);
-    const others = S.data.team.filter(m => m.active && team.indexOf(m) === -1 && may(m));
-    return `<div class="card team-edit"><strong class="small">Team</strong>
-      <div class="avatars-row">${team.map(m => `<span class="person-chip" title="${esc(personInfo(m))}">${esc(shortName(m.name))}${may(m) ? `<button type="button" class="chip-x" data-unassign="${esc(m.id)}" aria-label="Take ${esc(m.name)} off the project">×</button>` : ''}</span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
-      ${others.length ? `<select id="assignSel" aria-label="Add a person to the project"><option value="">+ Add a person…</option>${peopleOptions(others, p.departmentId)}</select>` : ''}</div>`;
+    const others = S.data.team.filter(m => m.active && team.indexOf(m) === -1);
+    return `<div class="card team-edit"><strong class="small">People on this project (${team.length})${projectLead(p) ? ' · lead ' + esc(shortName(projectLead(p).name)) : ''}</strong>
+      <div class="avatars-row">${team.map(m => `<span class="person-chip" title="${esc(personInfo(m))}">${esc(shortName(m.name))} ${teamChip(teamKeyOf(m))}<button type="button" class="chip-x" data-unassign="${esc(m.id)}" aria-label="Take ${esc(m.name)} off the project">×</button></span>`).join('') || '<span class="muted small">Nobody yet</span>'}</div>
+      ${others.length ? `<select id="assignSel" aria-label="Add a person to the project"><option value="">+ Add a person to this project…</option>${peopleOptions(others, p.departmentId)}</select>` : ''}</div>`;
   }
   function bindTeamEditor(root, p) {
     const sel = $('#assignSel', root);
@@ -1638,8 +1637,7 @@
     const d = dept(values.departmentId || me().departmentId);
     const types = Array.from(new Set(dept(me().departmentId).projectTypes.concat(departments().reduce((a, x) => a.concat(x.projectTypes), []))
       .concat(values.type ? [values.type] : [])));
-    // A department admin puts only their own people on a project (and takes only them off).
-    const original = (values.assigned || []).filter(leadsPerson);
+    const original = values.assigned || [];
     openForm({
       title: values.id ? 'Edit project' : 'New project',
       values: Object.assign({}, values, { assigned: original }),
@@ -1653,8 +1651,8 @@
         { name: 'manager', label: 'Project manager' },
         { name: 'startDate', label: 'Start date', type: 'date' },
         { name: 'endDate', label: 'End date', type: 'date' },
-        { name: 'assigned', label: isAdmin() ? 'People on the project' : 'Your people on the project', type: 'checklist',
-          options: groupPeople(S.data.team.filter(m => m.active && leadsPerson(m.id)), d.id)
+        { name: 'assigned', label: 'People on the project', type: 'checklist',
+          options: groupPeople(S.data.team.filter(m => m.active), d.id)
             .reduce((a, g) => a.concat(g.people.map(m => ({ value: m.id, label: m.name, hint: m.title, group: g.label }))), []) },
         { name: 'notes', label: 'Notes', type: 'textarea' },
       ],
