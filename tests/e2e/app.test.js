@@ -136,6 +136,7 @@ async function employee(browser, url) {
   const panel = await page.textContent('.side-panel');
   ok(panel.includes(GUI_T) && !panel.includes(BMS_T), 'project panel: an employee sees her own tasks there, not colleagues’');
   ok(/Laila/.test(panel), '...but sees who is on the project');
+  ok(await page.locator('.side-panel #assignSel').count() === 0, 'employees cannot add people to a project');
   await page.keyboard.press('Escape');
   await page.goto(url + '#/team');
   await page.waitForSelector('.page-title');
@@ -292,6 +293,11 @@ async function sidePanel(browser, url) {
   ok(/Tower BMS Retrofit/.test(await page.textContent('.side-panel .sp-title')), 'click a project: it opens in a side panel');
   const text = await page.textContent('.side-panel');
   ok(text.includes(BMS_T) && text.includes(GUI_T), 'a department admin sees every team’s tasks on the project');
+  ok(await page.isVisible('.side-panel .team-edit #assignSel'), 'team leader: “People on this project” with + Add a person, at the top of the panel');
+  const monaId = (await db(page)).users.mona.id;
+  await page.selectOption('.side-panel #assignSel', monaId);
+  await sleep(400);
+  ok((await db(page)).assignments.some(a => a.project_id === 'PRJ-0002' && a.user_id === monaId), 'team leader adds an employee from another department to the project');
   ok(await page.isVisible('.side-panel .sp-teams .tchip'), 'the panel shows the teams on the project');
   await page.keyboard.press('Escape');
   ok(!(await page.isVisible('.side-panel')), 'Esc closes the panel');
@@ -382,7 +388,25 @@ async function privateTracker(browser, url) {
   await page.dragAndDrop('.bcard:has-text("Private: plan the team restructure")', '.bcol[data-col="In Progress"]');
   await sleep(400);
   ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').status === 'In Progress', 'Board: drag a private task to Doing');
-  ok(await page.locator(`.bcard[draggable]:has-text("${T1}")`).count() === 0, 'Board: copies from ACS cannot be dragged (they follow ACS)');
+  // A copy from ACS is edited here and saved in ACS too (ACS is linked)
+  await page.click(`.bcard:has-text("${T1}")`);
+  await page.waitForSelector('.pv-sheet .mtg-note.saved');
+  await page.click('.pv-sheet [data-st="In Progress"]');
+  await sleep(400);
+  await page.fill('#pvNewSub', 'Check panel C');
+  await page.click('#pvAddSub');
+  await sleep(400);
+  let acsT1 = (await db(page)).tasks.find(t => t.title === T1);
+  const pvT1 = (await db(page)).private_tasks.find(t => t.title === T1);
+  ok(acsT1.status === 'In Progress' && acsT1.subtasks.some(x => x.t === 'Check panel C') && pvT1.status === 'In Progress',
+    'a task from ACS is edited in the private page and saved in ACS too');
+  ok(await page.locator('.pv-sheet #pvDelete, .pv-sheet #pvSend').count() === 0 && await page.locator('.pv-sheet select#pvProject').count() === 1,
+    '...its project is picked from ACS projects; no Delete / Send to ACS on a copy');
+  await page.click('.pv-sheet [data-close]');
+  await page.dragAndDrop(`.bcard[data-drag]:has-text("${T1}")`, '.bcol[data-col="Done"]');
+  await sleep(400);
+  acsT1 = (await db(page)).tasks.find(t => t.title === T1);
+  ok(acsT1.status === 'Done', 'dragging a task from ACS to Done marks it done in ACS');
   await page.click('[data-layout="table"]');
   await page.waitForSelector('.ttable');
   await page.click('[data-sort="task"]');
