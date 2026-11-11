@@ -99,6 +99,12 @@ async function myTasks(browser, url) {
   await page.dragAndDrop('.bcard:has-text("Test the duty and standby")', '.bcol[data-col="In Progress"]');
   await sleep(400);
   ok((await task(page, 'Test the duty and standby pump logic')).status === 'In Progress', 'drag a card to Doing changes its status');
+  await page.selectOption('#myCol', 'week');
+  await page.waitForSelector('.bcol .bcol-head >> text=next week');
+  await page.dragAndDrop('.bcard[data-drag]:has-text("Test the duty and standby")', '.bcol[data-drop^="week|"]:has(.bcol-head:has-text("next week"))');
+  await sleep(400);
+  ok((await task(page, 'Test the duty and standby pump logic')).week > (await db(page)).W, 'Board columns by week: drag a card to next week');
+  await page.selectOption('#myCol', 'status');
   await page.click('.bcard:has-text("Test the duty and standby")');
   await page.waitForSelector('#dialog[data-mode="task"] .t-open');
   ok(true, 'tap a card: the task opens in a sheet');
@@ -180,6 +186,11 @@ async function teamPage(browser, url) {
   await page.click('[data-layout="board"]');
   await page.waitForSelector('.board4');
   ok(await page.isVisible(`.bcol[data-col="To Do"] >> text=${GUI_T}`), 'Board: the team’s tasks by status');
+  await page.selectOption('#teamCol', 'project');
+  ok(await page.isVisible(`.bcol[data-col="PRJ-0002"] >> text=${GUI_T}`), 'Board columns by project');
+  await page.selectOption('#teamCol', 'team');
+  ok(await page.isVisible('.bcol .bcol-head >> text=Dev') && await page.locator('.bcol[data-drop]').count() === 0, 'Board columns by team (for looking; no dropping)');
+  await page.selectOption('#teamCol', 'status');
   await page.click('[data-layout="project"]');
   // Add a task for one of her people; not for others
   await page.click('#addTaskBtn');

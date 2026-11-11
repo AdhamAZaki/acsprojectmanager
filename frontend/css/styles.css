@@ -996,3 +996,13 @@ select.cell:hover, select.cell:focus { border-color: var(--border); background: 
 .saved-list li { padding: 3px 0; }
 .saved-list li.blk { color: var(--bad); }
 @media print { .appnav, .add-task-btn, .filters, .meet-actions { display: none !important; } body.signed-in main { margin-left: 0; } }
+
+/* Board: any columns (status, project, week, team, person), drag and drop with mouse or finger */
+.board4.board-any { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); }
+@media (max-width: 719px) { .board4.board-any { grid-auto-columns: 82vw; } }
+.grip { cursor: grab; color: var(--muted); font-size: 14px; letter-spacing: -2px; padding: 0 6px 0 0; touch-action: none; user-select: none; }
+.bcard[data-drag] { cursor: grab; }
+.bcard.dragging { opacity: .35; }
+.drag-ghost { position: fixed; left: 0; top: 0; z-index: 100; pointer-events: none; opacity: .92; box-shadow: var(--shadow-2); }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; user-select: none; }
+.bcol[data-drop].drop { outline: 2px dashed var(--brand-2); outline-offset: 2px; background: var(--brand-soft); }

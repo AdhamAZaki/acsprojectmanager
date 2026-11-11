@@ -1032,7 +1032,10 @@
       render();
     });
     $$('[data-addto]', root).forEach(b => b.onclick = e => { e.stopPropagation(); quickAddSheet({ pid: b.dataset.addto }); });
-    $$('[data-sheet]', root).forEach(b => b.onclick = () => { S.open[b.dataset.sheet] = true; S.sheetTask = b.dataset.sheet; render(); });
+    $$('[data-sheet]', root).forEach(b => b.onclick = () => {
+      if (Date.now() - (S.dragged || 0) < 400) return;   // the end of a drag, not a tap
+      S.open[b.dataset.sheet] = true; S.sheetTask = b.dataset.sheet; render();
+    });
   }
   const statusPill = p => `<span class="pstatus ps-${slug(p.status)}">${esc(p.status)}</span>`;
   const joined = pid => myProjectIds().indexOf(pid) !== -1;
@@ -1095,32 +1098,86 @@
   }
   function bindQuiet(root) { const q = $('#quietToggle', root); if (q) q.onclick = () => { S.showQuiet = !S.showQuiet; render(); }; }
 
-  /** Board: one column per status; drag a task you may change to another column. */
+  /**
+   * Board: one column per status (default), project, week, team or person. Drag a task you may
+   * change to another column and it takes that status, project or week (team and person columns
+   * are for looking only).
+   */
   const BOARD = [['To Do', 'To do'], ['In Progress', 'Doing'], ['Blocked', 'Blocked'], ['Done', 'Done']];
-  function boardHtml(tasks, showTeam) {
-    return `<div class="board4">${BOARD.map(([s, label]) => {
-      const list = tasks.filter(t => t.status === s).sort((a, b) => rank(a) - rank(b) || project(a.projectId).name.localeCompare(project(b.projectId).name));
-      return `<section class="bcol" data-col="${s}"><h3 class="bcol-head">${label}<small>${list.length}</small></h3>
-        ${list.map(t => `<button type="button" class="bcard" data-sheet="${esc(t.id)}"${canEditTask(t) ? ` draggable="true" data-drag="${esc(t.id)}"` : ''}>
-          <span class="bcard-title">${esc(t.title)}</span>
-          <span class="bcard-meta">${showTeam ? teamChip(taskTeam(t)) : ''}<span class="grow">${esc(project(t.projectId).name)}</span>${t.week < THIS && !isDone(t) ? `<span class="tag-carry">wk ${wnum(t.week)}</span>` : ''}${showTeam ? `<span class="avatar xs" title="${esc(member(ownersOf(t)[0]).name)}">${esc(initials(member(ownersOf(t)[0]).name))}</span>` : ''}</span>
-        </button>`).join('') || '<p class="muted small bcol-empty">Nothing here</p>'}</section>`;
-    }).join('')}</div>`;
+  const COLUMNS = {
+    status: { label: 'Status', key: t => t.status, keys: () => BOARD.map(b => b[0]), title: k => (BOARD.find(b => b[0] === k) || [k, k])[1],
+      set: (k, t) => Object.assign({ status: k }, t.week < THIS ? { week: THIS } : {}) },
+    project: { label: 'Project', key: t => t.projectId, title: k => project(k).name, set: k => ({ projectId: k }) },
+    week: { label: 'Week', key: t => shownWeek(t), keys: () => [THIS, NEXT],
+      title: k => 'Week ' + wnum(k) + (k === THIS ? ' · this week' : k === NEXT ? ' · next week' : ''), set: k => ({ week: k }) },
+    team: { label: 'Team', key: t => taskTeam(t), keys: () => teamKeys(), title: k => teamLabel(k), keep: true },
+    person: { label: 'Person', key: t => ownersOf(t)[0], title: k => member(k).name },
+  };
+  /** The Columns choice for a board (team and person only on the Team page). */
+  function columnSelect(id, value, team) {
+    const opts = Object.keys(COLUMNS).filter(k => team || (k !== 'team' && k !== 'person')).map(k => ({ value: k, label: COLUMNS[k].label }));
+    return `<label class="f${value !== 'status' ? ' set' : ''}"><span>Columns</span><select id="${id}">${options(opts, value)}</select></label>`;
   }
+  function boardHtml(tasks, showTeam, colId) {
+    const f = COLUMNS[colId] || COLUMNS.status, cid = COLUMNS[colId] ? colId : 'status';
+    const groups = {};
+    if (f.keys && !f.keep) f.keys().forEach(k => { groups[k] = []; });
+    tasks.forEach(t => { const k = f.key(t); (groups[k] = groups[k] || []).push(t); });
+    const fixed = f.keys ? f.keys() : [];
+    const keys = Object.keys(groups).sort((a, b) => fixed.length ? fixed.indexOf(a) - fixed.indexOf(b) : f.title(a).localeCompare(f.title(b)));
+    return `<div class="board4 board-any">${keys.map(k => {
+      const list = groups[k].sort((a, b) => rank(a) - rank(b) || project(a.projectId).name.localeCompare(project(b.projectId).name));
+      return `<section class="bcol" data-col="${esc(k)}"${f.set ? ` data-drop="${cid}|${esc(k)}"` : ''}><h3 class="bcol-head">${esc(f.title(k))}<small>${list.length}</small></h3>
+        ${list.map(t => `<button type="button" class="bcard" data-sheet="${esc(t.id)}"${canEditTask(t) && f.set ? ` data-drag="${esc(t.id)}"` : ''}>
+          <span class="bcard-title">${canEditTask(t) && f.set ? '<span class="grip" title="Drag to move">⋮⋮</span>' : ''}${esc(t.title)}</span>
+          <span class="bcard-meta">${showTeam && cid !== 'team' ? teamChip(taskTeam(t)) : ''}<span class="grow">${cid === 'project' ? '' : esc(project(t.projectId).name)}</span>${cid !== 'status' ? `<span class="st st-${slug(t.status)}">${esc(COLUMNS.status.title(t.status))}</span>` : ''}${t.week < THIS && !isDone(t) ? `<span class="tag-carry">wk ${wnum(t.week)}</span>` : ''}${showTeam && cid !== 'person' ? `<span class="avatar xs" title="${esc(member(ownersOf(t)[0]).name)}">${esc(initials(member(ownersOf(t)[0]).name))}</span>` : ''}</span>
+        </button>`).join('') || `<p class="muted small bcol-empty">${f.set ? 'Drop a task here' : 'Nothing here'}</p>`}</section>`;
+    }).join('') || '<div class="empty"><h3>No tasks match these filters</h3></div>'}</div>`;
+  }
+  /**
+   * Drag and drop with a mouse or a finger (on a phone: the ⋮⋮ handle, so the page still scrolls):
+   * move a card over another column and let go.
+   */
   function bindBoard(root) {
-    $$('[data-drag]', root).forEach(c => {
-      c.ondragstart = e => { e.dataTransfer.setData('text/plain', c.dataset.drag); c.classList.add('dragging'); };
-      c.ondragend = () => c.classList.remove('dragging');
-    });
-    $$('.bcol', root).forEach(col => {
-      col.ondragover = e => { e.preventDefault(); col.classList.add('drop'); };
-      col.ondragleave = () => col.classList.remove('drop');
-      col.ondrop = e => {
-        e.preventDefault(); col.classList.remove('drop');
-        const t = findTask(e.dataTransfer.getData('text/plain'));
-        if (!t || !canEditTask(t) || t.status === col.dataset.col) return;
-        updateTask(t, x => Object.assign({ status: col.dataset.col }, x.week < THIS ? { week: THIS } : {}));
-      };
+    $$('[data-drag]', root).forEach(el => {
+      el.addEventListener('pointerdown', e => {
+        if (e.button !== 0) return;
+        if (e.pointerType !== 'mouse' && !e.target.closest('.grip')) return;
+        const id = el.dataset.drag, x0 = e.clientX, y0 = e.clientY;
+        let ghost = null, over = null;
+        const move = ev => {
+          if (!ghost) {
+            if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+            ghost = el.cloneNode(true); ghost.classList.add('drag-ghost'); ghost.style.width = el.offsetWidth + 'px';
+            document.body.appendChild(ghost); el.classList.add('dragging'); document.body.classList.add('is-dragging');
+          }
+          ev.preventDefault();
+          ghost.style.transform = 'translate(' + (ev.clientX - 24) + 'px,' + (ev.clientY - 18) + 'px)';
+          ghost.style.display = 'none';
+          const under = document.elementFromPoint(ev.clientX, ev.clientY);
+          ghost.style.display = '';
+          const tgt = under && under.closest('[data-drop]');
+          if (tgt !== over) { if (over) over.classList.remove('drop'); over = tgt; if (over) over.classList.add('drop'); }
+          if (ev.clientY < 80) window.scrollBy(0, -14); else if (ev.clientY > window.innerHeight - 80) window.scrollBy(0, 14);
+          const board = under && under.closest('.board-any');
+          if (board) { const r = board.getBoundingClientRect(); if (ev.clientX < r.left + 50) board.scrollLeft -= 16; else if (ev.clientX > r.right - 50) board.scrollLeft += 16; }
+        };
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          if (!ghost) return;
+          ghost.remove(); el.classList.remove('dragging'); document.body.classList.remove('is-dragging');
+          if (over) over.classList.remove('drop');
+          S.dragged = Date.now();   // the click that ends a drag does not open the task
+          if (!over) return;
+          const target = over.dataset.drop, cid = target.slice(0, target.indexOf('|')), k = target.slice(target.indexOf('|') + 1);
+          const t = findTask(id), f = COLUMNS[cid];
+          if (!t || !f || !f.set || !canEditTask(t) || f.key(t) === k) return;
+          updateTask(t, x => f.set(k, x));
+          toast('Moved to ' + f.title(k));
+        };
+        window.addEventListener('pointermove', move, { passive: false });
+        window.addEventListener('pointerup', up, { once: true });
+      });
     });
   }
 
@@ -1169,11 +1226,12 @@
     const review = ws.indexOf(THIS) !== -1 ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
     const day = new Date().getDay();
     const planHint = ws.indexOf(THIS) !== -1 && (day === 0 || day >= 4) && !mine.some(t => t.week === NEXT) && remember.get('plan-dismissed') !== NEXT;
-    const body = S.myLayout === 'board' ? boardHtml(tasks, false) : (byProjectHtml(tasks, ws, { showOwner: true }) ||
+    if (!S.myCol) S.myCol = ['project', 'week'].indexOf(remember.get('my-col')) !== -1 ? remember.get('my-col') : 'status';
+    const body = S.myLayout === 'board' ? boardHtml(tasks, false, S.myCol) : (byProjectHtml(tasks, ws, { showOwner: true }) ||
       `<div class="empty"><h3>No tasks ${wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)}${S.search.my ? ' match' : ''}</h3><p>Tap <b>+ Add task</b> to add one, on any project.</p></div>`);
     root.innerHTML = `
       <div class="page-title"><h2>My tasks</h2><p class="muted">Your tasks this week and next.</p></div>
-      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</div>
+      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}${S.myLayout === 'board' ? columnSelect('myCol', S.myCol, false) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</div>
       ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
         <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
       ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
@@ -1182,7 +1240,10 @@
           <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canEditTask(t) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
       </section>` : ''}
       <div class="plist">${body}</div>`;
-    bindFilters(root, (id, v) => { if (id === 'myWeek') S.myWeek = v; });
+    bindFilters(root, (id, v) => {
+      if (id === 'myWeek') S.myWeek = v;
+      if (id === 'myCol') { S.myCol = v; remember.set('my-col', v); }
+    });
     $$('[data-layout]', root).forEach(b => b.onclick = () => { S.myLayout = b.dataset.layout; remember.set('my-layout', S.myLayout); render(); });
     bindTasks(root); bindProjectLinks(root); bindJoin(root); bindBoard(root);
     $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
@@ -1255,7 +1316,8 @@
     const blocked = weekTasks.filter(isBlocked).length, done = weekTasks.filter(isDone).length;
     const quiet = week <= THIS ? quietPeople(week, people.filter(m => whoOk(m.id))) : [];
     const lay = S.teamLayout;
-    const body = lay === 'board' ? boardHtml(tasks, true)
+    if (!S.teamCol) S.teamCol = Object.keys(COLUMNS).indexOf(remember.get('team-col')) !== -1 ? remember.get('team-col') : 'status';
+    const body = lay === 'board' ? boardHtml(tasks, true, S.teamCol)
       : lay === 'person' ? byPersonHtml(tasks, people.filter(m => whoOk(m.id)))
         : lay === 'table' ? tableHtml(tasks)
           : (byProjectHtml(tasks, ws, { byTeam: true, showOwner: false, others: filtered ? others : null }) || '<div class="empty"><h3>No tasks match these filters</h3></div>') +
@@ -1265,6 +1327,7 @@
       <div class="page-title"><h2>${d ? esc(dept(d).name) + ' team' : teamFilter() === 'team:' + MGMT ? 'Management' : 'All teams'}${teamFilter().indexOf('team:') === 0 && teamFilter() !== 'team:' + MGMT ? ' · ' + esc(teamLabel(teamFilter().slice(5))) : ''}</h2>
         <p class="muted">The weekly meeting: walk through each project, then save the minutes.</p></div>
       <div class="filters">${weekSelect('teamWeek', wsel, 8)}${teamFilterSelect()}${personSelect(people)}${scopeSeg}${searchBox('team', 'Search tasks or projects')}
+        ${lay === 'board' ? columnSelect('teamCol', S.teamCol, true) : ''}
         ${layoutSeg([['project', 'By project'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table']], lay)}</div>
       <div class="meetbar">
         <span class="stat bad"><b>${blocked}</b> blocked</span><span class="stat ok"><b>${done}</b> done</span><span class="stat"><b>${weekTasks.length - done}</b> open</span>
@@ -1279,6 +1342,7 @@
       <div class="plist">${body}</div>`;
     bindFilters(root, (id, v) => {
       if (id === 'teamWeek') S.teamWeek = v;
+      if (id === 'teamCol') { S.teamCol = v; remember.set('team-col', v); }
       if (id === 'teamFilter') { S.tfilter = v; S.who = 'all'; }
       if (id === 'whoFilter') S.who = v;
     });
