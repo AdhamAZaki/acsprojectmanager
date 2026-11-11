@@ -857,6 +857,25 @@ select.qa-for { margin-top: 14px; width: 100%; }
 }
 
 .page-title { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin: 8px 0 6px; }
+/* The view buttons (By project / Board / …) sit on the title line, right-aligned: the same place on every view */
+@media (min-width: 720px) {
+  .page-title { flex-wrap: nowrap; }
+  .page-title h2 { white-space: nowrap; }
+  .page-title p { flex: 1 1 0; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-title .view-tools { flex-wrap: nowrap; flex: none; }
+}
+.page-title .view-tools { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.page-title .layout-seg { margin-left: auto; align-self: center; padding: 3px; border-radius: 999px; }
+.page-title .view-tools .layout-seg { margin-left: 0; }
+@media (max-width: 719px) { .page-title .view-tools { margin-left: 0; width: 100%; justify-content: space-between; } }
+.page-title .layout-seg button { min-height: 34px; padding: 4px 14px; border-radius: 999px; font-size: .88rem; flex: none; }
+/* People on a task: name tags and one dropdown */
+.people-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.people-tags .person-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 4px 3px 4px; background: var(--surface); font-size: .86rem; }
+.people-tags .person-chip .tchip { font-size: .68rem; padding: 0 7px; }
+.people-tags .ext-person { border-style: dashed; border-color: var(--acs-amber); }
+.people-add { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.people-add select { flex: 1 1 240px; width: auto; }
 .page-title h2 { font-size: 1.45rem; }
 @media (max-width: 719px) { .page-title p { display: none; } .page-title h2 { font-size: 1.25rem; } }
 

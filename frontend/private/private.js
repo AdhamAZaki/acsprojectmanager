@@ -302,7 +302,8 @@
     const body = !list.length ? `<div class="empty"><h3>No tasks${S.q || filtered ? ' match' : ' in these weeks'}</h3><p>${filtered ? 'Change the filters, or add one above.' : 'Add one above.'}</p></div>`
       : S.layout === 'board' ? boardHtml(list) : S.layout === 'table' ? tableHtml(list) : listHtml(list, ws);
     $('#view').innerHTML = `
-      <div class="page-title"><h2>Private tasks</h2><span class="pv-lock">Only you</span></div>
+      <div class="page-title"><h2>Private tasks</h2><span class="pv-lock">Only you</span>
+        <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'List'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div></div>
       ${S.details === false ? '<div class="mtg-note warn"><span>Run the updated <b>private-setup.sql</b> once in the private project’s SQL Editor to turn on blocked reasons, notes and sub-steps.</span></div>' : ''}
       <form class="card pv-add" id="addForm">
         <input name="title" placeholder="A private task" autocomplete="off" required>
@@ -317,15 +318,14 @@
         <label class="f${S.week !== 'now' ? ' set' : ''}"><span>Week</span><select id="pvWeek">${[['now', 'This + next week'], [THIS, 'This week · ' + wnum(THIS)], [NEXT, 'Next week · ' + wnum(NEXT)], [LAST, 'Last week · ' + wnum(LAST)], [shiftWeek(THIS, -2), 'Week ' + wnum(shiftWeek(THIS, -2))], [shiftWeek(THIS, -3), 'Week ' + wnum(shiftWeek(THIS, -3))]]
           .map(o => `<option value="${o[0]}"${o[0] === S.week ? ' selected' : ''}>${o[1]}</option>`).join('')}</select></label>
         <input type="search" class="search f-search" id="pvSearch" placeholder="Search" value="${esc(S.q)}" autocomplete="off">
-        ${S.layout === 'project' ? sel('pvGroup', 'Group', S.group, fieldOpts(false), 'project') : ''}
-        ${S.layout === 'board' ? sel('pvCol', 'Columns', S.col, fieldOpts(true), 'status') : ''}
-        ${S.layout !== 'table' ? sel('pvOrder', 'Sort', S.order, ORDERS, 'status') : ''}
         ${sel('pvFStatus', 'Status', S.fStatus, [['all', 'Any']].concat([['open', 'Open (not done)']], STATUSES), 'all')}
         ${sel('pvFProject', 'Project', S.fProject, [['all', 'Any']].concat(Array.from(new Set(S.tasks.map(t => t.project || ''))).sort().map(p => [p, p || 'No project'])), 'all')}
         ${sel('pvFSource', 'Where', S.fSource, [['all', 'Anywhere']].concat(Object.keys(WHERE).map(k => [k, WHERE[k]])), 'all')}
         ${filtered ? '<button type="button" class="text-btn" id="pvClear">Clear filters</button>' : ''}
         ${S.acs ? `<button type="button" class="secondary small-btn" id="pullBtn">Update from ACS${S.week === 'now' ? '' : ' (week ' + wnum(S.week) + ')'}</button>` : ''}
-        <div class="seg layout-seg" role="group" aria-label="Layout">${[['project', 'List'], ['board', 'Board'], ['table', 'Table']].map(l => `<button type="button" data-layout="${l[0]}" class="${S.layout === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>
+        ${S.layout === 'project' ? sel('pvGroup', 'Group', S.group, fieldOpts(false), 'project') : ''}
+        ${S.layout === 'board' ? sel('pvCol', 'Columns', S.col, fieldOpts(true), 'status') : ''}
+        ${S.layout !== 'table' ? sel('pvOrder', 'Sort', S.order, ORDERS, 'status') : ''}
       </div>
       <div class="plist">${body}</div>
       <section class="card" style="margin-top:14px"><h3 class="card-title">Link to ACS</h3>
