@@ -884,8 +884,14 @@ select.qa-for { margin-top: 14px; width: 100%; }
 .page-title .view-tools { margin-left: auto; align-self: center; display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .page-title .layout-seg { margin-left: auto; align-self: center; padding: 3px; border-radius: 999px; }
 .page-title .view-tools .layout-seg { margin-left: 0; }
-@media (max-width: 719px) { .page-title .view-tools { margin-left: 0; width: 100%; justify-content: space-between; } }
 .page-title .layout-seg button { min-height: 34px; padding: 4px 14px; border-radius: 999px; font-size: .88rem; flex: none; }
+@media (max-width: 719px) {
+  .page-title .view-tools { margin-left: 0; width: 100%; justify-content: space-between; min-width: 0; }
+  /* The view buttons share the width, so they never push the page wider than the phone */
+  .page-title .layout-seg { width: 100%; min-width: 0; margin-left: 0; }
+  .page-title .layout-seg button { flex: 1 1 0; min-width: 0; padding: 4px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .page-title .view-tools .f { flex: 1 1 100%; }
+}
 /* People on a task: name tags and one dropdown */
 .people-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
 .people-tags .person-chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 4px 3px 4px; background: var(--surface); font-size: .86rem; }
