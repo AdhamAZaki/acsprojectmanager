@@ -42,11 +42,14 @@
     teamOpen: false,     // project panel: Team section unfolded
     qa: null,            // quick add: project and week kept between adds
     search: {},          // search box text per page
-    myWeek: 'now',       // My tasks: 'now' (this + next week) or one week
-    myLayout: null,      // My tasks: 'project' | 'board'; remembered per device
-    teamWeek: 'now',     // Team: 'now' or one week
-    teamLayout: null,    // Team: 'project' | 'board' | 'person' | 'table'; remembered per device
-    tfilter: null,       // Team: 'all' | 'dept:<id>' | 'team:<dept>:<team>' | 'team:MGMT'
+    week: 'now',         // Tasks: 'now' (this + next week) or one week
+    view: null,          // Tasks: 'list' | 'board' | 'person' | 'table'; remembered per device ('projects' comes from the address)
+    col: null,           // Board columns: 'status' | 'project' | 'week' | 'team' | 'person'; remembered per device
+    kpi: null,           // KPI card tapped: 'open' | 'blocked' | 'done' | 'carried'
+    fProject: 'all',     // Tasks: one project
+    fStatus: 'all',      // Tasks: 'all' | 'open' | a status
+    lastScope: null,     // the scope before opening Projects (to go back to it)
+    tfilter: null,     // Team: 'all' | 'dept:<id>' | 'team:<dept>:<team>' | 'team:MGMT'
     who: 'all',          // Team: one person
     tscope: 'ours',      // Team: 'ours' (projects the filter's people are on) | 'all'
     showOthers: {},      // project id -> other teams' tasks unfolded
@@ -1039,9 +1042,6 @@
   function searchBox(key, placeholder) {
     return `<input type="search" class="search f-search" id="q-${key}" data-search="${key}" placeholder="${esc(placeholder)}" value="${esc(S.search[key] || '')}" autocomplete="off">`;
   }
-  function layoutSeg(list, value) {
-    return `<div class="seg layout-seg" role="group" aria-label="Layout">${list.map(l => `<button type="button" data-layout="${l[0]}" class="${value === l[0] ? 'on' : ''}">${l[1]}</button>`).join('')}</div>`;
-  }
   /** Filters and searches: change the state and draw again (the search box keeps its cursor). */
   function bindFilters(root, onChange) {
     $$('[data-search]', root).forEach(i => i.oninput = () => {
@@ -1241,51 +1241,6 @@
   }
   function bindTable(root) { $$('[data-sort]', root).forEach(b => b.onclick = () => { S.sort = b.dataset.sort; render(); }); }
 
-  // ---------- My tasks (everyone) ----------
-
-  function viewMy(root) {
-    if (!S.myLayout) S.myLayout = remember.get('my-layout') === 'board' ? 'board' : 'project';
-    const wsel = S.myWeek || 'now';
-    const ws = weeksOf(wsel);
-    const mine = S.data.tasks.filter(t => ownersOf(t).indexOf(me().id) !== -1);
-    const tasks = mine.filter(t => inWeeks(t, ws) && searchOk(t, S.search.my));
-    // Carried 2+ weeks: one tap each to keep (moves it to this week), finish or drop it.
-    const review = ws.indexOf(THIS) !== -1 ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
-    const day = new Date().getDay();
-    const planHint = ws.indexOf(THIS) !== -1 && (day === 0 || day >= 4) && !mine.some(t => t.week === NEXT) && remember.get('plan-dismissed') !== NEXT;
-    if (!S.myCol) S.myCol = ['project', 'week'].indexOf(remember.get('my-col')) !== -1 ? remember.get('my-col') : 'status';
-    const body = S.myLayout === 'board' ? boardHtml(tasks, false, S.myCol) : (byProjectHtml(tasks, ws, { showOwner: true }) ||
-      `<div class="empty"><h3>No tasks ${wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)}${S.search.my ? ' match' : ''}</h3><p>Tap <b>+ Add task</b> to add one, on any project.</p></div>`);
-    root.innerHTML = `
-      <div class="page-title"><h2>My tasks</h2><p class="muted">Your tasks this week and next.</p>
-        <span class="view-tools">${S.myLayout === 'board' ? columnSelect('myCol', S.myCol, false) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board']], S.myLayout)}</span></div>
-      <div class="filters">${weekSelect('myWeek', wsel, 1)}${searchBox('my', 'Search my tasks or projects')}</div>
-      ${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
-        <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
-      ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
-        <p class="muted small" style="margin:0 0 8px">Still doing these? Keep them for this week, mark them done, or drop them.</p>
-        ${review.map(t => `<div class="rv-row"><div class="rv-text"><strong>${esc(t.title)}</strong><small class="muted">${esc(project(t.projectId).name)} · since week ${wnum(t.week)}</small></div>
-          <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canEditTask(t) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
-      </section>` : ''}
-      <div class="plist">${body}</div>`;
-    bindFilters(root, (id, v) => {
-      if (id === 'myWeek') S.myWeek = v;
-      if (id === 'myCol') { S.myCol = v; remember.set('my-col', v); }
-    });
-    $$('[data-layout]', root).forEach(b => b.onclick = () => { S.myLayout = b.dataset.layout; remember.set('my-layout', S.myLayout); render(); });
-    bindTasks(root); bindProjectLinks(root); bindJoin(root); bindBoard(root);
-    $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
-    $$('[data-done-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.doneTask), { status: 'Done', week: THIS }); toast('Done ✔'); });
-    $$('[data-drop-task]', root).forEach(b => b.onclick = async () => {
-      if (!confirm('Drop this task? It is deleted.')) return;
-      S.lastWrite = Date.now();
-      if (await guard(() => Api.deleteTask(b.dataset.dropTask).then(() => true))) toast('Dropped');
-      render();
-    });
-    const plan = $('#planNext', root); if (plan) plan.onclick = () => quickAddSheet({ week: NEXT });
-    const later = $('#planLater', root); if (later) later.onclick = () => { remember.set('plan-dismissed', NEXT); render(); };
-  }
-
   // ---------- Team (admins and department admins): the weekly meeting ----------
 
   /** The Team filter: everyone, a department, or one team (PLC, AVEVA, BMS, UI/UX, Dev, Management). */
@@ -1318,73 +1273,187 @@
       .map(m => ({ m: m, last: theirs(m).reduce((x, t) => t.version && t.version > x ? t.version : x, '') }));
   }
 
-  function viewTeam(root) {
-    if (!S.teamLayout) S.teamLayout = ['board', 'person', 'table'].indexOf(remember.get('team-layout')) !== -1 ? remember.get('team-layout') : 'project';
-    const wsel = S.teamWeek || 'now';
+
+  // ---------- Tasks: the one page (everyone; managers get more scopes, filters and the meeting) ----------
+  //
+  //   Scope tabs   Mine · Team (admins and department admins)
+  //   View tabs    List · Board · By person (Team) · Table · Projects
+  //   KPI cards    Open · Blocked · Done · Carried over (· No update, Team) — tap one to filter
+  //   Filters      Week, Project, Status (+ Team, Person, Our / All projects in Team)
+
+  const VIEWS = [['list', 'List'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table'], ['projects', 'Projects']];
+  const STATUS_FILTER = [['all', 'Any status'], ['open', 'Open (not done)'], ['To Do', 'To do'], ['In Progress', 'Doing'], ['Blocked', 'Blocked'], ['Done', 'Done']];
+  const KPI = { open: t => !isDone(t), blocked: isBlocked, done: isDone, carried: t => !isDone(t) && t.week < THIS };
+
+  /** The scope and view the page shows: from the address (#/mine, #/team, #/projects) and the view tabs. */
+  function pageState(tabId) {
+    const scope = isManager() && tabId === 'team' ? 'team' : 'mine';
+    if (!S.view) S.view = ['board', 'person', 'table'].indexOf(remember.get('tasks-view')) !== -1 ? remember.get('tasks-view') : 'list';
+    let view = tabId === 'projects' ? 'projects' : S.view;
+    if (view === 'person' && scope !== 'team') view = 'list';
+    return { scope: scope, view: view };
+  }
+
+  function viewTasks(root, tabId) {
+    const { scope, view } = pageState(tabId);
+    const team = scope === 'team';
+    const wsel = S.week || 'now';
     const ws = weeksOf(wsel);
-    const week = wsel === 'now' ? THIS : wsel;   // the week of the minutes
-    const people = filterPeople();
-    const whoOk = id => S.who === 'all' || !people.some(m => m.id === S.who) || id === S.who;
-    const inFilter = t => teamMatch(taskTeam(t)) && whoOk(ownersOf(t)[0]);
-    const tasks = S.data.tasks.filter(t => inWeeks(t, ws) && inFilter(t) && searchOk(t, S.search.team));
-    // Projects in view: "Our projects" = the filter's people are on it or have tasks in it.
-    const ours = p => tasks.some(t => t.projectId === p.id) || projectTeam(p.id).some(m => m.active !== false && teamMatch(teamKeyOf(m)) && whoOk(m.id));
-    const pool = S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1 && (S.tscope === 'all' || ours(p)))
-      .filter(p => !S.search.team || (p.name + ' ' + p.client).toLowerCase().indexOf(S.search.team.toLowerCase()) !== -1 || tasks.some(t => t.projectId === p.id));
-    const quietP = pool.filter(p => !tasks.some(t => t.projectId === p.id)).sort((a, b) => a.name.localeCompare(b.name));
-    const filtered = teamFilter() !== 'all' || S.who !== 'all';
-    const others = p => filtered ? S.data.tasks.filter(t => t.projectId === p.id && inWeeks(t, ws) && !inFilter(t)) : [];
-    // Meeting numbers and minutes (minutes are per department: pick one in the Team filter)
-    const d = filterDept();
+    const q = S.search.tasks || '';
+    // Who is in view
+    const people = team ? filterPeople() : [me()];
+    const whoOk = id => !team || S.who === 'all' || !people.some(m => m.id === S.who) || id === S.who;
+    const inScope = t => team ? teamMatch(taskTeam(t)) && whoOk(ownersOf(t)[0]) : ownersOf(t).indexOf(me().id) !== -1;
+    const projectOk = t => !S.fProject || S.fProject === 'all' || t.projectId === S.fProject;
+    const statusOk = t => !S.fStatus || S.fStatus === 'all' || (S.fStatus === 'open' ? !isDone(t) : t.status === S.fStatus);
+    // KPI numbers: everything in scope, week, search and project (before the status and KPI filters)
+    const base = S.data.tasks.filter(t => inScope(t) && inWeeks(t, ws) && searchOk(t, q) && projectOk(t));
+    const kpiOk = t => !S.kpi || !KPI[S.kpi] || KPI[S.kpi](t);
+    const tasks = base.filter(t => statusOk(t) && kpiOk(t));
+    const week = wsel === 'now' ? THIS : wsel;   // the week of the minutes and of "No update"
+    const quiet = team && week <= THIS ? quietPeople(week, people.filter(m => whoOk(m.id))) : [];
+    const n = k => base.filter(KPI[k]).length;
+    const kpi = (k, label, cls, sub) => `<button type="button" class="kpi ${cls}${S.kpi === k ? ' on' : ''}" data-kpi="${k}" aria-pressed="${S.kpi === k}"><b>${n(k)}</b><span>${label}</span>${sub ? `<small>${sub}</small>` : ''}</button>`;
+    const kpis = view === 'projects' ? '' : `<div class="kpis">
+        ${kpi('open', 'Open', 'k-open', wsel === 'now' ? 'this week and next' : 'week ' + wnum(wsel))}${kpi('blocked', 'Blocked', 'k-bad', 'need help')}${kpi('done', 'Done', 'k-ok', 'finished')}${kpi('carried', 'Carried over', 'k-warn', 'from earlier weeks')}
+        ${team && week <= THIS ? `<details class="kpi k-quiet quiet-names"><summary><b>${quiet.length}</b><span>No update</span><small>${quiet.length ? 'tap to see who' : 'everyone updated'}</small></summary>${quiet.length ? `<ul class="plain">${quiet.map(x => `<li>${esc(x.m.name)} <small class="muted">${x.last ? 'last ' + ago(x.last) : 'never'}</small></li>`).join('')}</ul>
+          ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}` : ''}</details>` : ''}
+      </div>`;
+
+    // Title and breadcrumb
+    const d = team ? filterDept() : null;
+    const title = view === 'projects' ? 'Projects' : !team ? 'My tasks'
+      : (d ? esc(dept(d).name) + ' team' : teamFilter() === 'team:' + MGMT ? 'Management' : 'All teams') +
+        (teamFilter().indexOf('team:') === 0 && teamFilter() !== 'team:' + MGMT ? ' · ' + esc(teamLabel(teamFilter().slice(5))) : '');
+    const sub = view === 'projects' ? (isManager() ? 'Every project and the teams on it. Join one, or add a task to it.' : 'Every project. Join one or add a task to it; you see your own tasks.')
+      : team ? 'The weekly meeting: walk through each project, then save the minutes.' : 'Your tasks this week and next.';
+
+    // Body for the view
+    let body = '', extra = '';
+    if (view === 'projects') body = projectsListHtml(q);
+    else if (view === 'board') {
+      if (!S.col) S.col = Object.keys(COLUMNS).indexOf(remember.get('tasks-col')) !== -1 ? remember.get('tasks-col') : 'status';
+      if (!team && (S.col === 'team' || S.col === 'person')) S.col = 'status';
+      body = boardHtml(tasks, team, S.col);
+    } else if (view === 'person') body = byPersonHtml(tasks, people.filter(m => whoOk(m.id)));
+    else if (view === 'table') body = tableHtml(tasks);
+    else if (team) {
+      // Our projects: the filter's people are on it or have tasks in it. Projects with no tasks fold away.
+      const ours = p => tasks.some(t => t.projectId === p.id) || projectTeam(p.id).some(m => m.active !== false && teamMatch(teamKeyOf(m)) && whoOk(m.id));
+      const pool = S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1 && (S.tscope === 'all' || ours(p)) && (!S.fProject || S.fProject === 'all' || p.id === S.fProject))
+        .filter(p => !q || (p.name + ' ' + p.client).toLowerCase().indexOf(q.toLowerCase()) !== -1 || tasks.some(t => t.projectId === p.id));
+      const quietP = S.kpi || (S.fStatus && S.fStatus !== 'all') ? [] : pool.filter(p => !tasks.some(t => t.projectId === p.id)).sort((a, b) => a.name.localeCompare(b.name));
+      const filtered = teamFilter() !== 'all' || S.who !== 'all';
+      const others = p => filtered ? S.data.tasks.filter(t => t.projectId === p.id && inWeeks(t, ws) && !inScope(t)) : [];
+      body = (byProjectHtml(tasks, ws, { byTeam: true, showOwner: false, others: filtered ? others : null }) || '<div class="empty"><h3>No tasks match these filters</h3></div>') +
+        quietProjectsHtml(quietP, 'No tasks ' + (wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)));
+    } else {
+      body = byProjectHtml(tasks, ws, { showOwner: true }) ||
+        `<div class="empty"><h3>No tasks ${S.kpi || (S.fStatus && S.fStatus !== 'all') ? 'match these filters' : wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)}${q ? ' match' : ''}</h3><p>Tap <b>+ Add task</b> to add one, on any project.</p></div>`;
+    }
+    if (view === 'board' || view === 'table') body = body || '<div class="empty"><h3>No tasks match these filters</h3></div>';
+
+    // Mine: plan next week, and the review of tasks carried 2+ weeks
+    if (!team && view !== 'projects') {
+      const mine = S.data.tasks.filter(t => ownersOf(t).indexOf(me().id) !== -1);
+      const review = ws.indexOf(THIS) !== -1 ? mine.filter(t => !isDone(t) && t.week <= shiftWeek(THIS, -2)).sort((a, b) => a.week.localeCompare(b.week)) : [];
+      const day = new Date().getDay();
+      const planHint = ws.indexOf(THIS) !== -1 && (day === 0 || day >= 4) && !mine.some(t => t.week === NEXT) && remember.get('plan-dismissed') !== NEXT;
+      extra = `${planHint ? `<div class="nudge" id="planNudge"><span><strong>Plan next week</strong><br>Nothing planned for week ${wnum(NEXT)} yet. It goes straight into next week’s meeting.</span>
+        <span class="nudge-actions"><button type="button" class="primary small" id="planNext">Plan week ${wnum(NEXT)}</button><button type="button" class="text-btn" id="planLater">Later</button></span></div>` : ''}
+      ${review.length ? `<section class="card review"><h3 class="card-title">Carried over 2+ weeks (${review.length})</h3>
+        <p class="muted small" style="margin:0 0 8px">Still doing these? Keep them for this week, mark them done, or drop them.</p>
+        ${review.map(t => `<div class="rv-row"><div class="rv-text"><strong>${esc(t.title)}</strong><small class="muted">${esc(project(t.projectId).name)} · since week ${wnum(t.week)}</small></div>
+          <div class="rv-actions"><button type="button" class="secondary small-btn" data-keep-task="${t.id}">Keep</button><button type="button" class="primary small-btn" data-done-task="${t.id}">✓ Done</button>${t.createdBy === me().id || canEditTask(t) ? `<button type="button" class="ghost danger-text small-btn" data-drop-task="${t.id}">Drop</button>` : ''}</div></div>`).join('')}
+      </section>` : ''}`;
+    }
+
+    // Team: the meeting (minutes are per department: pick one in the Team filter)
+    let meeting = '';
     const key = d ? d + ':' + week : null;
-    if (key && !(key in S.minutes)) loadMinutes(week);
     const saved = key ? S.minutes[key] : undefined;
     const hasSaved = !!(saved && saved.snapshot);
-    const weekTasks = S.data.tasks.filter(t => inWeeks(t, [week]) && inFilter(t));
-    const blocked = weekTasks.filter(isBlocked).length, done = weekTasks.filter(isDone).length;
-    const quiet = week <= THIS ? quietPeople(week, people.filter(m => whoOk(m.id))) : [];
-    const lay = S.teamLayout;
-    if (!S.teamCol) S.teamCol = Object.keys(COLUMNS).indexOf(remember.get('team-col')) !== -1 ? remember.get('team-col') : 'status';
-    const body = lay === 'board' ? boardHtml(tasks, true, S.teamCol)
-      : lay === 'person' ? byPersonHtml(tasks, people.filter(m => whoOk(m.id)))
-        : lay === 'table' ? tableHtml(tasks)
-          : (byProjectHtml(tasks, ws, { byTeam: true, showOwner: false, others: filtered ? others : null }) || '<div class="empty"><h3>No tasks match these filters</h3></div>') +
-            quietProjectsHtml(quietP, 'No tasks ' + (wsel === 'now' ? 'this week or next' : 'in week ' + wnum(wsel)));
-    const scopeSeg = `<div class="seg scope-seg" role="group" aria-label="Which projects"><button type="button" data-scope="ours" class="${S.tscope !== 'all' ? 'on' : ''}">Our projects</button><button type="button" data-scope="all" class="${S.tscope === 'all' ? 'on' : ''}">All projects</button></div>`;
+    if (team && view !== 'projects') {
+      if (key && !(key in S.minutes)) loadMinutes(week);
+      meeting = `<div class="meetbar no-print">
+          <span class="meet-actions">${d ? `<button type="button" class="secondary small-btn" id="copyEmail">Copy as email</button>
+            ${canManage(d) && week <= THIS ? `<button type="button" class="primary small" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}
+            <button type="button" class="ghost small-btn" id="archiveBtn">Past minutes</button>` : '<span class="muted small">Pick a department in <b>Team</b> to email or save its minutes.</span>'}</span>
+        </div>
+        ${hasSaved ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
+          : d && week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : ''}`;
+    }
+
+    // Filters
+    const sel = (id, label, value, opts, def) => `<label class="f${value !== def ? ' set' : ''}"><span>${label}</span><select id="${id}">${options(opts.map(o => ({ value: o[0], label: o[1] })), value)}</select></label>`;
+    const projectOpts = [['all', 'Any project']].concat(S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1 || p.id === S.fProject).sort((a, b) => a.name.localeCompare(b.name)).map(p => [p.id, p.name]));
+    const scopeSeg = `<div class="seg scope-seg" role="group" aria-label="Which projects"><button type="button" data-tscope="ours" class="${S.tscope !== 'all' ? 'on' : ''}">Our projects</button><button type="button" data-tscope="all" class="${S.tscope === 'all' ? 'on' : ''}">All projects</button></div>`;
+    const filters = view === 'projects'
+      ? `<div class="filters"><div class="seg" role="group" aria-label="Status">${[['open', 'Open'], ['closed', 'Closed'], ['all', 'All']].map(x => `<button type="button" data-pstatus="${x[0]}" class="${(S.pstatus || 'open') === x[0] ? 'on' : ''}">${x[1]}</button>`).join('')}</div></div>`
+      : `<div class="filters">${weekSelect('week', wsel, team ? 8 : 1)}${team ? teamFilterSelect() + personSelect(people) : ''}
+          ${sel('fProject', 'Project', S.fProject || 'all', projectOpts, 'all')}${sel('fStatus', 'Status', S.fStatus || 'all', STATUS_FILTER, 'all')}
+          ${S.kpi || (S.fStatus && S.fStatus !== 'all') || (S.fProject && S.fProject !== 'all') ? '<button type="button" class="text-btn" id="clearFilters">Clear filters</button>' : ''}</div>`;
+    const views = VIEWS.filter(v => v[0] !== 'person' || team);
+
     root.innerHTML = `
-      <div class="page-title"><h2>${d ? esc(dept(d).name) + ' team' : teamFilter() === 'team:' + MGMT ? 'Management' : 'All teams'}${teamFilter().indexOf('team:') === 0 && teamFilter() !== 'team:' + MGMT ? ' · ' + esc(teamLabel(teamFilter().slice(5))) : ''}</h2>
-        <p class="muted">The weekly meeting: walk through each project, then save the minutes.</p>
-        <span class="view-tools">${lay === 'board' ? columnSelect('teamCol', S.teamCol, true) : ''}${layoutSeg([['project', 'By project'], ['board', 'Board'], ['person', 'By person'], ['table', 'Table']], lay)}</span></div>
-      <div class="filters">${weekSelect('teamWeek', wsel, 8)}${teamFilterSelect()}${personSelect(people)}${scopeSeg}${searchBox('team', 'Search tasks or projects')}</div>
-      <div class="meetbar">
-        <span class="stat bad"><b>${blocked}</b> blocked</span><span class="stat ok"><b>${done}</b> done</span><span class="stat"><b>${weekTasks.length - done}</b> open</span>
-        ${week <= THIS ? `<details class="stat warn quiet-names"><summary><b>${quiet.length}</b> no update</summary>${quiet.length ? `<ul class="plain">${quiet.map(q => `<li>${esc(q.m.name)} <small class="muted">${q.last ? 'last ' + ago(q.last) : 'never'}</small></li>`).join('')}</ul>
-          ${week === THIS ? '<button type="button" class="secondary small-btn" id="copyReminder">Copy reminder</button>' : ''}` : '<p class="muted small">Everyone has updated.</p>'}</details>` : ''}
-        <span class="meet-actions no-print">${d ? `<button type="button" class="secondary small-btn" id="copyEmail">Copy as email</button>
-          ${canManage(d) && week <= THIS ? `<button type="button" class="primary small" id="saveMins">${hasSaved ? 'Update saved minutes' : 'Save minutes'}</button>` : ''}
-          <button type="button" class="ghost small-btn" id="archiveBtn">Past minutes</button>` : '<span class="muted small">Pick a department in <b>Team</b> to email or save its minutes.</span>'}</span>
+      <div class="page-head2">
+        <div class="ph-text"><p class="crumbs">Weekly tasks <span>›</span> <b>${view === 'projects' ? 'Projects' : team ? 'Team' : 'Mine'}</b></p><h2>${title}</h2><p class="muted ph-sub">${sub}</p></div>
+        <input type="search" class="search jump" id="q-tasks" data-search="tasks" placeholder="${view === 'projects' ? 'Find a project' : 'Jump to a task or project'}" value="${esc(q)}" autocomplete="off" aria-label="Search">
       </div>
-      ${hasSaved ? `<div class="mtg-note saved"><span>Minutes for week ${wnum(week)} saved ${esc(saved.savedAt)}${saved.savedBy ? ' by ' + esc(member(saved.savedBy).name) : ''}</span><button type="button" class="secondary small-btn" id="viewSaved">View saved copy</button></div>`
-        : d && week < THIS && saved === null ? '<div class="mtg-note warn"><span>Not saved. This is rebuilt from today’s tasks, so it may differ from what was discussed.</span></div>' : ''}
-      <div class="plist">${body}</div>`;
+      ${isManager() ? `<div class="tabstrip" role="tablist" aria-label="Whose tasks">
+          <a href="#/mine" role="tab" class="${!team && view !== 'projects' ? 'on' : ''}">${icon('tasks')} Mine</a>
+          <a href="#/team" role="tab" class="${team && view !== 'projects' ? 'on' : ''}">${icon('meeting')} Team</a>
+        </div>` : ''}
+      <div class="subtabs">
+        <div class="subtab-list" role="tablist" aria-label="View">${views.map(v => `<button type="button" role="tab" data-view="${v[0]}" class="${view === v[0] ? 'on' : ''}" aria-selected="${view === v[0]}">${v[1]}</button>`).join('')}</div>
+        <span class="view-tools">${view === 'board' ? columnSelect('col', S.col, team) : team && view === 'list' ? scopeSeg : ''}</span>
+      </div>
+      ${filters}
+      ${kpis}
+      ${meeting}
+      ${extra}
+      <div class="${view === 'projects' ? 'prows2' : 'plist'}">${body}</div>`;
+
+    // Bindings
     bindFilters(root, (id, v) => {
-      if (id === 'teamWeek') S.teamWeek = v;
-      if (id === 'teamCol') { S.teamCol = v; remember.set('team-col', v); }
+      if (id === 'week') S.week = v;
+      if (id === 'col') { S.col = v; remember.set('tasks-col', v); }
       if (id === 'teamFilter') { S.tfilter = v; S.who = 'all'; }
       if (id === 'whoFilter') S.who = v;
+      if (id === 'fProject') S.fProject = v;
+      if (id === 'fStatus') S.fStatus = v;
     });
-    $$('[data-layout]', root).forEach(b => b.onclick = () => { S.teamLayout = b.dataset.layout; remember.set('team-layout', S.teamLayout); render(); });
-    $$('[data-scope]', root).forEach(b => b.onclick = () => { S.tscope = b.dataset.scope; render(); });
+    $$('[data-view]', root).forEach(b => b.onclick = () => {
+      const v = b.dataset.view;
+      if (v === 'projects') { location.hash = '#/projects'; return; }
+      S.view = v; remember.set('tasks-view', v);
+      if (tabId === 'projects') location.hash = isManager() && S.lastScope === 'team' ? '#/team' : '#/mine'; else render();
+    });
+    $$('[data-kpi]', root).forEach(b => b.onclick = () => { S.kpi = S.kpi === b.dataset.kpi ? null : b.dataset.kpi; render(); });
+    $$('[data-tscope]', root).forEach(b => b.onclick = () => { S.tscope = b.dataset.tscope; render(); });
+    $$('[data-pstatus]', root).forEach(b => b.onclick = () => { S.pstatus = b.dataset.pstatus; render(); });
+    const clear = $('#clearFilters', root); if (clear) clear.onclick = () => { S.kpi = null; S.fStatus = 'all'; S.fProject = 'all'; render(); };
+    if (view !== 'projects') S.lastScope = scope;
     bindTasks(root); bindProjectLinks(root); bindJoin(root); bindOthers(root); bindQuiet(root); bindBoard(root); bindTable(root);
+    $$('[data-keep-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.keepTask), { week: THIS }); toast('Kept for this week'); });
+    $$('[data-done-task]', root).forEach(b => b.onclick = () => { updateTask(findTask(b.dataset.doneTask), { status: 'Done', week: THIS }); toast('Done ✔'); });
+    $$('[data-drop-task]', root).forEach(b => b.onclick = async () => {
+      if (!confirm('Drop this task? It is deleted.')) return;
+      S.lastWrite = Date.now();
+      if (await guard(() => Api.deleteTask(b.dataset.dropTask).then(() => true))) toast('Dropped');
+      render();
+    });
+    const plan = $('#planNext', root); if (plan) plan.onclick = () => quickAddSheet({ week: NEXT });
+    const later = $('#planLater', root); if (later) later.onclick = () => { remember.set('plan-dismissed', NEXT); render(); };
     const remind = $('#copyReminder', root);
     if (remind) remind.onclick = () => copyText(
       'Hi ' + quiet.map(x => x.m.name.replace(/\(.*?\)/g, '').trim().split(/\s+/)[0]).join(', ') +
       ' — please add your tasks for week ' + wnum(week) + ' in Weekly Tasks before the meeting: ' + location.origin + location.pathname,
       'Reminder copied — paste it into your team chat');
-    if (!d) return;
+    if (!team || !d || view === 'projects') return;
     $('#copyEmail', root).onclick = () => copyEmail(buildMinutes(week));
     $('#archiveBtn', root).onclick = minutesArchive;
-    const view = $('#viewSaved', root); if (view) view.onclick = () => savedMinutesSheet(saved);
+    const viewSaved = $('#viewSaved', root); if (viewSaved) viewSaved.onclick = () => savedMinutesSheet(saved);
     const save = $('#saveMins', root);
     if (save) save.onclick = async () => {
       if (hasSaved && !confirm('Replace the saved minutes for week ' + wnum(week) + ' with today’s tasks?')) return;
@@ -1395,13 +1464,12 @@
     };
   }
 
-  // ---------- Projects (everyone): find a project, join it, add a task ----------
-
-  function viewProjects(root) {
+  /** The Projects view: every project (open by default), the teams on it; Join and + Task. */
+  function projectsListHtml(q) {
     const st = S.pstatus || 'open';
-    const q = (S.search.projects || '').toLowerCase();
+    const ql = (q || '').toLowerCase();
     const list = S.data.projects.filter(p => (st === 'all' || (st === 'closed') === (CLOSED.indexOf(p.status) !== -1)) &&
-      (!q || (p.name + ' ' + p.client + ' ' + p.id + ' ' + p.type).toLowerCase().indexOf(q) !== -1))
+      (!ql || (p.name + ' ' + p.client + ' ' + p.id + ' ' + p.type).toLowerCase().indexOf(ql) !== -1))
       .sort((a, b) => joined(b.id) - joined(a.id) || a.name.localeCompare(b.name));
     const count = pid => S.data.tasks.filter(t => t.projectId === pid && inView(t, 'this')).length;
     const row = p => {
@@ -1414,14 +1482,7 @@
         <span class="pcard-actions">${joined(p.id) ? '<span class="joined">✓ Joined</span>' : `<button type="button" class="ghost small-btn" data-join="${esc(p.id)}">Join</button>`}${CLOSED.indexOf(p.status) === -1 ? `<button type="button" class="secondary small-btn" data-addto="${esc(p.id)}">${icon('plus')} Task</button>` : ''}</span>
       </div>`;
     };
-    root.innerHTML = `
-      <div class="page-title"><h2>Projects</h2><p class="muted">${isManager() ? 'Every project and the teams on it. Join one, or add a task to it.' : 'Every project. Join one or add a task to it; you see your own tasks.'}</p></div>
-      <div class="filters">${searchBox('projects', 'Find a project')}
-        <div class="seg" role="group" aria-label="Status">${[['open', 'Open'], ['closed', 'Closed'], ['all', 'All']].map(s => `<button type="button" data-pstatus="${s[0]}" class="${st === s[0] ? 'on' : ''}">${s[1]}</button>`).join('')}</div></div>
-      <div class="prows2">${list.map(row).join('') || '<div class="empty"><h3>No projects match</h3></div>'}</div>`;
-    bindFilters(root, () => {});
-    $$('[data-pstatus]', root).forEach(b => b.onclick = () => { S.pstatus = b.dataset.pstatus; render(); });
-    bindProjectLinks(root); bindJoin(root);
+    return list.map(row).join('') || '<div class="empty"><h3>No projects match</h3></div>';
   }
 
   // ---------- Manage (admins: everything · department admins: their own department) ----------
@@ -1851,18 +1912,19 @@
   // ---------- Shell ----------
 
   // Left side on a computer, bottom bar on a phone. Each page has one job.
+  // One Tasks page; the menu (left on a computer, bottom bar on a phone) jumps to its scope or view.
   const TABS = [
-    { id: 'my', label: 'My tasks', icon: 'tasks', view: viewMy },
-    { id: 'team', label: 'Team', icon: 'meeting', view: viewTeam, manager: true },
-    { id: 'projects', label: 'Projects', icon: 'projects', view: viewProjects },
+    { id: 'mine', label: 'Mine', icon: 'tasks', view: root => viewTasks(root, 'mine') },
+    { id: 'team', label: 'Team', icon: 'meeting', view: root => viewTasks(root, 'team'), manager: true },
+    { id: 'projects', label: 'Projects', icon: 'projects', view: root => viewTasks(root, 'projects') },
     { id: 'manage', label: 'Manage', icon: 'manage', view: viewManage, manager: true },
   ];
-  const OLD_ROUTES = { week: 'my', tasks: 'my', meeting: 'team' };
+  const OLD_ROUTES = { my: 'mine', week: 'mine', tasks: 'mine', meeting: 'team' };
 
-  /** The page in the address (#/my, #/team, #/projects, #/manage); managers start on Team. */
+  /** The place in the address (#/mine, #/team, #/projects, #/manage); managers start on Team. */
   function currentTab() {
     const allowed = TABS.filter(t => !t.manager || isManager());
-    let id = location.hash.replace(/^#\/?/, '') || (isManager() ? 'team' : 'my');
+    let id = location.hash.replace(/^#\/?/, '') || (isManager() ? 'team' : 'mine');
     id = OLD_ROUTES[id] || id;
     return allowed.find(t => t.id === id) || allowed[0];
   }
@@ -1874,8 +1936,11 @@
     $('#avatarBtn').title = me().name;
     $('#addTaskBtn').hidden = tab.id === 'manage';
     document.body.dataset.tab = tab.id;
-    $('#appnav').innerHTML = TABS.filter(t => !t.manager || isManager()).map(t =>
-      `<a href="#/${t.id}" class="${t.id === tab.id ? 'on' : ''}"${t.id === tab.id ? ' aria-current="page"' : ''}>${icon(t.icon)}<span>${t.label}</span></a>`).join('');
+    $('#appnav').innerHTML = `<div class="nav-who"><span class="avatar">${esc(initials(me().name))}</span><span>Welcome, <b>${esc(me().name.split(/\s+/)[0])}</b><small>${esc(me().title || me().role)}</small></span></div>` +
+      TABS.filter(t => !t.manager || isManager()).map(t =>
+        `<a href="#/${t.id}" class="${t.id === tab.id ? 'on' : ''}"${t.id === tab.id ? ' aria-current="page"' : ''}>${icon(t.icon)}<span>${t.label}</span></a>`).join('') +
+      `<div class="nav-foot"><button type="button" class="nav-logout" id="navLogout">${icon('left')} Logout</button></div>`;
+    $('#navLogout').onclick = async () => { await Api.logout(); location.reload(); };
     // Text half-typed into an "add" box survives the redraw (e.g. ticking a task meanwhile).
     const kept = {};
     const keepSel = '#view [data-keep], #dialog[data-mode="task"] [data-keep]';
