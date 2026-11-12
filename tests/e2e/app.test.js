@@ -345,6 +345,19 @@ async function phone(browser, url) {
     await page.goto(url + '#/' + id); await page.waitForTimeout(200);
     ok(await page.evaluate(() => document.documentElement.scrollWidth) <= 390, 'phone: no sideways scrolling (' + id + ')');
   }
+  // The same with a wide font (fonts differ between phones; a narrow test font hid an overflow once)
+  await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' });
+  for (const id of ['team', 'my', 'projects', 'manage']) {
+    await page.goto(url + '#/' + id); await page.waitForTimeout(200);
+    await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' });
+    const layouts = await page.$$eval('[data-layout]', bs => bs.map(b => b.dataset.layout));
+    let widest = 0;
+    for (const l of layouts.length ? layouts : ['']) {
+      if (l) { await page.$eval(`[data-layout="${l}"]`, b => b.click()); await page.waitForTimeout(100); await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' }); }
+      widest = Math.max(widest, await page.evaluate(() => document.documentElement.scrollWidth));
+    }
+    ok(widest <= 390, 'phone, wide font: no sideways scrolling (' + id + ', every view)');
+  }
   await ctx.close();
 }
 
