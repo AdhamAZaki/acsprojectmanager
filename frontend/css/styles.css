@@ -1203,7 +1203,7 @@ body.wt.signed-in main { display: none; }
 .w-empty { padding: 28px 12px; text-align: center; color: var(--muted); }
 
 /* List. One set of columns for the group heading, the task rows and the add line, so everything lines up:
-   28px lead (fold arrow / tick) · title · sub-tasks · people · status */
+   28px lead (fold arrow / tick) · title · sub-tasks · comments · people · status */
 .w-groups { display: grid; gap: 8px; }
 .w-grp { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
 .w-ghead { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding: 2px 10px; min-height: 34px; position: sticky; top: 0; z-index: 1; background: var(--surface); border-radius: 10px 10px 0 0; }
@@ -1212,7 +1212,7 @@ body.wt.signed-in main { display: none; }
 button.w-gname:hover { color: var(--primary-600); text-decoration: underline; }
 .w-frame .w-caret { width: 28px; min-height: 26px; padding: 0; color: var(--muted); background: none; justify-self: center; }
 .w-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.w-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 64px 56px 92px; column-gap: 8px; align-items: center; padding: 3px 10px; min-height: 34px; border-top: 1px solid var(--border); }
+.w-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) 64px 48px 56px 92px; column-gap: 8px; align-items: center; padding: 3px 10px; min-height: 34px; border-top: 1px solid var(--border); }
 .w-row.sel, .w-card.sel, .w-table tr.sel > td { background: var(--brand-soft); }
 .w-frame .w-chk { width: 18px; height: 18px; min-height: 18px; padding: 0; border-radius: 50%; border: 2px solid var(--muted); background: none; display: grid; place-items: center; font-size: 10px; font-weight: 700; justify-self: center; }
 .w-frame .w-chk.on { background: var(--ok); border-color: var(--ok); color: var(--surface); }
@@ -1310,6 +1310,10 @@ button.w-gname:hover { color: var(--primary-600); text-decoration: underline; }
 .w-inline { display: flex; gap: 6px; margin-top: 4px; }
 .w-frame .w-inline input { flex: 1; min-width: 0; }
 .w-pfoot { display: flex; justify-content: flex-end; }
+/* Comments: who, when, then the text under the name */
+.w-cmt { display: grid; grid-template-columns: 22px minmax(0, 1fr) 22px; gap: 2px 8px; align-items: center; padding: 5px 0; }
+.w-cmt p { grid-column: 2; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.w-cmt-form { display: flex; gap: 6px; align-items: flex-end; margin-top: 6px; }
 .w-project .sp-title { margin: 0; font-size: 18px; }
 .w-project .team-edit { margin: 0; }
 .w-project .person-chip { font-size: 12px; padding: 2px 8px; }

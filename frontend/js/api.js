@@ -76,13 +76,14 @@
   });
   const mapDepartment = r => ({ id: r.id, name: r.name, teams: r.teams || [], projectTypes: r.project_types || [], crossProject: !!r.cross_project });
   const mapTask = r => ({
-    id: r.id, projectId: r.project_id, week: r.week, title: r.title, notes: r.notes || '', status: r.status,
+    id: r.id, projectId: r.project_id || '', week: r.week, title: r.title, notes: r.notes || '', status: r.status,
     team: r.team || '', blockNote: r.block_note || '', assigneeIds: r.assignee_ids || [], contactIds: r.contact_ids || [],
     subtasks: Array.isArray(r.subtasks) ? r.subtasks : [], createdBy: r.created_by,
     createdAt: stamp(r.created_at), updatedAt: stamp(r.updated_at), createdRaw: r.created_at,
     version: r.updated_at,   // exact timestamp, used to spot a teammate saving the same task first
   });
   const mapContact = r => ({ id: r.id, name: r.name, org: r.org || '' });
+  const mapComment = r => ({ id: r.id, taskId: r.task_id, author: r.author, body: r.body, createdAt: stamp(r.created_at), createdRaw: r.created_at });
   const mapMinutes = r => ({
     id: r.id, week: r.week, departmentId: r.department_id || 'AUTO', savedAt: stamp(r.updated_at), savedBy: r.created_by, snapshot: r.snapshot,
   });
@@ -120,7 +121,7 @@
   /** Turns app-side task changes into database columns (only the fields given). */
   function taskRow(c) {
     const r = {};
-    if ('projectId' in c) r.project_id = c.projectId;
+    if ('projectId' in c) r.project_id = c.projectId || null;   // a task may have no project
     if ('week' in c) r.week = c.week;
     if ('title' in c) r.title = String(c.title || '').trim();
     if ('notes' in c) r.notes = String(c.notes || '').trim();
@@ -160,6 +161,7 @@
     /** Last data seen on this device (may be stale), or null. */
     cached() {
       if (!data) data = readCache();
+      if (data && !data.comments) data.comments = [];   // saved by an older version of the app
       return data;
     },
 
@@ -173,7 +175,7 @@
         if (!res || !res.me) expire('Please sign in.');
         if (!res.me.active) {
           await sb.auth.signOut();
-          expire('Your account is not active. Ask an admin to activate it on the Team page.');
+          expire('Your account is not active. Ask an admin to activate it in Manage › People.');
         }
         if ((writeSeq !== seq || inflight > 0) && attempt < 3) continue;
         return Api._apply(res);
@@ -188,6 +190,7 @@
         projects: res.projects.map(mapProject),
         assignments: res.assignments.map(a => ({ projectId: a.project_id, userId: a.user_id })),
         tasks: (res.tasks || []).map(mapTask),
+        comments: (res.comments || []).map(mapComment),
         contacts: (res.contacts || []).map(mapContact),
         loadedAt: Date.now(),
       };
@@ -254,6 +257,28 @@
         check(await sb.from('tasks').delete().eq('id', id));
         base.delete(id);
         data.tasks = data.tasks.filter(x => x.id !== id);
+        data.comments = data.comments.filter(c => c.taskId !== id);
+        writeCache();
+      });
+    },
+
+    // ----- Comments on a task -----
+
+    /** Adds a comment as the signed-in person. Whoever can see the task can comment on it. */
+    async addComment(taskId, body) {
+      return write(async () => {
+        const c = mapComment(check(await sb.from('task_comments').insert({ task_id: taskId, author: data.me.id, body: String(body || '').trim() }).select().single()));
+        data.comments = data.comments.concat(c);
+        writeCache();
+        return c;
+      });
+    },
+
+    /** Deletes a comment (its author, or an admin). */
+    async deleteComment(id) {
+      return write(async () => {
+        check(await sb.from('task_comments').delete().eq('id', id));
+        data.comments = data.comments.filter(c => c.id !== id);
         writeCache();
       });
     },
@@ -313,10 +338,10 @@
 
     // ----- Live updates -----
 
-    /** Calls onChange(table) whenever a teammate changes tasks, projects, assignments or 3rd parties. */
+    /** Calls onChange(table) whenever a teammate changes tasks, comments, projects, assignments or 3rd parties. */
     subscribe(onChange) {
       const ch = sb.channel('acs-live');
-      ['tasks', 'assignments', 'contacts', 'projects'].forEach(table => {
+      ['tasks', 'task_comments', 'assignments', 'contacts', 'projects'].forEach(table => {
         ch.on('postgres_changes', { event: '*', schema: 'public', table: table }, payload => onChange(table, payload));
       });
       ch.subscribe(status => onChange('status', { status: status }));

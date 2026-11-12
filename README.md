@@ -7,7 +7,7 @@ Each engineer signs in with a **username and password** and works on **one page*
 - **Filter:** one search box. Type to find a task, or pick a week, status, person, team or project; each filter picked shows as a tag in the box.
 - **View:** **List · Board · Table** only change the shape. **Group by** project, person, team, status or week, **Sort**, and **Show empty groups** work the same in all three. Groups keep a fixed order, so nothing jumps when a task changes.
 - **Shortcuts:** one-tap filters with counts: My tasks, Open, Blocked, Done, Carried over, No update, and the teams.
-- **Tasks:** type under any group to add a task to it, or use **+ Task**. A task opens in a panel on the right (full screen on a phone): status (To do, Doing, Blocked with a reason, Done), project, week, people and 3rd parties (people without an account), and sub-tasks that are edited in place. Unfinished tasks roll over to the next week automatically.
+- **Tasks:** type under any group to add a task to it, or use **+ Task**. A task opens in a panel on the right (full screen on a phone): status (To do, Doing, Blocked with a reason, Done), project, week, people and 3rd parties (people without an account), sub-tasks that are edited in place, and **comments** (who wrote each one, and when). A task can be on a project or on **no project**. Unfinished tasks roll over to the next week automatically.
 
 Projects are **shared by every team** (PLC, AVEVA, BMS, UI/UX, Dev): each team adds its own tasks to the same project, and a project shows the teams on it. Tapping a project's name opens it in the same panel: who is on it, Join / Leave, its notes and its last 8 weeks.
 
@@ -26,15 +26,16 @@ The page is the same for everyone; what a person may not do is hidden. **Employe
  ┌────────────────────────┐   HTTPS    ┌────────────────────────────────────────┐
  │ frontend/  HTML/CSS/JS │ ─────────▶ │ Auth: usernames + hashed passwords      │
  │  supabase-js           │            │ Postgres: profiles, projects,           │
- │  no build step         │ ◀───────── │   assignments, tasks, contacts,         │
- └────────────────────────┘  live      │   meetings (saved minutes), departments │
+ │  no build step         │ ◀───────── │   assignments, tasks, task_comments,    │
+ └────────────────────────┘  live      │   contacts, meetings, departments       │
                              updates   │ Row Level Security = who can do what    │
                                        └────────────────────────────────────────┘
 ```
 
 - **No server of our own**: the website talks to Supabase directly. Everything the app needs loads in one request, and the last data is kept on the device so the app opens instantly.
 - **Security is enforced in the database** (`supabase/migrations/`):
-  - **Members** see every project and can join one. They see and edit the tasks on their projects, and tasks assigned to them. They can't change who created a task or move one into a project they're not on.
+  - **Members** see every project and can join one. They see and change only their own tasks (created by them or assigned to them), with or without a project. They can't change who created a task or put a colleague on one.
+  - **Comments** on a task can be read and written by whoever can see the task. A comment is never edited; its author or an admin can delete it.
   - **Admins** manage projects, the team, assignments, 3rd parties and saved minutes, in every department.
   - **Dept admins** do the same for their own department only (they can't touch another department or create admins).
   - **Departments** (Automation, BMS) share the database: people and projects each belong to one, every department's board is visible to everyone, and saved minutes are kept per department and week.

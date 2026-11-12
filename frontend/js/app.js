@@ -6,6 +6,7 @@
 //   Shortcuts  one-tap filters: My tasks, Open, Blocked, Done, Carried over, No update, the teams.
 //   A task or a project opens in the panel on the right; + Task, + Project, Meeting (email and save
 //   the minutes) and Manage (people and passwords, projects, departments, 3rd parties) are at the top.
+//   A task may have no project. Each task has comments: who wrote each one, and when.
 // The page is the same for an employee, a department admin and an admin: what a person may not do is
 // hidden or switched off. Projects are shared by every team (PLC, AVEVA, BMS, UI/UX, Dev, ...).
 // Employees see only their own tasks (the database enforces it); admins see everything, department
@@ -82,7 +83,9 @@
   const isAdmin = () => S.data && S.data.me.role === 'Admin';
   const me = () => S.data.me;
   const member = id => S.data.team.find(m => m.id === id) || { name: 'Unknown', username: '', team: '' };
-  const project = id => S.data.projects.find(p => p.id === id) || { id: id, name: '(removed project)', type: '', status: '' };
+  /** A task may have no project: its projectId is ''. */
+  const NO_PROJECT = { id: '', name: 'No project', type: '', status: '' };
+  const project = id => !id ? NO_PROJECT : S.data.projects.find(p => p.id === id) || { id: id, name: '(removed project)', type: '', status: '' };
   const contact = id => S.data.contacts.find(c => c.id === id);
 
   // ---------- Departments and teams ----------
@@ -148,7 +151,7 @@
     const ids = new Set(S.data.projects.filter(p => p.departmentId === d).map(p => p.id));
     S.data.assignments.forEach(a => { if (member(a.userId).departmentId === d) ids.add(a.projectId); });
     S.data.tasks.forEach(t => { if (relevant(t)) ids.add(t.projectId); });
-    return S.data.projects.filter(p => ids.has(p.id));
+    return S.data.projects.filter(p => ids.has(p.id)).concat(ids.has('') ? [NO_PROJECT] : []);   // tasks without a project are in the minutes too
   }
   /** Dept admins (and admins) lead the people of their department, on any project. */
   const leadsPerson = id => isAdmin() || (me().role === 'Dept admin' && member(id).departmentId === me().departmentId);
@@ -318,11 +321,21 @@
   /** Small tags under a task's title: its project (unless grouped by project), carried over, a later week, blocked and why. */
   function tagsHtml(t, gid) {
     return [
-      gid !== 'project' ? `<button type="button" class="w-plink" data-act="project" data-id="${esc(t.projectId)}">${esc(project(t.projectId).name)}</button>` : '',
+      gid === 'project' ? '' : t.projectId ? `<button type="button" class="w-plink" data-act="project" data-id="${esc(t.projectId)}">${esc(project(t.projectId).name)}</button>` : '<span>No project</span>',
       t.week < THIS && !isDone(t) ? `<span class="tag-carry">from week ${wnum(t.week)}</span>`
         : gid !== 'week' && t.week > THIS ? `<span class="w-pill">${t.week === NEXT ? 'next week' : 'week ' + wnum(t.week)}</span>` : '',
       isBlocked(t) ? `<span class="tag-block">Blocked${t.blockNote ? ': ' + esc(t.blockNote) : ''}</span>` : '',
     ].join('');
+  }
+  const commentsOf = id => (S.data.comments || []).filter(c => c.taskId === id);
+  const cmtChip = t => { const n = commentsOf(t.id).length; return n ? `<button type="button" class="w-chip" data-act="open" data-id="${t.id}" title="Comments">💬 ${n}</button>` : ''; };
+  /** The comments on a task: who wrote each one and when, newest last, and a box to add one. Whoever can see the task can comment. */
+  function commentsHtml(t) {
+    const list = commentsOf(t.id);
+    return `<div><span class="w-label">Comments${list.length ? ' · ' + list.length : ''}</span>
+      ${list.map(c => `<div class="w-cmt">${av(c.author)}<span><b>${esc(member(c.author).name)}</b> <span class="muted small">${esc(c.createdAt)}</span></span>
+        ${c.author === me().id || isAdmin() ? `<button type="button" class="w-x" data-act="cmtdel" data-cid="${esc(c.id)}" aria-label="Delete this comment">×</button>` : '<span></span>'}<p>${esc(c.body)}</p></div>`).join('') || '<p class="muted small">No comments yet.</p>'}
+      <form class="w-cmt-form" data-form="comment" data-id="${t.id}"><textarea id="p-cmt" data-keep="cmt-${t.id}" rows="2" maxlength="2000" placeholder="Write a comment as ${esc(me().name)}" aria-label="Write a comment"></textarea><button class="primary small" type="submit">Send</button></form></div>`;
   }
   const subsChip = t => t.subtasks.length ? `<button type="button" class="w-chip${S.subsOpen[t.id] ? ' on' : ''}" data-act="subs" data-id="${t.id}" title="Show sub-tasks" aria-expanded="${!!S.subsOpen[t.id]}">☑ ${t.subtasks.filter(s => s.done).length}/${t.subtasks.length} ${S.subsOpen[t.id] ? '▴' : '▾'}</button>` : '';
   /**
@@ -379,7 +392,7 @@
   function pickerOptions(kind, id) {
     const t = id && findTask(id);
     if (kind === 'project' || kind === 'qa-project') {
-      return openProjects().concat(t && !openProjects().some(p => p.id === t.projectId) ? [project(t.projectId)] : []).map(p => [p.id, p.name, p.client || '']);
+      return [NO_PROJECT].concat(openProjects(), t && t.projectId && !openProjects().some(p => p.id === t.projectId) ? [project(t.projectId)] : []).map(p => [p.id, p.name, p.client || '']);
     }
     if (kind === 'addperson') {
       return S.data.team.filter(m => m.active && t.assigneeIds.indexOf(m.id) === -1 && mayAssign(t, m)).sort((a, b) => a.name.localeCompare(b.name))
@@ -435,7 +448,8 @@
         <p>${statusSel(t)}${isBlocked(t) ? ` <span class="tag-block">${esc(t.blockNote || 'no reason given')}</span>` : ''}</p>
         <div><span class="w-label">People</span><div class="w-pchips">${avatars(t)} ${esc(who(t) || owners)}</div></div>
         ${t.subtasks.length ? `<div><span class="w-label">Sub-tasks</span>${subsHtml(t, 'p', false)}</div>` : ''}
-        <p class="muted small">This is ${esc(owners)}’s task. Only they, their department admin or an admin can change it.</p></div>`;
+        <p class="muted small">This is ${esc(owners)}’s task. Only they, their department admin or an admin can change it. You can comment on it.</p>
+        ${commentsHtml(t)}</div>`;
     }
     const lead = isAdmin() || leadsTask(t);
     const on = t.assigneeIds.map(member).filter(m => m.id);
@@ -455,6 +469,7 @@
         <div class="w-pchips" style="margin-top:6px">${canAdd ? pickerBtn('addperson', t.id, '+ Add a person') : ''}${pickerBtn('addext', t.id, '+ Add a 3rd party')}</div>
         <form class="w-inline" data-form="ext" data-id="${t.id}" style="margin-top:6px"><input id="newext-${t.id}" data-keep="ext-${t.id}" placeholder="Or type a new 3rd party (e.g. Eng. Moataz)" autocomplete="off"><button class="secondary small-btn" type="submit">Add</button></form></div>
       <div><span class="w-label">Sub-tasks${t.subtasks.length ? ' · ' + t.subtasks.filter(s => s.done).length + '/' + t.subtasks.length : ''}</span>${subsHtml(t, 'p', true)}</div>
+      ${commentsHtml(t)}
       ${lead || t.createdBy === me().id ? `<div class="w-pfoot"><button type="button" class="ghost danger-text small-btn" data-act="del" data-id="${t.id}">Delete task</button></div>` : ''}
     </div>`;
   }
@@ -757,12 +772,12 @@
     const saved = await guard(() => Api.addTask({ projectId: v.projectId, week: v.week, title: v.title, status: v.status || 'To Do',
       team: member(v.forId).team || '', assigneeIds: [v.forId], contactIds: [], subtasks: [],
       createdBy: v.forId === me().id ? undefined : v.forId }));
-    if (saved) rememberProject(v.projectId);
+    if (saved && v.projectId) rememberProject(v.projectId);
     return saved;
   }
 
   /**
-   * The add sheet: what (title), where (project, with a search box), who for (managers), when (week)
+   * The add sheet: what (title), where (a project or none, from a list with a search box), who for (managers), when (week)
    * and "already done". The project, person and week stay chosen for the next task ("Add" keeps the
    * sheet open), so logging several tasks is: type, Add, type, Add.
    * opts: { pid, week, forId, status, title } to start from.
@@ -776,7 +791,7 @@
     if (opts.week) qa.week = opts.week;
     if (!qa.week || qa.week < lo || qa.week > hi) qa.week = THIS;
     if (opts.pid) qa.pid = opts.pid;
-    if (!qa.pid || !isOpen(qa.pid)) qa.pid = isOpen(S.fProject) ? S.fProject : recentProjects()[0] || '';
+    if (!qa.pid || !isOpen(qa.pid)) qa.pid = isOpen(S.fProject) ? S.fProject : '';   // no project, unless one is chosen
     qa.forId = opts.forId && canAddFor(opts.forId) ? opts.forId : defaultFor();
     closePicker();
     dlg.innerHTML = `<form class="sheet qa-sheet" id="qaForm">
@@ -784,7 +799,7 @@
       <div class="sheet-body">
         <p class="qa-label" style="margin-top:0">Task</p>
         <textarea name="title" rows="2" maxlength="300" placeholder="${qa.week > THIS ? 'e.g. Loop check LCP-02 with the client' : 'e.g. Commission AHU-3 controller on level 2'}" aria-label="Task" required>${esc(opts.title || '')}</textarea>
-        <p class="qa-label">Project</p>${pickerBtn('qa-project', '', qa.pid ? project(qa.pid).name : 'Choose a project…', 'wide')}
+        <p class="qa-label">Project</p>${pickerBtn('qa-project', '', project(qa.pid).name, 'wide')}
         ${isManager() ? `<p class="qa-label">For</p>${pickerBtn('qa-person', '', qa.forId === me().id ? 'Me' : member(qa.forId).name, 'wide')}` : ''}
         <p class="qa-label">When</p><select name="week" aria-label="Week">${weekChoices(qa.week)}</select>
         <label class="check" style="margin-top:12px"><input type="checkbox" name="done"${opts.status === 'Done' ? ' checked' : ''}> Already done</label>
@@ -797,7 +812,6 @@
       e.preventDefault();
       const title = f.elements.title.value.replace(/\s+/g, ' ').trim();
       if (!title) { f.elements.title.focus(); return; }
-      if (!qa.pid) { toast('Choose the project', true); return; }
       const btn = $('button[type=submit]', f); btn.disabled = true;
       const done = f.elements.done.checked;
       const saved = await addTask({ projectId: qa.pid, week: qa.week, title: title, forId: qa.forId,
@@ -879,7 +893,7 @@
     const ws = weeksOf(S.week), w = whoId(), q = S.q.trim();
     return S.data.tasks.filter(t => inWeeks(t, ws) && (!w || ownersOf(t).indexOf(w) !== -1) &&
       (!isManager() || ownersOf(t).some(id => teamMatch(teamKeyOf(member(id))))) &&
-      (S.fProject === 'all' || t.projectId === S.fProject) && searchOk(t, q) && (!withStatus || statusOk(t)));
+      (S.fProject === 'all' || (S.fProject === 'none' ? !t.projectId : t.projectId === S.fProject)) && searchOk(t, q) && (!withStatus || statusOk(t)));
   }
   /** Everything that can be filtered. The search box, its tags and the shortcuts all read this one list. */
   function filterDefs() {
@@ -901,7 +915,7 @@
       defs.push({ k: 'tfilter', label: 'Team', def: 'all', opts: teams });
     }
     defs.push({ k: 'fProject', label: 'Project', def: 'all', opts: S.data.projects.filter(p => CLOSED.indexOf(p.status) === -1 || p.id === S.fProject)
-      .sort((a, b) => a.name.localeCompare(b.name)).map(p => [p.id, p.name]) });
+      .sort((a, b) => a.name.localeCompare(b.name)).map(p => [p.id, p.name]).concat([['none', 'No project']]) });
     return defs;
   }
   const fval = k => k === 'tfilter' ? teamFilter() : S[k];
@@ -940,7 +954,7 @@
   /** Every group a grouping could show, inside the filters in use: all open projects, all people, all teams, all statuses... */
   function allKeys(gid) {
     const w = whoId();
-    if (gid === 'project') return S.fProject !== 'all' ? [S.fProject] : openProjects().map(p => p.id);
+    if (gid === 'project') return S.fProject === 'none' ? [''] : S.fProject !== 'all' ? [S.fProject] : openProjects().map(p => p.id).concat(['']);
     if (gid === 'person') return peopleInView().map(m => m.id);
     if (gid === 'team') return teamKeys().filter(k => w ? k === teamKeyOf(member(w)) : teamMatch(k));
     if (gid === 'status') return S.fStatus === 'all' ? STATUSES.map(s => s[0]) : SPECIAL[S.fStatus] ? ['To Do', 'In Progress', 'Blocked'] : [S.fStatus];
@@ -948,7 +962,7 @@
     return [''];
   }
   /**
-   * Groups in a fixed order: names A–Z, teams, statuses and weeks in their own order. A change to a
+   * Groups in a fixed order: names A–Z ("No project" last), teams, statuses and weeks in their own order. A change to a
    * task never moves a group. "Show empty" adds the groups with no tasks (not while searching).
    */
   function groups(list) {
@@ -961,22 +975,22 @@
       keys.forEach(k => { (map[k] = map[k] || []).push(t); });
     });
     const order = gid === 'team' ? teamKeys() : gid === 'status' ? STATUSES.map(s => s[0]) : null;
-    const keys = Object.keys(map).sort((a, b) => order ? order.indexOf(a) - order.indexOf(b) : gid === 'week' ? a.localeCompare(b) : f.title(a).localeCompare(f.title(b)));
+    const keys = Object.keys(map).sort((a, b) => order ? order.indexOf(a) - order.indexOf(b) : gid === 'week' ? a.localeCompare(b) : (a === '') - (b === '') || f.title(a).localeCompare(f.title(b)));
     const cmp = SORTS[S.sort][1];
     return keys.map(k => ({ key: k, title: f.title(k), tasks: map[k].slice().sort(cmp), field: gid }));
   }
   /** May this person move tasks into this group (by dragging), or add a task straight into it? */
   const canSet = g => !!FIELD[g.field].set && (g.field !== 'person' || canAddFor(g.key)) && (g.field !== 'project' || CLOSED.indexOf(project(g.key).status) === -1);
   const canAddTo = g => g.field !== 'team' && (g.field === 'none' || canSet(g));
-  /** Add a task from the line under a group: it takes the group's project, person, status or week. Without a project, the add sheet asks for it. */
+  /** Add a task from the line under a group: it takes the group's project, person, status or week (and no project, unless the group or the filter names one). */
   async function addInline(title, g) {
     const ws = weeksOf(S.week);
-    const v = { title: title, projectId: S.fProject !== 'all' ? S.fProject : '', week: ws.indexOf(THIS) !== -1 ? THIS : ws[0], forId: defaultFor(), status: 'To Do' };
+    const v = { title: title, projectId: S.fProject !== 'all' && S.fProject !== 'none' ? S.fProject : '', week: ws.indexOf(THIS) !== -1 ? THIS : ws[0], forId: defaultFor(), status: 'To Do' };
     if (g.field === 'project') v.projectId = g.key;
     if (g.field === 'person') v.forId = g.key;
     if (g.field === 'status') v.status = g.key;
     if (g.field === 'week') v.week = g.key;
-    if (!v.projectId || CLOSED.indexOf(project(v.projectId).status) !== -1) return quickAddSheet({ title: title, week: v.week, forId: v.forId, status: v.status });
+    if (CLOSED.indexOf(project(v.projectId).status) !== -1) return quickAddSheet({ title: title, week: v.week, forId: v.forId, status: v.status });   // a closed project: pick another
     if (await addTask(v)) toast('Added · ' + project(v.projectId).name + (v.forId === me().id ? '' : ' · for ' + shortName(member(v.forId).name)));
     render();
   }
@@ -986,7 +1000,7 @@
   const addLine = (g, i) => canAddTo(g) ? `<form class="w-add" data-form="add" data-g="${i}"><input id="add-${i}" data-keep="add-${esc(g.field + ':' + g.key)}" autocomplete="off" maxlength="300" placeholder="+ Add a task${g.field === 'none' ? '' : ' to ' + esc(g.title)} (type, then Enter)" aria-label="Add a task${g.field === 'none' ? '' : ' to ' + esc(g.title)}"></form>` : '';
   const groupMark = g => g.field === 'person' ? av(g.key) : g.field === 'team' ? `<span class="w-dot tc-${slug(g.title)}"></span>` : '';
   function groupHead(g, i) {
-    const p = g.field === 'project' ? project(g.key) : null;
+    const p = g.field === 'project' && g.key ? project(g.key) : null;
     return `<button type="button" class="w-caret" data-act="fold" data-g="${i}" aria-label="Fold or unfold ${esc(g.title)}">${S.folded[g.field + ':' + g.key] ? '▸' : '▾'}</button>
       <div class="w-gtitle">${groupMark(g)}${p ? `<button type="button" class="w-gname" data-act="project" data-id="${esc(p.id)}">${esc(g.title)}</button>` : `<h3 class="w-gname">${esc(g.title)}</h3>`}<span class="w-count">${g.tasks.length}</span>
         ${g.field === 'person' ? teamChip(teamKeyOf(member(g.key))) : ''}${p ? statusPill(p) + `<span class="tchips">${teamsOnProject(p.id).map(k => teamChip(k)).join('')}</span>` : ''}</div>
@@ -999,7 +1013,7 @@
       ${S.folded[g.field + ':' + g.key] ? '' : g.tasks.map(t => `<div class="w-row${isDone(t) ? ' done' : ''}${S.task === t.id ? ' sel' : ''}">
         <button type="button" class="w-chk${isDone(t) ? ' on' : ''}" data-act="done" data-id="${t.id}"${canEditTask(t) ? '' : ' disabled'} aria-label="${isDone(t) ? 'Mark as not done' : 'Mark as done'}">${isDone(t) ? '✓' : ''}</button>
         <div><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button><div class="w-meta">${tagsHtml(t, g.field)}</div></div>
-        <div class="w-side"><span class="c-sub">${subsChip(t)}</span><span class="c-ppl">${peopleCell(t, g.field)}</span><span class="c-st">${statusSel(t)}</span></div>
+        <div class="w-side"><span class="c-sub">${subsChip(t)}</span><span class="c-cmt">${cmtChip(t)}</span><span class="c-ppl">${peopleCell(t, g.field)}</span><span class="c-st">${statusSel(t)}</span></div>
         ${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</div>`).join('') + addLine(g, i)}</section>`).join('')}</div>`;
   }
   function boardHtml(gs) {
@@ -1007,20 +1021,20 @@
       ${g.tasks.map(t => { const drag = canSet(g) && canEditTask(t); return `<article class="w-card${isDone(t) ? ' done' : ''}${S.task === t.id ? ' sel' : ''}"${drag ? ` data-drag="${t.id}"` : ''}>
         <div class="w-ctitle">${drag ? '<span class="grip" title="Drag to move">⋮⋮</span>' : ''}<button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button></div>
         <div class="w-meta">${tagsHtml(t, g.field)}</div>
-        <div class="w-meta">${subsChip(t)}<span class="w-grow"></span>${peopleCell(t, g.field)}${g.field === 'status' ? '' : statusSel(t)}</div>
+        <div class="w-meta">${subsChip(t)}${cmtChip(t)}<span class="w-grow"></span>${peopleCell(t, g.field)}${g.field === 'status' ? '' : statusSel(t)}</div>
         ${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</article>`; }).join('')}
       ${addLine(g, i) || (g.tasks.length ? '' : '<p class="muted small w-none">Nothing here</p>')}</section>`).join('')}</div>`;
   }
   function tableHtml(gs) {
-    return `<div class="w-twrap"><table class="w-table"><thead><tr><th>Task</th><th>Project</th><th>Person</th><th>Week</th><th>Status</th><th>Sub-tasks</th></tr></thead><tbody>
-      ${gs.map((g, i) => (g.field === 'none' ? '' : `<tr class="w-gh"><td colspan="6">${groupMark(g)} ${esc(g.title)} <span class="w-count">${g.tasks.length}</span></td></tr>`) +
+    return `<div class="w-twrap"><table class="w-table"><thead><tr><th>Task</th><th>Project</th><th>Person</th><th>Week</th><th>Status</th><th>Sub-tasks</th><th>Comments</th></tr></thead><tbody>
+      ${gs.map((g, i) => (g.field === 'none' ? '' : `<tr class="w-gh"><td colspan="7">${groupMark(g)} ${esc(g.title)} <span class="w-count">${g.tasks.length}</span></td></tr>`) +
         g.tasks.map(t => { const edit = canEditTask(t); return `<tr class="${isDone(t) ? 'done' : ''}${S.task === t.id ? ' sel' : ''}">
         <td class="w-tt"><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button>${t.week < THIS && !isDone(t) ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}${isBlocked(t) && t.blockNote ? ` <span class="tag-block">${esc(t.blockNote)}</span>` : ''}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</td>
         <td>${edit ? pickerBtn('project', t.id, project(t.projectId).name, 'cell') : esc(project(t.projectId).name)}</td>
         <td><span class="w-meta">${avatars(t)} ${esc(ownersOf(t).map(id => shortName(member(id).name)).join(', '))}</span></td>
         <td>${edit ? `<select class="w-cell" id="tw-${t.id}" data-chg="week" data-id="${t.id}" aria-label="Week">${weekChoices(t.week)}</select>` : 'Week ' + wnum(t.week)}</td>
-        <td>${statusSel(t)}</td><td>${subsChip(t) || '<span class="muted">–</span>'}</td></tr>`; }).join('') +
-        (addLine(g, i) ? `<tr class="w-addtr"><td colspan="6">${addLine(g, i)}</td></tr>` : '')).join('')}</tbody></table></div>`;
+        <td>${statusSel(t)}</td><td>${subsChip(t) || '<span class="muted">–</span>'}</td><td>${cmtChip(t) || '<span class="muted">–</span>'}</td></tr>`; }).join('') +
+        (addLine(g, i) ? `<tr class="w-addtr"><td colspan="7">${addLine(g, i)}</td></tr>` : '')).join('')}</tbody></table></div>`;
   }
   /**
    * Drag and drop with a mouse or a finger (on a phone: the ⋮⋮ handle, so the page still scrolls):
@@ -1176,7 +1190,7 @@
     $('#avatarBtn').textContent = initials(me().name);
     $('#avatarBtn').title = me().name;
     const defs = filterDefs();
-    if (S.fProject !== 'all' && !S.data.projects.some(p => p.id === S.fProject)) S.fProject = 'all';   // removed meanwhile
+    if (S.fProject !== 'all' && S.fProject !== 'none' && !S.data.projects.some(p => p.id === S.fProject)) S.fProject = 'all';   // removed meanwhile
     const base = tasksInView(false), list = base.filter(statusOk), gs = groups(list);
     render.groups = gs;
     $('#gsearch').innerHTML = searchHtml(defs);
@@ -1246,6 +1260,12 @@
       if (!confirm('Delete this task?')) return false;
       S.lastWrite = Date.now();
       Api.deleteTask(t.id).then(() => toast('Task deleted'), e => toast(e.message, true)).then(() => { if (S.task === t.id) S.task = null; render(); });
+      return false;
+    },
+    cmtdel: b => {
+      if (!confirm('Delete this comment?')) return false;
+      S.lastWrite = Date.now();
+      guard(() => Api.deleteComment(b.dataset.cid)).then(render);
       return false;
     },
     filter: (b, k) => { setFilter(k, b.dataset.v); S.q = ''; S.searchOpen = false; },
@@ -1330,11 +1350,13 @@
     const f = e.target.closest('[data-form]');
     if (!f || !S.data) return;
     e.preventDefault();
-    const kind = f.dataset.form, t = f.dataset.id ? findTask(f.dataset.id) : null, i = $('input', f), v = i.value.replace(/\s+/g, ' ').trim();
+    const kind = f.dataset.form, t = f.dataset.id ? findTask(f.dataset.id) : null, i = $('input, textarea', f);
+    const v = kind === 'comment' ? i.value.trim() : i.value.replace(/\s+/g, ' ').trim();   // a comment keeps its line breaks
     if (!v) return;
     i.value = '';
     if (kind === 'add') addInline(v, render.groups[Number(f.dataset.g)]);
     else if (kind === 'sub' && t) updateTask(t, y => ({ subtasks: y.subtasks.concat({ t: v, done: false }) }));
+    else if (kind === 'comment' && t) { S.lastWrite = Date.now(); guard(() => Api.addComment(t.id, v)).then(render); }
     else if (kind === 'ext' && t) {
       guard(() => Api.addContact(v)).then(c => {
         if (!c) return;
@@ -1355,6 +1377,7 @@
     }
     if (el.id === 'gq' && e.key === 'Enter') { e.preventDefault(); closeSugg(); return; }
     if (el.id === 'p-title' && e.key === 'Enter') { e.preventDefault(); el.blur(); return; }
+    if (el.id === 'p-cmt' && e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); el.form.requestSubmit(); return; }
     if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && $('#sugg') && el.closest && el.closest('#gsearch')) {
       const items = $$('#sugg button'), i = items.indexOf(el);
       const next = e.key === 'ArrowDown' ? items[i + 1] : i <= 0 ? $('#gq') : items[i - 1];

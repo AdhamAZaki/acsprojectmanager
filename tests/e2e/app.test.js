@@ -57,7 +57,7 @@ async function onePage(browser, url) {
   ok((await page.$$eval('[data-act="layout"]', b => b.map(x => x.textContent))).join() === 'List,Board,Table', 'View: List · Board · Table (they only change the shape)');
   ok((await page.$$eval('#v-group option', o => o.map(x => x.textContent))).join() === 'Project,Person,Team,Status,Week,No grouping', 'admin: group by project, person, team, status, week or nothing');
   ok(await page.isVisible(`.w-row >> text=${T1}`) && await page.isVisible(`.w-row >> text=${T2}`), 'admin starts on everyone’s tasks');
-  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit', 'projects are in name order');
+  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit,No project', 'projects are in name order, “No project” last');
   await page.click('[data-act="short"][data-v="me"]');
   ok((await tags(page)).join() === 'Person: Me' && await page.isVisible(`.w-row >> text=${T1}`) && !(await page.isVisible(`#view >> text=${T2}`)),
     'the My tasks shortcut is a filter: it shows as the tag “Person: Me”');
@@ -71,10 +71,12 @@ async function onePage(browser, url) {
   await page.click('#addTaskBtn');
   await page.waitForSelector('#qaForm');
   ok((await page.textContent('#qaForm [data-kind="qa-person"] span')) === 'Me', 'admin: the For box starts on me');
-  await page.fill('#qaForm textarea[name=title]', 'Test the duty and standby pump logic');
+  await page.fill('#qaForm textarea[name=title]', 'Renew the AVEVA licences');
   await page.click('#qaForm button[type=submit]');
-  await sleep(200);
-  ok(!(await task(page, 'Test the duty and standby pump logic')), 'a task needs a project (none is picked for you)');
+  await sleep(400);
+  const loose = await task(page, 'Renew the AVEVA licences');
+  ok(loose && loose.project_id === null && loose.assignee_ids.length === 1, 'a task can be added without a project');
+  await page.fill('#qaForm textarea[name=title]', 'Test the duty and standby pump logic');
   await page.click('#qaForm [data-kind="qa-project"]');
   await page.fill('#pop-q', 'alp');
   ok((await page.$$eval('.w-pop-item', x => x.filter(e => !e.hidden).map(e => e.textContent))).join() === 'Alpha Plant', 'the project list has a search box');
@@ -106,6 +108,10 @@ async function onePage(browser, url) {
   await page.waitForSelector('.w-row >> text=Prepare the FAT procedure document');
   ok(await page.isVisible('.w-row:has-text("Prepare the FAT") .w-pill >> text=next week'), 'a task for next week says so');
   ok(!(await page.isVisible('#view >> text=Mona: loop check the dosing skid')), 'a task added for Mona is not under “Person: Me”');
+  ok(await page.isVisible('.w-grp[data-group=""] .w-row >> text=Renew the AVEVA licences'), 'a task without a project is listed under “No project”');
+  await filterBy(page, 'no proj', 'No project');
+  ok((await tags(page)).indexOf('Project: No project') !== -1 && await page.locator('.w-row').count() === 1, '“No project” is also a filter');
+  await page.click('.w-fchip:has-text("Project") .w-x');
   // The line under a group adds straight into it
   await page.fill('.w-grp[data-group="PRJ-0001"] .w-add input', 'Order the spare IO cards');
   await page.keyboard.press('Enter');
@@ -148,6 +154,14 @@ async function onePage(browser, url) {
   await page.click(`#panel [data-act="unasg"][data-k="${monaId}"]`);
   await sleep(400);
   ok((await task(page, T1)).assignee_ids.indexOf(monaId) === -1, 'take a person off with ×');
+  // Comments: who wrote each one, and when
+  await page.fill('#p-cmt', 'Panel B arrives on Monday');
+  await page.click('#panel [data-form="comment"] button[type=submit]');
+  await page.waitForSelector('#panel .w-cmt');
+  const cm = (await db(page)).task_comments[0];
+  ok(cm && cm.body === 'Panel B arrives on Monday' && cm.author === snap.users.adm.id && cm.task_id === t1.id, 'a comment is saved on the task, under my name');
+  ok(/Adham Admin/.test(await page.textContent('#panel .w-cmt')) && (await page.textContent(`.w-row:has-text("${T1}") [title="Comments"]`)).includes('1'),
+    'the panel shows who wrote it; the row shows how many comments there are');
   await page.click('#panel [data-act="close"]');
   await page.click(`.w-row:has-text("${T1}") .w-chk`);
   await sleep(300);
@@ -183,9 +197,9 @@ async function onePage(browser, url) {
   // Show empty groups (every layout, every grouping)
   await page.click('[data-act="layout"][data-k="list"]');
   await page.selectOption('#v-group', 'project');
-  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit', 'Show empty groups: a project with none of my tasks is still listed');
+  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit,No project', 'Show empty groups: a project with none of my tasks is still listed');
   await page.uncheck('#v-empty');
-  ok((await groupNames(page)).join() === 'Alpha Plant', '...untick it: only the groups with tasks');
+  ok((await groupNames(page)).join() === 'Alpha Plant,No project', '...untick it: only the groups with tasks');
   await page.check('#v-empty');
   ok(errors.length === 0, 'no page errors (' + errors.join('; ') + ')');
   await ctx.close();
@@ -204,7 +218,7 @@ async function employee(browser, url) {
   const gid = (await db(page)).users.gina.id;
   const tasks = (await page.evaluate(() => JSON.parse(localStorage.getItem('acs-tracker-cache-v5')))).tasks;
   ok(tasks.length === 1 && tasks.every(t => t.createdBy === gid || t.assigneeIds.indexOf(gid) !== -1), 'employee receives only her own tasks from the database');
-  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit', 'every open project is on the page (shared by all teams)');
+  ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit,No project', 'every open project is on the page (shared by all teams), and “No project”');
   ok(/BMS/.test(await page.textContent('.w-grp[data-group="PRJ-0002"] .tchips')), 'each project shows the teams on it');
   await page.fill('.w-grp[data-group="PRJ-0001"] .w-add input', 'Draw the pump station screens');
   await page.keyboard.press('Enter');
@@ -248,6 +262,11 @@ async function deptAdmin(browser, url) {
   await page.click(`#sugg .w-hit:has-text("${T2}")`);
   await page.waitForSelector('#panel .w-ro-title');
   ok(await page.locator('#panel #p-title').count() === 0, 'search finds a task and opens it; another department’s task is read-only');
+  await page.fill('#p-cmt', 'Is the cabinet on site yet?');
+  await page.click('#panel [data-form="comment"] button[type=submit]');
+  await page.waitForSelector('#panel .w-cmt');
+  const d0 = await db(page);
+  ok(d0.task_comments.some(c => c.body === 'Is the cabinet on site yet?' && c.author === d0.users.amira.id), '...but whoever can see a task can comment on it');
   await page.click('#panel [data-act="close"]');
   await page.fill('#gq', '');
   await filterBy(page, 'gina', 'Gina GUI Dev');
@@ -278,11 +297,15 @@ async function deptAdmin(browser, url) {
   ok(forList.some(x => /Gina/.test(x)) && !forList.some(x => /Laila|Mona/.test(x)), 'department admin adds tasks for her own people only');
   await page.keyboard.press('Escape');
   await page.click('#qaForm [data-close]');
-  // Minutes: copy as email and save (GUI)
+  // Minutes: copy as email and save (GUI). A task without a project is in them too.
+  await page.fill('.w-grp[data-group=""] .w-add input', 'GUI: update the style guide');
+  await page.keyboard.press('Enter');
+  await sleep(400);
   await page.click('#meetMenu summary');
   await page.click('#copyEmail');
   const mail = await clipboard(page, 'Weekly Progress Check');
   ok(mail.includes('Weekly Progress Check') && mail.includes(GUI_T) && !mail.includes(BMS_T), 'Meeting › Copy as email: the GUI minutes, only GUI tasks');
+  ok(mail.includes('GUI: update the style guide') && mail.includes('No project'), '...with the tasks that have no project, under “No project”');
   await page.click('#meetMenu summary');
   await page.click('#saveMins');
   await sleep(500);

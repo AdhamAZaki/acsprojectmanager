@@ -47,8 +47,13 @@ function demo() {
     T('PRJ-0002', W, 'Send the HMI template to the client for approval', ['adm'], { status: 'Done' }),
     T('PRJ-0002', NEXT, 'Site commissioning plan', ['sara']),
     T('PRJ-0003', NEXT, 'Collect the BMS points list', ['omar']),
+    T(null, W, 'Renew the AVEVA development licences', ['adm']),
   ];
   d.meetings = [];
+  d.task_comments = [
+    { id: 'c-1', task_id: 'task-1', author: u.adm.id, body: 'I called the client. The final tag list is promised for Wednesday.', created_at: ts },
+    { id: 'c-2', task_id: 'task-1', author: u.omar.id, body: 'Thanks. I will prepare the import sheet meanwhile.', created_at: ts },
+  ];
   window.__db.save();
 }
 
