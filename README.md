@@ -9,7 +9,7 @@ Each engineer signs in with a **username and password** and:
 - does everything on **one page**: switch between *My tasks*, *My projects* and *All projects*, tick and edit tasks right on the board
 - marks a task **Blocked** with a short note, and can assign teammates or 3rd parties (people without an account)
 
-Projects are **shared by every team** (PLC, AVEVA, BMS, UI/UX, Dev): each team adds its own tasks to the same project, and a project shows the teams on it. Three pages, nothing in two places: **My tasks** (everyone: your own tasks this week and next, by project or as a board, with a review of anything carried over 2+ weeks), **Team** for admins and department admins (the weekly meeting: filter by week, team and person; look at it by project, as a board, by person or as a table; other teams' tasks on the same project are one click away) and **Projects** (everyone: every project and the teams on it; join one or add a task to it; each opens in a side panel with its tasks, team and history). **Manage** (admins and department admins) has People, Projects, Departments & teams and 3rd parties, edited straight in tables.
+Projects are **shared by every team** (PLC, AVEVA, BMS, UI/UX, Dev): each team adds its own tasks to the same project, and a project shows the teams on it. Everything is on **one Tasks page**: tabs for **Mine** and **Team** (admins and department admins), views **List · Board · By person · Table · Projects**, KPI cards (open, blocked, done, carried over, no update) that filter when tapped, and filters for week, project, status, team and person. The menu (left on a computer, bottom bar on a phone) jumps to Mine, Team or Projects; **Manage** (admins and department admins) has People, Projects, Departments & teams and 3rd parties. The look follows the ACS *Dashboard Facelift* design, in light and dark.
 
 **Employees see only their own tasks** (the database enforces it); admins see everything and department admins manage their own people's tasks on any project. **+ Add task** is on every page (a round button on a phone); admins and department admins can add a task *for* one of their people. On the Team page, pick a department to **Copy as email** (the *Weekly Progress Check & Action Plan* table, one column per team) or **save the minutes** so that week's record never changes (all saved weeks are under **Past minutes**). Before the meeting, managers see who has **no update yet** and can copy a reminder; from Thursday, everyone gets a nudge to **plan next week**. Changes from teammates appear **live**. Everything is stored in a free **Supabase** database (Postgres).
 
@@ -51,7 +51,7 @@ Projects are **shared by every team** (PLC, AVEVA, BMS, UI/UX, Dev): each team a
 | `frontend/` | The app: static site deployed to GitHub Pages |
 | `frontend/js/config.js` | Supabase Project URL + publishable key (both public by design) |
 | `frontend/js/api.js` | Data layer: one-request loading, local cache, conflict-safe saving |
-| `frontend/js/app.js` | Pages: My tasks, Team, Projects, Manage |
+| `frontend/js/app.js` | The Tasks page (Mine / Team, views, filters, minutes) and Manage |
 | `frontend/sw.js`, `manifest.webmanifest` | Installable app (Add to Home screen), offline app shell, self-updating |
 | `supabase/migrations/` | Every database change, in order ([rules](supabase/migrations/README.md)) |
 | `supabase/setup.sql` | All migrations in one file, generated. Paste into the SQL Editor, or let the deploy run it |

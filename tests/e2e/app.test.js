@@ -37,14 +37,24 @@ async function myTasks(browser, url) {
   ok((await page.textContent('#loginError')).includes('Wrong username or password'), 'unknown user gets a clear sign-in error');
 
   await signIn(page, url + '#/', 'adham');
-  ok(await nav(page) === 'My tasks,Team,Projects,Manage', 'admin: My tasks, Team, Projects, Manage — each once');
-  ok(await page.textContent('.page-title h2') === 'All teams', 'admin starts on Team, all teams');
-  await page.click('.appnav a[href="#/my"]');
-  await page.waitForSelector('.page-title >> text=My tasks');
+  ok(await nav(page) === 'Mine,Team,Projects,Manage', 'admin menu: Mine, Team, Projects, Manage — each once');
+  ok(await page.textContent('.page-head2 h2') === 'All teams', 'admin starts on Team, all teams');
+  await page.click('.appnav a[href="#/mine"]');
+  await page.waitForSelector('.page-head2 >> text=My tasks');
   ok(await page.isVisible(`.pcard >> text=${T1}`), 'My tasks shows my own task');
   ok(!(await page.isVisible(`#view >> text=${T2}`)), 'My tasks shows only my own tasks (not Mona’s)');
-  ok(await page.locator('.filters select').count() === 1 && await page.locator('#teamFilter, #whoFilter').count() === 0,
-    'My tasks has one simple filter row: week, search, layout (no team / person filters)');
+  ok(await page.locator('#teamFilter, #whoFilter').count() === 0 && await page.locator('.kpis .kpi').count() === 4,
+    'Mine: no team / person filters; four KPI cards (open, blocked, done, carried over)');
+  await page.click('[data-kpi="done"]');
+  ok(!(await page.isVisible(`.pcard >> text=${T1}`)) && await page.isVisible('#clearFilters'), 'tap the Done card: only done tasks show (none yet), with Clear filters');
+  await page.click('#clearFilters');
+  ok(await page.isVisible(`.pcard >> text=${T1}`), 'Clear filters shows them all again');
+  ok((await page.$$eval('[data-view]', b => b.map(x => x.textContent))).join() === 'List,Board,Table,Projects', 'Mine: view tabs List · Board · Table · Projects (By person is for the team)');
+  await page.click('.tabstrip a[href="#/team"]');
+  await page.waitForSelector('[data-view="person"]');
+  ok(await page.isVisible('.page-head2 >> text=All teams'), 'the Mine / Team tabs switch the same page to the team');
+  await page.click('.tabstrip a[href="#/mine"]');
+  await page.waitForSelector('.page-head2 >> text=My tasks');
 
   // Add (the + Add task button opens the sheet; "For" starts on me)
   await page.click('#addTaskBtn');
@@ -104,23 +114,23 @@ async function myTasks(browser, url) {
   ok((await task(page, T1)).assignee_ids.indexOf(monaId) === -1, 'take a person off with ×');
 
   // Board layout: four columns; drag a task to Doing
-  await page.click('[data-layout="board"]');
+  await page.click('[data-view="board"]');
   await page.waitForSelector('.board4');
   ok(await page.locator('.bcol').count() === 4 && await page.isVisible('.bcol[data-col="Done"] >> text=' + T1), 'Board: To do · Doing · Blocked · Done');
   await page.dragAndDrop('.bcard:has-text("Test the duty and standby")', '.bcol[data-col="In Progress"]');
   await sleep(400);
   ok((await task(page, 'Test the duty and standby pump logic')).status === 'In Progress', 'drag a card to Doing changes its status');
-  await page.selectOption('#myCol', 'week');
+  await page.selectOption('#col', 'week');
   await page.waitForSelector('.bcol .bcol-head >> text=next week');
   await page.dragAndDrop('.bcard[data-drag]:has-text("Test the duty and standby")', '.bcol[data-drop^="week|"]:has(.bcol-head:has-text("next week"))');
   await sleep(400);
   ok((await task(page, 'Test the duty and standby pump logic')).week > (await db(page)).W, 'Board columns by week: drag a card to next week');
-  await page.selectOption('#myCol', 'status');
+  await page.selectOption('#col', 'status');
   await page.click('.bcard:has-text("Test the duty and standby")');
   await page.waitForSelector('#dialog[data-mode="task"] .t-open');
   ok(true, 'tap a card: the task opens in a sheet');
   await page.click('#dialog [data-close]');
-  await page.click('[data-layout="project"]');
+  await page.click('[data-view="list"]');
   ok(errors.length === 0, 'no page errors (' + errors.join('; ') + ')');
   await ctx.close();
 }
@@ -130,7 +140,7 @@ async function employee(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
   await signIn(page, url + '#/', 'gina');
-  ok(await nav(page) === 'My tasks,Projects', 'employee: only My tasks and Projects');
+  ok(await nav(page) === 'Mine,Projects', 'employee menu: only Mine and Projects');
   ok(await page.isVisible(`.pcard >> text=${GUI_T}`), 'employee: My tasks shows her task on a BMS project');
   const gid = (await db(page)).users.gina.id;
   const tasks = (await page.evaluate(() => JSON.parse(localStorage.getItem('acs-tracker-cache-v5')))).tasks;
@@ -156,11 +166,11 @@ async function employee(browser, url) {
   ok(await page.locator('.side-panel #assignSel').count() === 0, 'employees cannot add people to a project');
   await page.keyboard.press('Escape');
   await page.goto(url + '#/team');
-  await page.waitForSelector('.page-title');
-  ok(await page.textContent('.page-title h2') === 'My tasks', 'employee cannot open Team (lands on My tasks)');
+  await page.waitForSelector('.page-head2');
+  ok(await page.textContent('.page-head2 h2') === 'My tasks', 'employee cannot open Team (lands on My tasks)');
   await page.goto(url + '#/manage');
-  await page.waitForSelector('.page-title');
-  ok(await page.textContent('.page-title h2') === 'My tasks', 'employee cannot open Manage');
+  await page.waitForSelector('.page-head2');
+  ok(await page.textContent('.page-head2 h2') === 'My tasks', 'employee cannot open Manage');
   await ctx.close();
 }
 
@@ -170,8 +180,8 @@ async function teamPage(browser, url) {
   const page = await ctx.newPage();
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signIn(page, url + '#/', 'amira');
-  ok(await nav(page) === 'My tasks,Team,Projects,Manage', 'department admin: My tasks, Team, Projects, Manage');
-  ok(await page.textContent('.page-title h2') === 'GUI team' && await page.inputValue('#teamFilter') === 'dept:GUI', 'department admin starts on her department');
+  ok(await nav(page) === 'Mine,Team,Projects,Manage', 'department admin menu: Mine, Team, Projects, Manage');
+  ok(await page.textContent('.page-head2 h2') === 'GUI team' && await page.inputValue('#teamFilter') === 'dept:GUI', 'department admin starts on her department');
   ok(await page.isVisible(`.pcard:has-text("Tower BMS Retrofit") >> text=${GUI_T}`), 'GUI tasks on a BMS project show on the GUI team page');
   ok(!(await page.isVisible(`.pcard >> text=${BMS_T}`)) && await page.isVisible('.others >> text=Other teams on this project'), 'other teams’ tasks on the same project are one click away');
   await page.click('[data-others="PRJ-0002"]');
@@ -186,23 +196,23 @@ async function teamPage(browser, url) {
   ok(await page.$eval('#teamFilter', s => s.selectedOptions[0].textContent.trim()) === 'AVEVA', 'Automation’s Dev team is called AVEVA');
   await page.selectOption('#teamFilter', 'dept:GUI');
   // Layouts
-  await page.click('[data-layout="person"]');
+  await page.click('[data-view="person"]');
   await page.waitForSelector('.person-card');
   ok(await page.isVisible('.person-card >> text=Gina GUI Dev'), 'By person: each person and their tasks');
-  await page.click('[data-layout="table"]');
+  await page.click('[data-view="table"]');
   await page.waitForSelector('.ttable');
   ok(await page.locator('.ttable tbody tr').count() >= 1, 'Table: one row per task');
   await page.click('[data-sort="person"]');
   ok(await page.isVisible('.th-btn.on >> text=Person'), 'Table sorts by a column');
-  await page.click('[data-layout="board"]');
+  await page.click('[data-view="board"]');
   await page.waitForSelector('.board4');
   ok(await page.isVisible(`.bcol[data-col="To Do"] >> text=${GUI_T}`), 'Board: the team’s tasks by status');
-  await page.selectOption('#teamCol', 'project');
+  await page.selectOption('#col', 'project');
   ok(await page.isVisible(`.bcol[data-col="PRJ-0002"] >> text=${GUI_T}`), 'Board columns by project');
-  await page.selectOption('#teamCol', 'team');
+  await page.selectOption('#col', 'team');
   ok(await page.isVisible('.bcol .bcol-head >> text=Dev') && await page.locator('.bcol[data-drop]').count() === 0, 'Board columns by team (for looking; no dropping)');
-  await page.selectOption('#teamCol', 'status');
-  await page.click('[data-layout="project"]');
+  await page.selectOption('#col', 'status');
+  await page.click('[data-view="list"]');
   // Add a task for one of her people; not for others
   await page.click('#addTaskBtn');
   await page.waitForSelector('#qaForm');
@@ -243,7 +253,7 @@ async function noUpdate(browser, url) {
   await signIn(page, url + '#/team', 'adham');
   await page.selectOption('#teamFilter', 'dept:AUTO');
   const q = await page.textContent('.quiet-names');
-  ok(/2\s*no update/.test(q) && q.includes('Mona') && q.includes('Omar') && !q.includes('Adham'), 'no update this week: Mona and Omar (not the admin)');
+  ok(/2\s*no update/i.test(q) && q.includes('Mona') && q.includes('Omar') && !q.includes('Adham'), 'no update this week: Mona and Omar (not the admin)');
   await page.click('.quiet-names summary');
   await page.click('#copyReminder');
   const text = await clipboard(page, 'Hi ');
@@ -336,7 +346,7 @@ async function phone(browser, url) {
   const add = await page.locator('#addTaskBtn').boundingBox();
   ok(add && add.width <= 60 && add.y > 600, 'phone: + Add task is a round button above the bar');
   ok(await page.evaluate(() => document.documentElement.scrollWidth) <= 390, 'phone: no sideways scrolling (Team)');
-  await page.click('.appnav a[href="#/my"]');
+  await page.click('.appnav a[href="#/mine"]');
   await page.click(`.t-body:has-text("${T1}")`);
   await page.waitForSelector('#dialog[data-mode="task"] .t-open');
   ok(true, 'phone: a task opens in a bottom sheet');
@@ -350,10 +360,10 @@ async function phone(browser, url) {
   for (const id of ['team', 'my', 'projects', 'manage']) {
     await page.goto(url + '#/' + id); await page.waitForTimeout(200);
     await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' });
-    const layouts = await page.$$eval('[data-layout]', bs => bs.map(b => b.dataset.layout));
+    const layouts = await page.$$eval('[data-view]', bs => bs.map(b => b.dataset.view).filter(v => v !== 'projects'));
     let widest = 0;
     for (const l of layouts.length ? layouts : ['']) {
-      if (l) { await page.$eval(`[data-layout="${l}"]`, b => b.click()); await page.waitForTimeout(100); await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' }); }
+      if (l) { await page.$eval(`[data-view="${l}"]`, b => b.click()); await page.waitForTimeout(100); await page.addStyleTag({ content: '*{font-family: Verdana, "DejaVu Sans", sans-serif !important}' }); }
       widest = Math.max(widest, await page.evaluate(() => document.documentElement.scrollWidth));
     }
     ok(widest <= 390, 'phone, wide font: no sideways scrolling (' + id + ', every view)');
@@ -367,10 +377,10 @@ async function weekRollover(browser, url) {
   const page = await ctx.newPage();
   await page.clock.install({ time: new Date('2026-11-01T23:58:00') });   // Sunday night, week 44
   await signIn(page, url + '#/my', 'adham');
-  const before = await page.$eval('#myWeek', s => Array.from(s.options).map(o => o.textContent).join('|'));
+  const before = await page.$eval('#week', s => Array.from(s.options).map(o => o.textContent).join('|'));
   await page.clock.runFor(5 * 60 * 1000);                                // Monday, week 45
   await page.waitForTimeout(500);
-  const after = await page.$eval('#myWeek', s => Array.from(s.options).map(o => o.textContent).join('|'));
+  const after = await page.$eval('#week', s => Array.from(s.options).map(o => o.textContent).join('|'));
   ok(/This week · 44/.test(before) && /This week · 45/.test(after), 'the week moves on by itself while the app stays open');
   ok(await page.locator('.tag-carry').count() >= 1, 'unfinished tasks roll over into the new week');
   await ctx.close();
