@@ -86,6 +86,7 @@ npx playwright install chromium          # once, for the browser tests
 npm test                                 # code checks + setup.sql up to date + browser tests
 PGHOST=localhost PGUSER=postgres PGPASSWORD=postgres npm run test:db   # database tests (needs a Postgres server)
 npm run screenshots                      # refresh docs/screenshots
+npm run preview                          # try the app on made-up data, no database: http://localhost:4173
 ```
 
 **Changing the database:** add a new file to `supabase/migrations/` (see the [rules](supabase/migrations/README.md)), run `npm run build:setup`, and add a check to `tests/db/security.test.sql` if it changes who can see or do what.
