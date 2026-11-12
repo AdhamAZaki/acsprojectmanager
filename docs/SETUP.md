@@ -144,7 +144,7 @@ Free Supabase projects pause after 7 days without activity. The **Keep Supabase 
 
 | Symptom | Fix |
 |---|---|
-| "Wrong username or password" | Check the user exists (Team page or Authentication → Users), the username spelling, and the password. |
-| "Your account is not active" | An admin must tick **Active** for that member on the Team page. |
+| "Wrong username or password" | Check the user exists (Manage › People, or Authentication → Users), the username spelling, and the password. |
+| "Your account is not active" | An admin must tick **Active** for that member in Manage › People. |
 | "Cannot reach the server" | Check `SUPABASE_URL` in `config.js`, and that the project isn't paused. |
 | "You are not allowed to do that" | The action needs admin rights, or the project isn't assigned to you. |
