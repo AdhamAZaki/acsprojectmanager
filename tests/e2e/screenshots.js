@@ -47,8 +47,13 @@ function demo() {
     T('PRJ-0002', W, 'Send the HMI template to the client for approval', ['adm'], { status: 'Done' }),
     T('PRJ-0002', NEXT, 'Site commissioning plan', ['sara']),
     T('PRJ-0003', NEXT, 'Collect the BMS points list', ['omar']),
+    T(null, W, 'Renew the AVEVA development licences', ['adm']),
   ];
   d.meetings = [];
+  d.task_comments = [
+    { id: 'c-1', task_id: 'task-1', author: u.adm.id, body: 'I called the client. The final tag list is promised for Wednesday.', created_at: ts },
+    { id: 'c-2', task_id: 'task-1', author: u.omar.id, body: 'Thanks. I will prepare the import sheet meanwhile.', created_at: ts },
+  ];
   window.__db.save();
 }
 
@@ -63,20 +68,25 @@ function demo() {
   await page.waitForSelector('#loginView:not([hidden])');
   await page.screenshot({ path: path.join(OUT, '1-login.png') });
 
-  await signIn(page, url + '#/mine', 'adham');
-  await page.waitForSelector('.page-head2');
+  await signIn(page, url, 'adham');
+  await page.click('[data-act="short"][data-v="me"]');   // my tasks
   await page.screenshot({ path: path.join(OUT, '2-board.png') });
-  await page.click('#view [data-toggle] >> text=Build the filter overview');
-  await page.waitForSelector('dialog[data-mode="task"][open]');
+  await page.click('#view .w-title >> text=Build the filter overview');
+  await page.waitForSelector('#panel #p-title');
   await page.screenshot({ path: path.join(OUT, '2b-task-sheet.png') });
-  await page.click('dialog [data-close]');
-  await page.goto(url + '#/team');
-  await page.waitForSelector('.kpis');
+  await page.click('#panel [data-act="close"]');
+  await page.click('#clearFilters');                      // everyone
+  await page.click('[data-act="layout"][data-k="board"]');
+  await page.selectOption('#v-group', 'status');
   await page.screenshot({ path: path.join(OUT, '3-by-person.png') });
+  await page.click('[data-act="layout"][data-k="list"]');
+  await page.selectOption('#v-group', 'project');
 
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.reload();
-  await page.waitForSelector('.kpis');
+  await page.waitForSelector('.w-bars');
+  await page.click('#view .w-title >> text=Configure historian tags');
+  await page.waitForSelector('#panel #p-title');
   await page.screenshot({ path: path.join(OUT, '4-board-wide.png') });
 
   await browser.close();

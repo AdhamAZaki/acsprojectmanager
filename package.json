@@ -9,6 +9,7 @@
     "test:db": "bash tests/db/run.sh",
     "test:e2e": "node tests/e2e/app.test.js",
     "screenshots": "node tests/e2e/screenshots.js",
+    "preview": "node scripts/preview.js",
     "test": "npm run lint && npm run check:setup && npm run test:e2e"
   },
   "devDependencies": {

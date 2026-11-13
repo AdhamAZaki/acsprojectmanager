@@ -128,6 +128,8 @@
         // Like the database: employees get only their own tasks; admins and department admins get all.
         tasks: db.tasks.filter(t => (!a.p_since || t.week >= a.p_since || t.status !== 'Done') &&
           (me.role !== 'member' || t.created_by === me.id || (t.assignee_ids || []).indexOf(me.id) !== -1)), contacts: db.contacts };
+      // Comments come with their tasks: only for the tasks this person gets.
+      r.comments = (db.task_comments || []).filter(c => r.tasks.some(t => t.id === c.task_id));
       save(); return { data: clone(r), error: null };
     }
     if (name === 'admin_save_project') {

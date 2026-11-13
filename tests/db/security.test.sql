@@ -33,6 +33,8 @@ begin
   end;
   raise exception 'FAIL: % (no error)', p_label;
 end $$;
+create function test.task_id(p_title text) returns uuid language sql security definer stable as
+  $$ select id from public.tasks where title = p_title $$;
 create function test.n(p_sql text) returns bigint language plpgsql as $$
 declare v bigint;
 begin execute 'select count(*) from (' || p_sql || ') x' into v; return v; end $$;
@@ -348,6 +350,87 @@ select test.ok(test.n($$select * from public.assignments where project_id = 'PRJ
   'GUI dept admin can take another department''s person off a project');
 select public.admin_save_minutes('2026-W45', '{"v": 1, "dept": "GUI"}', 'GUI');
 select test.ok(test.n($$select * from public.meetings where department_id = 'GUI' and snapshot is not null$$) = 1, 'GUI dept admin saves GUI minutes');
+reset role;
+
+-- ---------- Tasks without a project ----------
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+insert into public.tasks (week, title) values ('2026-W46', 'mona: no project task');
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task' and project_id is null and created_by = auth.uid()$$) = 1,
+  'a member can add a task without a project');
+update public.tasks set project_id = 'PRJ-0003' where title = 'mona: no project task';
+update public.tasks set project_id = null, status = 'In Progress' where title = 'mona: no project task';
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task' and project_id is null and status = 'In Progress'$$) = 1,
+  'a task can be moved to a project and back to no project');
+select test.ok((public.app_bootstrap(null) -> 'tasks')::jsonb @> '[{"title": "mona: no project task"}]', 'startup data includes tasks without a project');
+select test.fails($$insert into public.tasks (week, title, created_by) values ('2026-W46', 'no project, in omar''s name', test.uid('omar.test@advcontrolsys.com'))$$,
+  'row-level security', 'without a project, a member still cannot add a task in someone else''s name');
+reset role;
+select test.login('omar.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task'$$) = 0, 'another member does not see someone''s task without a project');
+update public.tasks set status = 'Done' where title = 'mona: no project task';
+delete from public.tasks where title = 'mona: no project task';
+reset role;
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task' and status = 'In Progress'$$) = 1, '...and cannot change or delete it');
+select test.login('hany.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task'$$) = 1, 'a department admin sees it (for the meeting)');
+update public.tasks set status = 'Done' where title = 'mona: no project task';
+reset role;
+select test.ok(test.n($$select * from public.tasks where title = 'mona: no project task' and status = 'In Progress'$$) = 1,
+  '...but another department''s admin cannot change it');
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+insert into public.tasks (week, title, created_by, assignee_ids)
+  values ('2026-W46', 'admin: no project, for omar', test.uid('omar.test@advcontrolsys.com'), array[test.uid('omar.test@advcontrolsys.com')]);
+select test.ok(test.n($$select * from public.tasks where title = 'admin: no project, for omar' and project_id is null$$) = 1, 'an admin adds a task without a project for someone');
+reset role;
+
+-- ---------- Comments ----------
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+insert into public.task_comments (task_id, body) select id, 'mona: started on it' from public.tasks where title = 'mona: no project task';
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it' and author = auth.uid()$$) = 1, 'a member comments on their own task, as themselves');
+select test.fails($$insert into public.task_comments (task_id, body, author) select id, 'in omar''s name', test.uid('omar.test@advcontrolsys.com') from public.tasks where title = 'mona: no project task'$$,
+  'row-level security', 'a comment cannot be written in someone else''s name');
+select test.fails($$insert into public.task_comments (task_id, body) select id, '   ' from public.tasks where title = 'mona: no project task'$$,
+  'check constraint', 'an empty comment is refused');
+update public.task_comments set body = 'changed' where body = 'mona: started on it';
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it'$$) = 1, 'a comment cannot be edited');
+select test.ok((public.app_bootstrap(null) -> 'comments')::jsonb @> '[{"body": "mona: started on it"}]', 'startup data includes the comments of my tasks');
+reset role;
+select test.login('omar.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it'$$) = 0, 'a member cannot read the comments on a task they cannot see');
+select test.ok((public.app_bootstrap(null) -> 'comments')::jsonb @> '[{"body": "mona: started on it"}]' is not true, '...also not through the startup data');
+select test.fails(format('insert into public.task_comments (task_id, body) values (%L, %L)', (select test.task_id('mona: no project task')), 'omar: sneaking in'),
+  'row-level security', '...and cannot comment on it');
+reset role;
+select test.login('hany.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it'$$) = 1, 'a department admin reads the comments on any task');
+insert into public.task_comments (task_id, body) select id, 'hany: is the client aware?' from public.tasks where title = 'mona: no project task';
+select test.ok(test.n($$select * from public.task_comments where body = 'hany: is the client aware?' and author = auth.uid()$$) = 1, '...and can comment (whoever sees the task can)');
+delete from public.task_comments where body = 'mona: started on it';
+reset role;
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it'$$) = 1, '...but cannot delete someone else''s comment');
+select test.login('mona.test@advcontrolsys.com');
+set role authenticated;
+select test.ok(test.n($$select * from public.task_comments c join public.tasks t on t.id = c.task_id where t.title = 'mona: no project task'$$) = 2, 'the task''s owner sees every comment on it');
+delete from public.task_comments where body = 'mona: started on it';
+select test.ok(test.n($$select * from public.task_comments where body = 'mona: started on it'$$) = 0, 'the author can delete their own comment');
+reset role;
+select test.login('admin.test@advcontrolsys.com');
+set role authenticated;
+delete from public.task_comments where body = 'hany: is the client aware?';
+select test.ok(test.n($$select * from public.task_comments where body = 'hany: is the client aware?'$$) = 0, 'an admin can delete any comment');
+insert into public.task_comments (task_id, body) select id, 'goes with the task' from public.tasks where title = 'mona: no project task';
+delete from public.tasks where title = 'mona: no project task';
+select test.ok(test.n($$select * from public.task_comments where body = 'goes with the task'$$) = 0, 'comments are deleted with their task');
+reset role;
+set role anon;
+select test.fails('select * from public.task_comments', 'permission denied', 'signed-out: cannot read comments');
 reset role;
 
 select 'All database checks passed' as result;
