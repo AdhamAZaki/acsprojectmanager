@@ -1,5 +1,6 @@
-/* ACS Project Tracker: mobile-first styles.
-   Phone: bottom tab bar, full-screen sheets. ≥ 900px: top nav, centred dialogs, grids. */
+/* ACS Project Tracker: styles for both apps (the ACS tracker and the private tracker).
+   First the shared pieces: colours, controls, the sign-in screen, sheets and forms, Manage.
+   Then the one page itself, whose classes all start with w- (near the end of the file). */
 
 :root {
   /* ACS brand tokens (Figma: ACS Platform – UI Package › Foundations) */
