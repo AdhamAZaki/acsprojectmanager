@@ -513,7 +513,7 @@
     $('#topActions').innerHTML = actionsHtml();
     $('#bars').innerHTML = barsHtml(base);
     const view = $('#view');
-    view.className = 'w-data w-' + S.layout;
+    view.className = 'w-data is-' + S.layout;
     view.innerHTML = (S.layout === 'board' ? boardHtml(gs) : S.layout === 'table' ? tableHtml(gs) : listHtml(gs)) +
       (list.length ? '' : `<p class="empty w-empty">No tasks ${S.q.trim() || defs.some(d => S[d.k] !== d.def) ? 'match the search and filters' : 'this week or next'}. Use <b>+ Task</b> to add one.</p>`);
     if (S.layout === 'board') bindBoard(view, gs);
