@@ -1319,6 +1319,18 @@ button.w-gname:hover { color: var(--primary-600); text-decoration: underline; }
 .w-project .person-chip { font-size: 12px; padding: 2px 8px; }
 .w-project .sp-fold { margin: 0; }
 
+/* Private tasks (private/index.html): the same page, without people and comments */
+@media (min-width: 720px) { .w-row.pv { grid-template-columns: 28px minmax(0, 1fr) 64px 92px; } }
+.w-pill.pv-acs { background: #E6F0FE; color: #1F5FBF; }
+.w-pill.pv-sent { background: var(--ok-soft); color: var(--ok); }
+@media (prefers-color-scheme: dark) { .w-pill.pv-acs { background: #172A46; color: #93C5FD; } }
+.pv-menu { min-width: min(320px, 86vw); }
+.pv-link { display: grid; gap: 6px; padding: 4px 10px 8px; }
+.w-frame .pv-link input { width: 100%; }
+.pv-menu-link { padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--brand-2); text-decoration: none; }
+.pv-foot { justify-content: space-between; align-items: center; }
+body.wt:not(.signed-in) #sync { display: none; }
+
 /* Manage: a window over the page */
 .w-manage .page-title h2 { display: none; }
 @media (min-width: 900px) { dialog.w-manage { width: min(1180px, calc(100vw - 48px)); height: calc(100dvh - 48px); } }

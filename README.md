@@ -53,6 +53,7 @@ The page is the same for everyone; what a person may not do is hidden. **Employe
 | `frontend/js/config.js` | Supabase Project URL + publishable key (both public by design) |
 | `frontend/js/api.js` | Data layer: one-request loading, local cache, conflict-safe saving |
 | `frontend/js/app.js` | The one page (search and filter, List / Board / Table, the task and project panel, minutes) and Manage |
+| `frontend/private/` | Private tasks: a personal tracker for one person, on the same page design, in its own Supabase project (`supabase/private-setup.sql`). Your ACS tasks are copied in one way; a private task goes to ACS only when you send it |
 | `frontend/sw.js`, `manifest.webmanifest` | Installable app (Add to Home screen), offline app shell, self-updating |
 | `supabase/migrations/` | Every database change, in order ([rules](supabase/migrations/README.md)) |
 | `supabase/setup.sql` | All migrations in one file, generated. Paste into the SQL Editor, or let the deploy run it |

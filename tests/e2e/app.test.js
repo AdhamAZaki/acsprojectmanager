@@ -497,6 +497,10 @@ async function privateTracker(browser, url) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
+  page.on('dialog', d => d.accept());
+  const PT = 'Private: plan the team restructure';
+  const pv = async title => (await db(page)).private_tasks.find(t => t.title === title);
+  const ready = () => page.waitForSelector('#shell:not([hidden]) .w-bars');
   await signIn(page, url, 'adham');   // signed in to ACS on this site
   await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).status = 'Done'; window.__db.save(); }, T1);
   await page.goto(url + 'private/');
@@ -507,102 +511,111 @@ async function privateTracker(browser, url) {
   ok(true, 'private tracker: a wrong password is refused');
   await page.fill('input[name=password]', 'private-password');
   await page.click('#loginForm button[type=submit]');
-  await page.waitForSelector('#addForm');
-  ok(await page.isVisible(`.pv-row:has-text("${T1}") .pv-tag.acs`), 'private tracker: my done ACS task is copied in by itself (one way)');
-  await page.fill('#addForm input[name=title]', 'Private: plan the team restructure');
-  await page.fill('#addForm input[name=project]', 'Management');
-  await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('.pv-row >> text=Private: plan the team restructure');
-  let d = await db(page);
-  ok(d.private_tasks.some(t => t.title === 'Private: plan the team restructure') && !d.tasks.some(t => /restructure/.test(t.title)), 'a private task stays private (not in ACS)');
-  // Details: status, blocked with a reason, sub-steps, notes
-  await page.click('[data-open]:has-text("Private: plan the team restructure")');
-  await page.waitForSelector('.pv-sheet');
-  await page.click('.pv-sheet [data-st="Blocked"]');
-  await page.waitForSelector('.pv-sheet [data-reason]');
-  await page.click('.pv-sheet [data-reason="Approval"]');
-  await page.fill('#pvNewSub', 'Draft the new structure');
-  await page.click('#pvAddSub');
-  await page.waitForSelector('.pv-sheet .sub >> text=Draft the new structure');
-  await page.fill('#pvNotes', 'Talk to HR first');
-  await page.click('.pv-sheet h3');   // leave the box: the note saves
+  await ready();
+  ok(await page.isVisible(`.w-row:has-text("${T1}") .pv-acs`), 'private tracker: my done ACS task is copied in by itself (one way)');
+  ok(await page.locator('.appnav, #addForm').count() === 0 && (await page.$$eval('[data-act="layout"]', b => b.map(x => x.textContent))).join() === 'List,Board,Table',
+    'private tracker: the same page as the ACS app (search and filter, List · Board · Table)');
+  // + Task: a private task, with a project or topic typed freely
+  await page.click('#addTaskBtn');
+  await page.fill('#qaForm textarea[name=title]', PT);
+  await page.fill('#qaForm input[name=project]', 'Management');
+  await page.click('#qaForm button[type=submit]');
   await sleep(300);
-  const pt = (await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure');
-  ok(pt.status === 'Blocked' && pt.block_note === 'Approval' && pt.subtasks.length === 1 && pt.notes === 'Talk to HR first', 'private task details: blocked with a reason, a sub-step, notes');
-  await page.click('.pv-sheet [data-close]');
-  ok(await page.isVisible('.pv-row:has-text("Private: plan the team restructure") .tag-block >> text=Approval'), 'the list shows it is blocked, and why');
-  // Views: board (drag) and table (sort)
-  await page.click('[data-layout="board"]');
-  await page.waitForSelector('.board4');
-  await page.dragAndDrop('.bcard:has-text("Private: plan the team restructure")', '.bcol[data-col="In Progress"]');
+  await page.click('#qaForm [data-close]');
+  await page.waitForSelector(`.w-grp[data-group="Management"] .w-row >> text=${PT}`);
+  let d = await db(page);
+  ok(d.private_tasks.some(t => t.title === PT) && !d.tasks.some(t => /restructure/.test(t.title)), 'a private task stays private (not in ACS)');
+  // The task panel: status, blocked with a reason, sub-tasks edited in place, notes
+  await openTask(page, PT);
+  const id = (await pv(PT)).id;
+  await page.click('#panel [data-act="pstatus"][data-k="Blocked"]');
+  await page.click('#panel [data-act="reason"][data-k="Approval"]');
+  await page.fill(`#newsub-${id}`, 'Draft the new structure');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector(`#ps-${id}-0`);
+  await page.fill(`#ps-${id}-0`, 'Draft the new team structure');
+  await page.fill('#p-notes', 'Talk to HR first');
+  await page.click('#panel .w-phead .muted');   // leave the box: the note saves
+  await sleep(600);
+  const pt = await pv(PT);
+  ok(pt.status === 'Blocked' && pt.block_note === 'Approval' && pt.notes === 'Talk to HR first', 'private task details: blocked with a reason, notes');
+  ok(pt.subtasks.length === 1 && pt.subtasks[0].t === 'Draft the new team structure', 'add a sub-task, then change its text in place');
+  await page.click('#panel [data-act="close"]');
+  ok(await page.isVisible(`.w-row:has-text("${PT}") .tag-block >> text=Approval`), 'the list shows it is blocked, and why');
+  await page.click(`.w-row:has-text("${PT}") [data-act="subs"]`);
+  ok(await page.isVisible(`.w-row:has-text("${PT}") .w-sub`), 'the sub-tasks open in the row');
+  // Board: drag to change the status
+  await page.click('[data-act="layout"][data-k="board"]');
+  await page.selectOption('#v-group', 'status');
+  await page.waitForSelector('.w-board');
+  await page.dragAndDrop(`.w-card:has-text("${PT}")`, '.w-col[data-col="In Progress"]');
   await sleep(400);
-  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').status === 'In Progress', 'Board: drag a private task to Doing');
+  ok((await pv(PT)).status === 'In Progress', 'Board: drag a private task to Doing');
   // A copy from ACS is edited here and saved in ACS too (ACS is linked)
-  await page.click(`.bcard:has-text("${T1}")`);
-  await page.waitForSelector('.pv-sheet .mtg-note.saved');
-  await page.click('.pv-sheet [data-st="In Progress"]');
+  await page.click(`.w-card:has-text("${T1}") .w-title`);
+  await page.waitForSelector('#panel #p-title');
+  ok(await page.isVisible('#panel >> text=what you change here is saved in ACS too'), 'a task from ACS says its changes go to ACS');
+  await page.click('#panel [data-act="pstatus"][data-k="In Progress"]');
   await sleep(400);
-  await page.fill('#pvNewSub', 'Check panel C');
-  await page.click('#pvAddSub');
+  const t1id = (await pv(T1)).id;
+  await page.fill(`#newsub-${t1id}`, 'Check panel C');
+  await page.keyboard.press('Enter');
   await sleep(400);
   let acsT1 = (await db(page)).tasks.find(t => t.title === T1);
-  const pvT1 = (await db(page)).private_tasks.find(t => t.title === T1);
-  ok(acsT1.status === 'In Progress' && acsT1.subtasks.some(x => x.t === 'Check panel C') && pvT1.status === 'In Progress',
+  ok(acsT1.status === 'In Progress' && acsT1.subtasks.some(x => x.t === 'Check panel C') && (await pv(T1)).status === 'In Progress',
     'a task from ACS is edited in the private page and saved in ACS too');
-  ok(await page.locator('.pv-sheet #pvDelete, .pv-sheet #pvSend').count() === 0 && await page.locator('.pv-sheet select#pvProject').count() === 1,
+  ok(await page.locator('#pvDelete, #pvSend').count() === 0 && await page.locator('#panel select#p-project').count() === 1,
     '...its project is picked from ACS projects; no Delete / Send to ACS on a copy');
-  await page.click('.pv-sheet [data-close]');
-  await page.dragAndDrop(`.bcard[data-drag]:has-text("${T1}")`, '.bcol[data-col="Done"]');
+  await page.click('#panel [data-act="close"]');
+  await page.dragAndDrop(`.w-card[data-drag]:has-text("${T1}")`, '.w-col[data-col="Done"]');
   await sleep(400);
   acsT1 = (await db(page)).tasks.find(t => t.title === T1);
   ok(acsT1.status === 'Done', 'dragging a task from ACS to Done marks it done in ACS');
-  await page.click('[data-layout="table"]');
-  await page.waitForSelector('.ttable');
-  await page.click('[data-sort="task"]');
-  ok(await page.isVisible('.th-btn.on >> text=Task'), 'Table: sort by a column');
-  ok(await page.isVisible('.th-btn >> text=Created') && await page.isVisible('.th-btn >> text=Last changed'), 'Table: Created and Last changed columns');
-  await page.click('[data-layout="project"]');
-  await page.selectOption('#pvGroup', 'created');
-  ok(await page.isVisible('.card-title >> text=Today'), 'List: group by the day a task was created');
-  // Drag and drop in the list: grouped by week, drag a task to next week
-  await page.selectOption('#pvGroup', 'week');
-  await page.dragAndDrop('.pv-row[data-drag]:has-text("Private: plan the team restructure") .pv-grip', '.pv-group[data-drop^="week|"]:has(.card-title:has-text("next week"))');
+  // Board by week and by project
+  await page.selectOption('#v-group', 'week');
+  await page.dragAndDrop(`.w-card:has-text("${PT}")`, '.w-col:has(.w-chead:has-text("Next week"))');
   await sleep(400);
-  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').week > (await db(page)).W, 'List: drag a task to Next week');
-  // Board by project: drag a task to another project's column
-  await page.click('[data-layout="board"]');
-  await page.selectOption('#pvCol', 'project');
-  await page.dragAndDrop('.bcard[data-drag]:has-text("Private: plan the team restructure")', '.bcol[data-col="Alpha Plant"]');
+  ok((await pv(PT)).week > (await db(page)).W, 'Board by week: drag a task to next week');
+  await page.selectOption('#v-group', 'project');
+  await page.dragAndDrop(`.w-card:has-text("${PT}")`, '.w-col[data-col="Alpha Plant"]');
   await sleep(400);
-  ok((await db(page)).private_tasks.find(t => t.title === 'Private: plan the team restructure').project === 'Alpha Plant', 'Board by project: drag a card to another project');
-  await page.selectOption('#pvCol', 'status');
-  await page.click('[data-layout="project"]');
-  // Filters
-  await page.selectOption('#pvFSource', 'acs');
-  ok(await page.locator('.pv-row').count() >= 1 && !(await page.isVisible('.pv-row >> text=Private: plan the team restructure')), 'Filter: only tasks from ACS');
-  await page.click('#pvClear');
-  await page.selectOption('#pvGroup', 'project');
-  await page.click('[data-layout="project"]');
-  await page.fill('#addForm input[name=title]', 'Prepare the client presentation');
-  await page.click('#addForm button[type=submit]');
-  await page.waitForSelector('.pv-row >> text=Prepare the client presentation');
-  await page.click('[data-open]:has-text("Prepare the client presentation")');
+  ok((await pv(PT)).project === 'Alpha Plant', 'Board by project: drag a card to another project');
+  // Table, grouping by day, filters
+  await page.click('[data-act="layout"][data-k="table"]');
+  await page.waitForSelector('.w-table');
+  ok(await page.isVisible('.w-table th >> text=Created') && await page.isVisible('.w-table th >> text=Last changed'), 'Table: Created and Last changed columns');
+  await page.click('[data-act="layout"][data-k="list"]');
+  await page.selectOption('#v-group', 'created');
+  ok(await page.isVisible('.w-gname >> text=Today'), 'List: group by the day a task was created');
+  await page.selectOption('#v-group', 'project');
+  await page.click('[data-act="short"][data-v="acs"]');
+  ok((await tags(page)).join() === 'Where: From ACS' && await page.locator('.w-row').count() >= 1 && !(await page.isVisible(`.w-row >> text=${PT}`)), 'Shortcut: only tasks from ACS (the tag “Where: From ACS”)');
+  await page.click('#clearFilters');
+  // Type under a group to add; send one chosen task to ACS
+  await page.fill('.w-grp[data-group="Management"] .w-add input, .w-grp[data-group=""] .w-add input >> nth=0', 'Prepare the client presentation');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.w-row >> text=Prepare the client presentation');
+  await openTask(page, 'Prepare the client presentation');
   await page.click('#pvSend');
   await page.selectOption('#sendForm select[name=project]', 'PRJ-0001');
   await page.click('#sendForm button[type=submit]');
-  await page.waitForSelector('.pv-row:has-text("Prepare the client presentation") .pv-tag.sent');
+  await page.waitForSelector('.w-row:has-text("Prepare the client presentation") .pv-sent');
   d = await db(page);
   const sent = d.tasks.find(t => t.title === 'Prepare the client presentation');
   ok(sent && sent.project_id === 'PRJ-0001' && sent.assignee_ids.join() === d.users.adm.id, 'Send to ACS: one chosen task becomes my ACS task');
   await page.reload();
-  await page.waitForSelector('#addForm');
+  await ready();
   ok((await db(page)).private_tasks.filter(t => t.title === T1).length === 1, 'copying from ACS never duplicates');
   ok((await db(page)).private_tasks.some(t => t.title === 'Test the duty and standby pump logic' || t.source === 'acs'), 'open ACS tasks are copied too');
   await page.evaluate(t => { const d = window.__db.get(); d.tasks.find(x => x.title === t).status = 'Blocked'; window.__db.save(); }, T1);
   await page.reload();
-  await page.waitForSelector('#addForm');
-  ok((await db(page)).private_tasks.find(t => t.title === T1).status === 'Blocked', 'a copy follows ACS: changed there, updated here');
-  ok((await db(page)).tasks.find(t => t.title === 'Private: plan the team restructure') === undefined, '...and nothing private goes to ACS');
+  await ready();
+  ok((await pv(T1)).status === 'Blocked', 'a copy follows ACS: changed there, updated here');
+  ok((await db(page)).tasks.find(t => t.title === PT) === undefined, '...and nothing private goes to ACS');
+  // Phone
+  await page.setViewportSize({ width: 390, height: 844 });
+  ok(await page.evaluate(() => { const v = document.querySelector('#view'); return document.documentElement.scrollWidth <= 390 && document.querySelector('.w-top').scrollWidth <= 390 && v.scrollWidth <= v.clientWidth; }),
+    'private tracker on a phone: no sideways scrolling');
   ok(errors.length === 0, 'private tracker: no page errors (' + errors.join('; ') + ')');
   await ctx.close();
 }
