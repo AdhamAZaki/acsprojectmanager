@@ -129,6 +129,16 @@ async function onePage(browser, url) {
   await sleep(300);
   let t1 = await task(page, T1);
   ok(t1.status === 'Blocked' && t1.block_note === 'Material' && await page.isVisible(`.w-row:has-text("${T1}") .tag-block >> text=Material`), 'block a task with a one-tap reason; the row says why');
+  // A long reason stays inside the row (and inside a board card)
+  const longWhy = 'Waiting for the client to approve the revised cable schedule and to send the final vendor drawings for panel B';
+  await page.fill('#p-block', longWhy);
+  await page.click('#panel .w-phead .muted');
+  await sleep(600);
+  const inside = sel => page.evaluate(s => { const box = document.querySelector(s), tag = box.querySelector('.tag-block'); const b = box.getBoundingClientRect(), g = tag.getBoundingClientRect(); return g.right <= b.right + 0.5 && g.left >= b.left && g.height < 40; }, sel);
+  ok((await task(page, T1)).block_note === longWhy && await inside('.w-row.sel'), 'a long blocked reason wraps inside its row');
+  await page.click('[data-act="layout"][data-k="board"]');
+  ok(await inside('.w-card.sel'), '...and inside its card on the board');
+  await page.click('[data-act="layout"][data-k="list"]');
   const n = t1.subtasks.length;
   await page.fill(`#newsub-${t1.id}`, 'Check the earthing');
   await page.keyboard.press('Enter');

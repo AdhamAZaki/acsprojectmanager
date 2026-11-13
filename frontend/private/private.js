@@ -267,7 +267,7 @@
     return [
       gid !== 'project' ? `<span>${esc(t.project || 'No project')}</span>` : '',
       carried(t) ? `<span class="tag-carry">from week ${wnum(t.week)}</span>` : gid !== 'week' && t.week > THIS ? `<span class="w-pill">${t.week === NEXT ? 'next week' : 'week ' + wnum(t.week)}</span>` : '',
-      t.status === 'Blocked' ? `<span class="tag-block">Blocked${t.block_note ? ': ' + esc(t.block_note) : ''}</span>` : '',
+      t.status === 'Blocked' ? `<span class="tag-block" title="${esc(t.block_note || '')}">Blocked${t.block_note ? ': ' + esc(t.block_note) : ''}</span>` : '',
       gid !== 'where' ? whereTag(t) : '',
     ].join('');
   }
