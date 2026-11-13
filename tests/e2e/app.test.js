@@ -172,6 +172,18 @@ async function onePage(browser, url) {
   await page.selectOption('#v-group', 'status');
   await page.waitForSelector('.w-board');
   ok(await page.locator('.w-col').count() === 4 && await page.isVisible('.w-col[data-col="Done"] >> text=' + T1), 'Board: To do · Doing · Blocked · Done');
+  // Many columns and a very long title: the board scrolls sideways inside the data area, and columns keep their width
+  await page.evaluate(() => { const d = window.__db.get(); for (let i = 1; i <= 12; i++) d.projects.push(Object.assign({}, d.projects[0], { id: 'PRJ-9' + i, name: 'Extra project ' + i })); d.tasks[0].title += ' ' + 'and a very long description of the work '.repeat(6); window.__db.save(); });
+  await page.reload();
+  await page.waitForSelector('.w-board');
+  await page.selectOption('#v-group', 'project');
+  const box = await page.evaluate(() => { const v = document.querySelector('#view'), c = document.querySelector('.w-col'); return { right: v.getBoundingClientRect().right, scrolls: v.scrollWidth > v.clientWidth, col: c.getBoundingClientRect().width, screen: window.innerWidth }; });
+  ok(box.right <= box.screen && box.scrolls && box.col >= 280 && box.col <= 320, 'Board with many columns: it scrolls sideways inside the page, and a long title does not widen its column (' + JSON.stringify(box) + ')');
+  await page.evaluate(() => { const d = window.__db.get(); d.projects = d.projects.filter(p => p.id.indexOf('PRJ-9') !== 0); d.tasks[0].title = d.tasks[0].title.split(' and a very long')[0]; window.__db.save(); });
+  await page.reload();
+  await page.waitForSelector('.w-board');
+  await page.click('[data-act="short"][data-v="me"]');
+  await page.selectOption('#v-group', 'status');
   await page.dragAndDrop('.w-card:has-text("Test the duty and standby")', '.w-col[data-col="In Progress"]');
   await sleep(400);
   ok((await task(page, 'Test the duty and standby pump logic')).status === 'In Progress', 'drag a card to Doing changes its status');
@@ -185,7 +197,8 @@ async function onePage(browser, url) {
   await page.waitForSelector('#panel #p-title');
   ok(true, 'tap a card: the task opens in the same panel');
   await page.click('#panel [data-act="close"]');
-  ok(await page.isVisible('.w-card:has-text("Commission the pump") .w-sub'), 'Board: a card shows its sub-tasks (still open from the list)');
+  await page.click('.w-card:has-text("Commission the pump") [data-act="subs"]');
+  ok(await page.isVisible('.w-card:has-text("Commission the pump") .w-sub'), 'Board: a card shows its sub-tasks');
   await page.click('.w-card:has-text("Commission the pump") [data-act="subs"]');
   ok(!(await page.isVisible('.w-card:has-text("Commission the pump") .w-sub')), '...and folds them away again');
   // Table: the same tasks as rows, changed in the row
@@ -442,7 +455,7 @@ async function phone(browser, url) {
   const ctx = await newApp(browser, { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const page = await ctx.newPage();
   await signIn(page, url, 'adham');
-  const fits = () => page.evaluate(() => { const v = document.querySelector('#view'); return document.documentElement.scrollWidth <= 390 && document.querySelector('.w-top').scrollWidth <= 390 && (v.classList.contains('w-board') || v.scrollWidth <= v.clientWidth); });
+  const fits = () => page.evaluate(() => { const v = document.querySelector('#view'); return document.documentElement.scrollWidth <= 390 && document.querySelector('.w-top').scrollWidth <= 390 && v.getBoundingClientRect().right <= 390 && (v.classList.contains('is-board') ? v.scrollWidth > v.clientWidth : v.scrollWidth <= v.clientWidth); });
   ok(await page.isVisible('#moreMenu') && await page.isHidden('#manageBtn') && await page.isVisible('#addTaskBtn'), 'phone: + Task stays; Meeting, + Project and Manage fold into More');
   ok(await fits(), 'phone: no sideways scrolling (list)');
   const top = (await page.locator('.w-top').boundingBox()).y;
