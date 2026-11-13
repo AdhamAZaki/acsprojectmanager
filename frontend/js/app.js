@@ -324,7 +324,7 @@
       gid === 'project' ? '' : t.projectId ? `<button type="button" class="w-plink" data-act="project" data-id="${esc(t.projectId)}">${esc(project(t.projectId).name)}</button>` : '<span>No project</span>',
       t.week < THIS && !isDone(t) ? `<span class="tag-carry">from week ${wnum(t.week)}</span>`
         : gid !== 'week' && t.week > THIS ? `<span class="w-pill">${t.week === NEXT ? 'next week' : 'week ' + wnum(t.week)}</span>` : '',
-      isBlocked(t) ? `<span class="tag-block">Blocked${t.blockNote ? ': ' + esc(t.blockNote) : ''}</span>` : '',
+      isBlocked(t) ? `<span class="tag-block" title="${esc(t.blockNote)}">Blocked${t.blockNote ? ': ' + esc(t.blockNote) : ''}</span>` : '',
     ].join('');
   }
   const commentsOf = id => (S.data.comments || []).filter(c => c.taskId === id);
@@ -1029,7 +1029,7 @@
     return `<div class="w-twrap"><table class="w-table"><thead><tr><th>Task</th><th>Project</th><th>Person</th><th>Week</th><th>Status</th><th>Sub-tasks</th><th>Comments</th></tr></thead><tbody>
       ${gs.map((g, i) => (g.field === 'none' ? '' : `<tr class="w-gh"><td colspan="7">${groupMark(g)} ${esc(g.title)} <span class="w-count">${g.tasks.length}</span></td></tr>`) +
         g.tasks.map(t => { const edit = canEditTask(t); return `<tr class="${isDone(t) ? 'done' : ''}${S.task === t.id ? ' sel' : ''}">
-        <td class="w-tt"><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button>${t.week < THIS && !isDone(t) ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}${isBlocked(t) && t.blockNote ? ` <span class="tag-block">${esc(t.blockNote)}</span>` : ''}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</td>
+        <td class="w-tt"><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button>${t.week < THIS && !isDone(t) ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}${isBlocked(t) && t.blockNote ? ` <span class="tag-block" title="${esc(t.blockNote)}">${esc(t.blockNote)}</span>` : ''}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</td>
         <td>${edit ? pickerBtn('project', t.id, project(t.projectId).name, 'cell') : esc(project(t.projectId).name)}</td>
         <td><span class="w-meta">${avatars(t)} ${esc(ownersOf(t).map(id => shortName(member(id).name)).join(', '))}</span></td>
         <td>${edit ? `<select class="w-cell" id="tw-${t.id}" data-chg="week" data-id="${t.id}" aria-label="Week">${weekChoices(t.week)}</select>` : 'Week ' + wnum(t.week)}</td>
