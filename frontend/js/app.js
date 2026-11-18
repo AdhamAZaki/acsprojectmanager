@@ -37,8 +37,12 @@
     collapsed: null,     // saved minutes: folded projects
     qa: null,            // add a task: project, person and week kept between adds
     // The page
-    layout: null,        // 'list' | 'board' | 'table'; remembered per device
-    group: null,         // 'project' | 'person' | 'team' | 'status' | 'week' | 'none'; remembered per device
+    layout: null,        // 'list' | 'board' | 'table'; opens on List on a phone, Board on a computer
+    group: null,         // 'project' | 'person' | 'team' | 'status' | 'week' | 'none'; remembered per device and layout
+    hideDone: null,      // done tasks are hidden; remembered per device
+    blocking: null,      // task whose "why is it blocked?" box is open in the list
+    renaming: null,      // task whose title is being typed in the list
+    deleting: {},        // task id -> timer: deleted, but Undo is still possible
     sort: null,          // 'added' | 'title' | 'status' | 'changed'; remembered per device
     showEmpty: null,     // also show the groups with no tasks; remembered per device
     q: '',               // what is typed in the search box
@@ -46,7 +50,7 @@
     week: 'now',         // filter: 'now' (this + next week) or one week
     fStatus: 'all',      // filter: 'all' | 'open' | 'carried' | a status
     fProject: 'all',     // filter: one project
-    who: 'all',          // filter (managers): 'all' | 'me' | one person
+    who: 'me',           // filter (managers): 'all' | 'me' | one person; everyone opens on their own tasks
     tfilter: null,       // filter (managers): 'all' | 'dept:<id>' | 'team:<dept>:<team>' | 'team:MGMT'
     subsOpen: {},        // task id -> its sub-tasks are showing in the row or card
     folded: {},          // group -> folded
@@ -239,6 +243,18 @@
     manage: '<path d="M4 7h16M4 12h16M4 17h10"/><circle cx="18" cy="17" r="2"/>',
     check: '<path d="M5 12l5 5 9-10"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    block: '<circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/>',
+    next: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+    back: '<path d="M19 12H5M11 6l-6 6 6 6"/>',
+    edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+    trash: '<path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/>',
+    dots: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
+    eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
+    eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3.2 4.2M6.6 6.6A17 17 0 0 0 2 12s3.5 7 10 7a9.6 9.6 0 0 0 5.4-1.6"/>',
+    folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/>',
+    user: '<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>',
+    copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M4 16V6a2 2 0 0 1 2-2h10"/>',
+    panel: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>',
     left: '<path d="M15 6l-6 6 6 6"/>',
     chevron: '<path d="M9 6l6 6-6 6"/>',
     down: '<path d="M6 9l6 6 6-6"/>',
@@ -318,12 +334,31 @@
   const statusSel = t => canEditTask(t)
     ? `<select class="w-st st-${slug(t.status)}" id="st-${t.id}" data-chg="status" data-id="${t.id}" aria-label="Status">${STATUSES.map(s => `<option value="${s[0]}"${s[0] === t.status ? ' selected' : ''}>${s[1]}</option>`).join('')}</select>`
     : `<span class="w-st st-${slug(t.status)}">${esc(statusLabel(t.status))}</span>`;
-  /** Small tags under a task's title: its project (unless grouped by project), carried over, a later week, blocked and why. */
+  /** Whole days from a timestamp to today (0 = today). */
+  function daysSince(raw) {
+    const d = raw && new Date(raw);
+    if (!d || isNaN(d)) return null;
+    const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    return Math.max(0, Math.round((day(new Date()) - day(d)) / 86400000));
+  }
+  const daysText = n => n === 0 ? 'today' : n === 1 ? 'yesterday' : n + ' days ago';
+  /**
+   * How old a task is, counted in days from today: "added 3 days ago"; an open task 7+ days old in amber,
+   * 14+ in red; a done task "done 2 days ago" (its last change). A task planned for a later week shows no age.
+   */
+  function ageTag(t) {
+    if (isDone(t)) { const n = daysSince(t.version); return n === null ? '' : `<span class="tag-age ok">done ${daysText(n)}</span>`; }
+    if (t.week > THIS) return '';
+    const n = daysSince(t.createdRaw);
+    if (n === null) return '';
+    return n >= 7 ? `<span class="tag-age ${n >= 14 ? 'old' : 'warn'}" title="Added ${esc(t.createdAt)}">${n} days old</span>` : `<span class="tag-age">added ${daysText(n)}</span>`;
+  }
+  /** Small tags under a task's title: its project (unless grouped by project), its age, a later week, blocked and why. */
   function tagsHtml(t, gid) {
     return [
       gid === 'project' ? '' : t.projectId ? `<button type="button" class="w-plink" data-act="project" data-id="${esc(t.projectId)}">${esc(project(t.projectId).name)}</button>` : '<span>No project</span>',
-      t.week < THIS && !isDone(t) ? `<span class="tag-carry">from week ${wnum(t.week)}</span>`
-        : gid !== 'week' && t.week > THIS ? `<span class="w-pill">${t.week === NEXT ? 'next week' : 'week ' + wnum(t.week)}</span>` : '',
+      ageTag(t),
+      gid !== 'week' && t.week > THIS ? `<span class="w-pill">${t.week === NEXT ? 'next week' : 'week ' + wnum(t.week)}</span>` : '',
       isBlocked(t) ? `<span class="tag-block" title="${esc(t.blockNote)}">Blocked${t.blockNote ? ': ' + esc(t.blockNote) : ''}</span>` : '',
     ].join('');
   }
@@ -891,7 +926,8 @@
   /** The tasks the filters let through (without the status filter: what the shortcut counts are made of). */
   function tasksInView(withStatus) {
     const ws = weeksOf(S.week), w = whoId(), q = S.q.trim();
-    return S.data.tasks.filter(t => inWeeks(t, ws) && (!w || ownersOf(t).indexOf(w) !== -1) &&
+    // "This + next week" also shows tasks done in earlier weeks ("Hide done" takes them away)
+    return S.data.tasks.filter(t => !S.deleting[t.id] && (inWeeks(t, ws) || (S.week === 'now' && isDone(t) && t.week < THIS)) && (!w || ownersOf(t).indexOf(w) !== -1) &&
       (!isManager() || ownersOf(t).some(id => teamMatch(teamKeyOf(member(id))))) &&
       (S.fProject === 'all' || (S.fProject === 'none' ? !t.projectId : t.projectId === S.fProject)) && searchOk(t, q) && (!withStatus || statusOk(t)));
   }
@@ -942,13 +978,18 @@
     status: ['Status', (a, b) => STATUSES.findIndex(s => s[0] === a.status) - STATUSES.findIndex(s => s[0] === b.status)],
     changed: ['Last changed', (a, b) => (b.version || '').localeCompare(a.version || '')],
   };
-  /** Layout, grouping, sorting and "show empty" are remembered on the device. */
+  /**
+   * The page opens on List on a phone and on Board on a computer. Grouping (per layout), sorting, "show empty"
+   * and "hide done" are remembered on the device.
+   */
+  const isPhone = () => window.matchMedia('(max-width: 719px)').matches;
   function prefs() {
-    if (!S.layout) S.layout = ['board', 'table'].indexOf(remember.get('layout')) !== -1 ? remember.get('layout') : 'list';
+    if (!S.layout) S.layout = isPhone() ? 'list' : 'board';
     if (!S.sort) S.sort = SORTS[remember.get('sort')] ? remember.get('sort') : 'added';
     if (S.showEmpty === null) S.showEmpty = remember.get('show-empty') !== '0';
-    const fields = groupFields();
-    if (fields.indexOf(S.group) === -1) S.group = fields.indexOf(remember.get('group')) !== -1 ? remember.get('group') : 'project';
+    if (S.hideDone === null) S.hideDone = remember.get('hide-done') === '1';
+    const fields = groupFields(), saved = remember.get('group-' + S.layout);
+    if (fields.indexOf(S.group) === -1) S.group = fields.indexOf(saved) !== -1 ? saved : S.layout === 'board' ? 'status' : 'project';
     if (S.layout === 'board' && S.group === 'none') S.group = 'status';
   }
   /** Every group a grouping could show, inside the filters in use: all open projects, all people, all teams, all statuses... */
@@ -1006,35 +1047,55 @@
         ${g.field === 'person' ? teamChip(teamKeyOf(member(g.key))) : ''}${p ? statusPill(p) + `<span class="tchips">${teamsOnProject(p.id).map(k => teamChip(k)).join('')}</span>` : ''}</div>
       ${p && isManager() ? `<button type="button" class="w-chip" data-act="editproject" data-id="${esc(p.id)}" aria-label="Edit project ${esc(p.name)}">✎<span class="w-txt">&nbsp;Edit project</span></button>` : '<span></span>'}`;
   }
+  /** A task's title; while renaming, a box to type the new one (Enter saves, Esc cancels). */
+  const titleHtml = t => S.renaming === t.id && canEditTask(t)
+    ? `<input class="w-rename" id="rn-${t.id}" data-txt="rename" data-id="${t.id}" value="${esc(t.title)}" maxlength="300" aria-label="New title">`
+    : `<button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button>`;
+  /**
+   * Quick actions on a task, without opening it: Blocked, Next week, Rename, Delete and ⋯ (more).
+   * With a mouse they show when pointing at the task; on a phone only ⋯ shows, and it opens all of them.
+   */
+  function qaHtml(t) {
+    if (!canEditTask(t)) return '<span class="w-qa"></span>';
+    const later = t.week > THIS;
+    const b = (act, ic, tip, cls) => `<button type="button" class="w-qb ${cls}" data-act="${act}" data-id="${t.id}" title="${tip}" aria-label="${tip}">${icon(ic)}</button>`;
+    return `<span class="w-qa">${b('qblock', 'block', isBlocked(t) ? 'Unblock' : 'Blocked…', 'q-full')}${b('qnext', later ? 'back' : 'next', later ? 'Back to this week' : 'Move to next week', 'q-full')}${b('qrename', 'edit', 'Rename', 'q-full')}${b('qdel', 'trash', 'Delete', 'q-full q-del')}${b('qmore', 'dots', 'More actions', 'q-more')}</span>`;
+  }
+  /** "Why is it blocked?": one tap on a reason blocks the task, or type one and press Enter. */
+  const blockBoxHtml = t => S.blocking !== t.id ? '' : `<form class="w-qblock" data-form="qblock" data-id="${t.id}"><b>Why is it blocked?</b>
+    ${BLOCK_REASONS.map(r => `<button type="button" class="w-chip" data-act="qreason" data-id="${t.id}" data-k="${esc(r)}">${esc(r)}</button>`).join('')}
+    <input id="qb-${t.id}" placeholder="Or type the reason, then Enter" maxlength="300" autocomplete="off" aria-label="What is blocking it">
+    <button type="button" class="w-x" data-act="qblockx" aria-label="Cancel">×</button></form>`;
   /** People on a task, unless the group already says who (a task shared with others still shows everyone). */
   const peopleCell = (t, gid) => gid === 'person' && ownersOf(t).length < 2 && !liveContacts(t).length ? '' : avatars(t);
   function listHtml(gs) {
     return `<div class="w-groups">${gs.map((g, i) => `<section class="w-grp" data-group="${esc(g.key)}"><header class="w-ghead">${groupHead(g, i)}</header>
       ${S.folded[g.field + ':' + g.key] ? '' : g.tasks.map(t => `<div class="w-row${isDone(t) ? ' done' : ''}${S.task === t.id ? ' sel' : ''}">
         <button type="button" class="w-chk${isDone(t) ? ' on' : ''}" data-act="done" data-id="${t.id}"${canEditTask(t) ? '' : ' disabled'} aria-label="${isDone(t) ? 'Mark as not done' : 'Mark as done'}">${isDone(t) ? '✓' : ''}</button>
-        <div><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button><div class="w-meta">${tagsHtml(t, g.field)}</div></div>
+        <div>${titleHtml(t)}<div class="w-meta">${tagsHtml(t, g.field)}</div></div>${qaHtml(t)}
         <div class="w-side"><span class="c-sub">${subsChip(t)}</span><span class="c-cmt">${cmtChip(t)}</span><span class="c-ppl">${peopleCell(t, g.field)}</span><span class="c-st">${statusSel(t)}</span></div>
-        ${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</div>`).join('') + addLine(g, i)}</section>`).join('')}</div>`;
+        ${blockBoxHtml(t)}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</div>`).join('') + addLine(g, i)}</section>`).join('')}</div>`;
   }
   function boardHtml(gs) {
     return `<div class="w-board">${gs.map((g, i) => `<section class="w-col" data-col="${esc(g.key)}"${canSet(g) ? ` data-drop="${i}"` : ''}><header class="w-chead">${groupMark(g)}<h3>${esc(g.title)}</h3><span class="w-count">${g.tasks.length}</span></header>
       ${g.tasks.map(t => { const drag = canSet(g) && canEditTask(t); return `<article class="w-card${isDone(t) ? ' done' : ''}${S.task === t.id ? ' sel' : ''}"${drag ? ` data-drag="${t.id}"` : ''}>
-        <div class="w-ctitle">${drag ? '<span class="grip" title="Drag to move">⋮⋮</span>' : ''}<button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button></div>
+        <div class="w-ctitle">${drag ? '<span class="grip" title="Drag to move">⋮⋮</span>' : ''}${titleHtml(t)}</div>
         <div class="w-meta">${tagsHtml(t, g.field)}</div>
-        <div class="w-meta">${subsChip(t)}${cmtChip(t)}<span class="w-grow"></span>${peopleCell(t, g.field)}${g.field === 'status' ? '' : statusSel(t)}</div>
-        ${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</article>`; }).join('')}
+        <div class="w-meta w-cfoot">${subsChip(t)}${cmtChip(t)}<span class="w-grow"></span>${qaHtml(t)}${peopleCell(t, g.field)}${g.field === 'status' ? '' : statusSel(t)}</div>
+        ${blockBoxHtml(t)}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</article>`; }).join('')}
       ${addLine(g, i) || (g.tasks.length ? '' : '<p class="muted small w-none">Nothing here</p>')}</section>`).join('')}</div>`;
   }
   function tableHtml(gs) {
-    return `<div class="w-twrap"><table class="w-table"><thead><tr><th>Task</th><th>Project</th><th>Person</th><th>Week</th><th>Status</th><th>Sub-tasks</th><th>Comments</th></tr></thead><tbody>
-      ${gs.map((g, i) => (g.field === 'none' ? '' : `<tr class="w-gh"><td colspan="7">${groupMark(g)} ${esc(g.title)} <span class="w-count">${g.tasks.length}</span></td></tr>`) +
+    return `<div class="w-twrap"><table class="w-table"><thead><tr><th>Task</th><th><span class="sr-only">Quick actions</span></th><th>Project</th><th>Person</th><th>Week</th><th>Status</th><th>Sub-tasks</th><th>Comments</th></tr></thead><tbody>
+      ${gs.map((g, i) => (g.field === 'none' ? '' : `<tr class="w-gh"><td colspan="8">${groupMark(g)} ${esc(g.title)} <span class="w-count">${g.tasks.length}</span></td></tr>`) +
         g.tasks.map(t => { const edit = canEditTask(t); return `<tr class="${isDone(t) ? 'done' : ''}${S.task === t.id ? ' sel' : ''}">
-        <td class="w-tt"><button type="button" class="w-title" data-act="open" data-id="${t.id}">${esc(t.title)}</button>${t.week < THIS && !isDone(t) ? ` <span class="tag-carry">from week ${wnum(t.week)}</span>` : ''}${isBlocked(t) && t.blockNote ? ` <span class="tag-block" title="${esc(t.blockNote)}">${esc(t.blockNote)}</span>` : ''}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</td>
+        <td class="w-tt">${titleHtml(t)} ${ageTag(t)}${isBlocked(t) && t.blockNote ? ` <span class="tag-block" title="${esc(t.blockNote)}">${esc(t.blockNote)}</span>` : ''}${blockBoxHtml(t)}${S.subsOpen[t.id] && t.subtasks.length ? subsHtml(t, 'r', false) : ''}</td>
+        <td class="w-tqa">${qaHtml(t)}</td>
         <td>${edit ? pickerBtn('project', t.id, project(t.projectId).name, 'cell') : esc(project(t.projectId).name)}</td>
         <td><span class="w-meta">${avatars(t)} ${esc(ownersOf(t).map(id => shortName(member(id).name)).join(', '))}</span></td>
         <td>${edit ? `<select class="w-cell" id="tw-${t.id}" data-chg="week" data-id="${t.id}" aria-label="Week">${weekChoices(t.week)}</select>` : 'Week ' + wnum(t.week)}</td>
         <td>${statusSel(t)}</td><td>${subsChip(t) || '<span class="muted">–</span>'}</td><td>${cmtChip(t) || '<span class="muted">–</span>'}</td></tr>`; }).join('') +
-        (addLine(g, i) ? `<tr class="w-addtr"><td colspan="7">${addLine(g, i)}</td></tr>` : '')).join('')}</tbody></table></div>`;
+        (addLine(g, i) ? `<tr class="w-addtr"><td colspan="8">${addLine(g, i)}</td></tr>` : '')).join('')}</tbody></table></div>`;
   }
   /**
    * Drag and drop with a mouse or a finger (on a phone: the ⋮⋮ handle, so the page still scrolls):
@@ -1148,6 +1209,7 @@
           ${sel('group', S.layout === 'board' ? 'Columns' : 'Group by', groupFields().filter(k => S.layout !== 'board' || k !== 'none').map(k => [k, FIELD[k].label]))}
           ${sel('sort', 'Sort', Object.keys(SORTS).map(k => [k, SORTS[k][0]]))}
           <label class="w-f tick" title="Also show the ${what} that have no tasks"><input type="checkbox" id="v-empty" data-chg="empty"${S.showEmpty ? ' checked' : ''}><span>Show empty ${what}</span></label>
+          <button type="button" class="w-kpi w-eye${S.hideDone ? ' on' : ''}" data-act="hidedone" id="hideDone" aria-pressed="${S.hideDone}" title="${S.hideDone ? 'Show done tasks again' : 'Hide done tasks'}">${icon(S.hideDone ? 'eyeoff' : 'eye')}${S.hideDone ? `Done hidden (${n(isDone)})` : 'Hide done'}</button>
         </div>
         <div class="w-bar"><span class="w-label">Shortcuts</span>
           ${m ? short('who', 'me', 'My tasks') + '<span class="w-sep"></span>' : ''}
@@ -1191,7 +1253,7 @@
     $('#avatarBtn').title = me().name;
     const defs = filterDefs();
     if (S.fProject !== 'all' && S.fProject !== 'none' && !S.data.projects.some(p => p.id === S.fProject)) S.fProject = 'all';   // removed meanwhile
-    const base = tasksInView(false), list = base.filter(statusOk), gs = groups(list);
+    const base = tasksInView(false), list = base.filter(t => statusOk(t) && !(S.hideDone && isDone(t) && S.fStatus !== 'Done')), gs = groups(list);
     render.groups = gs;
     $('#gsearch').innerHTML = searchHtml(defs);
     $('#topActions').innerHTML = actionsHtml();
@@ -1242,9 +1304,110 @@
 
   // ---------- What happens when something on the page is tapped, changed or typed ----------
 
+  // ---------- Quick actions: change a task without opening it, with Undo ----------
+
+  /** A message at the bottom with an Undo button, for a few seconds. */
+  function toastUndo(msg, undo) {
+    const el = $('#toast');
+    el.className = 'toast';
+    el.innerHTML = `<span>${esc(msg)}</span><button type="button" class="toast-undo" id="undoBtn">Undo</button>`;
+    el.hidden = false;
+    $('#undoBtn').onclick = () => { el.hidden = true; clearTimeout(toast.t); undo(); };
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => { el.hidden = true; }, 5000);
+  }
+  /** Changes a task and offers Undo, which puts back the fields named in `fields`. */
+  function undoable(t, fields, change, msg) {
+    const before = {};
+    fields.concat(['week']).forEach(k => { before[k] = t[k]; });
+    updateTask(t, change);
+    toastUndo(msg, () => { const cur = findTask(t.id); if (cur) updateTask(cur, before); });
+  }
+  function blockTask(t, note) {
+    S.blocking = null;
+    undoable(t, ['status', 'blockNote'], x => Object.assign(statusChange(x, 'Blocked'), { blockNote: note }), 'Blocked · ' + note);
+  }
+  /** Deleted at once on the screen; really deleted after 5 seconds unless Undo is pressed. */
+  function deleteWithUndo(t) {
+    if (S.task === t.id) S.task = null;
+    const go = () => {
+      if (!S.deleting[t.id]) return;
+      delete S.deleting[t.id];
+      S.lastWrite = Date.now();
+      Api.deleteTask(t.id).catch(e => toast(e.message, true)).then(render);
+    };
+    S.deleting[t.id] = setTimeout(go, 5000);
+    deleteWithUndo.go = deleteWithUndo.go || {};
+    deleteWithUndo.go[t.id] = go;
+    render();
+    toastUndo('Deleted · ' + t.title, () => { clearTimeout(S.deleting[t.id]); delete S.deleting[t.id]; render(); });
+  }
+  // Leaving the page finishes the deletes still waiting for their Undo
+  window.addEventListener('pagehide', () => Object.keys(S.deleting).forEach(id => { clearTimeout(S.deleting[id]); deleteWithUndo.go[id](); }));
+  /**
+   * ⋯ on a task: with a mouse, the actions that have no button of their own (move to another project, add a
+   * person, duplicate, open). On a phone, every action, in a sheet at the bottom of the screen.
+   */
+  const taskMenu = { btn: null };
+  function openTaskMenu(btn) {
+    const again = taskMenu.btn === btn && $('#pop');
+    closePicker();
+    taskMenu.btn = null;
+    const t = findTask(btn.dataset.id);
+    if (again || !t) return;
+    taskMenu.btn = btn; openPicker.btn = null;
+    const all = isPhone() || !window.matchMedia('(hover: hover)').matches, later = t.week > THIS;
+    const canAdd = S.data.team.some(m => m.active && t.assigneeIds.indexOf(m.id) === -1 && mayAssign(t, m));
+    const it = (act, ic, label, kind, cls) => `<button type="button" class="w-pop-item${cls ? ' ' + cls : ''}" role="menuitem" data-act="${act}" data-id="${t.id}"${kind ? ` data-kind="${kind}"` : ''}>${icon(ic)}<span>${label}</span></button>`;
+    const items = (all ? [it('done', 'check', isDone(t) ? 'Mark as not done' : 'Mark as done'), it('qblock', 'block', isBlocked(t) ? 'Unblock' : 'Blocked…'),
+      it('qnext', later ? 'back' : 'next', later ? 'Back to this week' : 'Move to next week'), it('qrename', 'edit', 'Rename')] : [])
+      .concat([it('qpick', 'folder', 'Move to another project…', 'project'), canAdd ? it('qpick', 'user', 'Add a person…', 'addperson') : '',
+        it('qdup', 'copy', 'Duplicate'), it('open', 'panel', 'Open details')], all ? [it('qdel', 'trash', 'Delete', '', 'q-del')] : []);
+    const pop = document.createElement('div');
+    pop.className = 'w-pop w-qmenu'; pop.id = 'pop'; pop.setAttribute('role', 'menu');
+    pop.innerHTML = `<p class="w-qmenu-title">${esc(t.title)}</p>${items.join('')}`;
+    document.body.appendChild(pop);
+    if (!isPhone()) {
+      const r = btn.getBoundingClientRect(), w = 240, h = pop.offsetHeight;
+      pop.style.width = w + 'px';
+      pop.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + 'px';
+      pop.style.top = (r.bottom + 4 + h > window.innerHeight ? Math.max(8, r.top - h - 4) : r.bottom + 4) + 'px';
+    }
+    const first = $('.w-pop-item', pop); if (first) first.focus();
+  }
+
   const closeSugg = () => { S.searchOpen = false; const s = $('#sugg'); if (s) s.remove(); };
   const ACTIONS = {
-    layout: (b, k) => { S.layout = k; remember.set('layout', k); },
+    layout: (b, k) => { S.layout = k; S.group = null; },
+    hidedone: () => { S.hideDone = !S.hideDone; remember.set('hide-done', S.hideDone ? '1' : '0'); },
+    // Quick actions on a task in the list, board or table
+    qblock: (b, k, t) => {
+      if (!isBlocked(t)) { S.blocking = S.blocking === t.id ? null : t.id; render(); const i = $('#qb-' + t.id); if (i) i.focus(); return false; }
+      undoable(t, ['status'], x => statusChange(x, 'In Progress'), 'Unblocked');
+      return false;
+    },
+    qreason: (b, k, t) => { blockTask(t, k); return false; },
+    qblockx: () => { S.blocking = null; },
+    qnext: (b, k, t) => {
+      const back = t.week > THIS;
+      undoable(t, ['week'], { week: back ? THIS : NEXT }, back ? 'Back to this week' : 'Moved to next week');
+      return false;
+    },
+    qrename: (b, k, t) => { S.renaming = t.id; render(); const i = $('#rn-' + t.id); if (i) { i.focus(); i.select(); } return false; },
+    qdel: (b, k, t) => { deleteWithUndo(t); return false; },
+    qmore: b => { openTaskMenu(b); return false; },
+    qpick: b => {
+      const btn = taskMenu.btn && taskMenu.btn.isConnected ? taskMenu.btn : $(`[data-act="qmore"][data-id="${b.dataset.id}"]`);
+      if (!btn) return false;
+      btn.dataset.kind = b.dataset.kind; openPicker.btn = null; openPicker(btn);
+      return false;
+    },
+    qdup: (b, k, t) => {
+      const owner = ownersOf(t)[0], pid = CLOSED.indexOf(project(t.projectId).status) === -1 ? t.projectId : '';
+      addTask({ title: t.title, projectId: pid, week: t.week < THIS ? THIS : t.week, forId: canAddFor(owner) ? owner : me().id, status: 'To Do' })
+        .then(saved => { if (saved) toast('Duplicated · ' + t.title); render(); });
+      return false;
+    },
     fold: b => { const g = render.groups[Number(b.dataset.g)], key = g.field + ':' + g.key; S.folded[key] = !S.folded[key]; },
     subs: (b, k, t) => { S.subsOpen[t.id] = !S.subsOpen[t.id]; },
     open: (b, k, t) => { if (Date.now() - (S.dragged || 0) < 400) return false; S.task = S.task === t.id ? null : t.id; S.project = null; },
@@ -1256,12 +1419,7 @@
     subdel: (b, k, t) => { updateTask(t, subEdit(t, Number(b.dataset.i), () => null)); return false; },
     unasg: (b, k, t) => { updateTask(t, x => ({ assigneeIds: x.assigneeIds.filter(y => y !== k) })); return false; },
     unext: (b, k, t) => { updateTask(t, x => ({ contactIds: x.contactIds.filter(y => y !== k) })); return false; },
-    del: (b, k, t) => {
-      if (!confirm('Delete this task?')) return false;
-      S.lastWrite = Date.now();
-      Api.deleteTask(t.id).then(() => toast('Task deleted'), e => toast(e.message, true)).then(() => { if (S.task === t.id) S.task = null; render(); });
-      return false;
-    },
+    del: (b, k, t) => { deleteWithUndo(t); return false; },
     cmtdel: b => {
       if (!confirm('Delete this comment?')) return false;
       S.lastWrite = Date.now();
@@ -1308,10 +1466,15 @@
   };
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-act]');
-    if ($('#pop') && !e.target.closest('#pop') && !(b && b.dataset.act === 'picker')) closePicker();
+    if ($('#pop') && !e.target.closest('#pop') && !(b && (b.dataset.act === 'picker' || b.dataset.act === 'qmore'))) closePicker();
     if (S.searchOpen && !e.target.closest('#gsearch')) closeSugg();
     $$('#shell details.w-menu[open]').forEach(d => { if (!d.contains(e.target) || b) d.open = false; });
+    // A click on the page outside the open panel closes it (the panel floats over the page)
+    if (!b && S.data && (S.task || S.project) && $('#shell').contains(e.target) && !e.target.closest('#panel, #gsearch, select, input, textarea, label, a, button')) {
+      S.task = null; S.project = null; render(); return;
+    }
     if (!b || !S.data || !ACTIONS[b.dataset.act]) return;
+    if (b.closest('.w-qmenu') && b.dataset.act !== 'qpick') closePicker();
     const t = b.dataset.id ? findTask(b.dataset.id) : null;
     if (ACTIONS[b.dataset.act](b, b.dataset.k, t) !== false) render();   // an action that draws the page itself (or opens a sheet) returns false
   });
@@ -1319,7 +1482,7 @@
     const el = e.target;
     if (!S.data || !el.closest || !el.closest('#shell')) return;
     const c = el.dataset.chg, x = el.dataset.txt, t = el.dataset.id ? findTask(el.dataset.id) : null;
-    if (c === 'group' || c === 'sort') { S[c] = el.value; remember.set(c, el.value); return render(); }
+    if (c === 'group' || c === 'sort') { S[c] = el.value; remember.set(c === 'group' ? 'group-' + S.layout : c, el.value); return render(); }
     if (c === 'empty') { S.showEmpty = el.checked; remember.set('show-empty', el.checked ? '1' : '0'); return render(); }
     if (!t) return;
     if (c === 'status') updateTask(t, y => statusChange(y, el.value));
@@ -1327,6 +1490,7 @@
     else if (c === 'subc') updateTask(t, subEdit(t, Number(el.dataset.i), s => ({ t: s.t, done: el.checked })));
     else if (x === 'title') { const v = el.value.replace(/\s+/g, ' ').trim(); if (v && v !== t.title) quietUpdate(t, { title: v }); else el.value = t.title; }
     else if (x === 'block') { const v = el.value.trim(); if (v !== t.blockNote) quietUpdate(t, { blockNote: v }); }
+    else if (x === 'rename') { const v = el.value.replace(/\s+/g, ' ').trim(); S.renaming = null; if (v && v !== t.title) { updateTask(t, { title: v }); toast('Renamed'); } }
     else if (x === 'sub') {
       const i = Number(el.dataset.i), v = el.value.replace(/\s+/g, ' ').trim();
       if (v && t.subtasks[i] && v !== t.subtasks[i].t) quietUpdate(t, subEdit(t, i, s => ({ t: v, done: s.done }))); else if (t.subtasks[i]) el.value = t.subtasks[i].t;
@@ -1340,6 +1504,12 @@
       $$('.w-pop-item').forEach(i => { const ok = i.textContent.toLowerCase().indexOf(q) !== -1; i.hidden = !ok; if (ok) n++; });
       $('#pop-none').hidden = n > 0; $('#pop-none').textContent = 'Nothing matches';
     }
+  });
+  // Leaving the rename box ends renaming (a changed title was saved by the change event just before)
+  document.addEventListener('focusout', e => {
+    const el = e.target;
+    if (!el.dataset || el.dataset.txt !== 'rename') return;
+    setTimeout(() => { if (S.renaming === el.dataset.id || String(S.renaming) === el.dataset.id) { S.renaming = null; render(); } }, 0);
   });
   document.addEventListener('focusin', e => {
     if (restoring || !S.data) return;
@@ -1355,6 +1525,7 @@
     if (!v) return;
     i.value = '';
     if (kind === 'add') addInline(v, render.groups[Number(f.dataset.g)]);
+    else if (kind === 'qblock' && t) blockTask(t, v);
     else if (kind === 'sub' && t) updateTask(t, y => ({ subtasks: y.subtasks.concat({ t: v, done: false }) }));
     else if (kind === 'comment' && t) { S.lastWrite = Date.now(); guard(() => Api.addComment(t.id, v)).then(render); }
     else if (kind === 'ext' && t) {
@@ -1369,7 +1540,14 @@
   document.addEventListener('keydown', e => {
     const el = e.target;
     if (el.id === 'pop-q' && e.key === 'Enter') { e.preventDefault(); const first = $$('.w-pop-item').find(i => !i.hidden); if (first) first.click(); return; }
+    if (el.dataset && el.dataset.txt === 'rename' && (e.key === 'Enter' || e.key === 'Escape')) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { const t = findTask(el.dataset.id); if (t) el.value = t.title; }
+      el.blur();
+      return;
+    }
     if (e.key === 'Escape') {
+      if (S.blocking) { S.blocking = null; render(); return; }
       if ($('#pop')) { e.preventDefault(); e.stopPropagation(); closePicker(); if (openPicker.btn && openPicker.btn.isConnected) openPicker.btn.focus(); }
       else if (S.searchOpen) closeSugg();
       else if ((S.task || S.project) && !$('#dialog').open && !$('#manageDlg').open) { S.task = null; S.project = null; render(); }

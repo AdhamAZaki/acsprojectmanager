@@ -37,6 +37,8 @@ async function filterBy(page, text, option) {
   await page.fill('#gq', text);
   await page.click(`#sugg .w-opt:has-text("${option}")`);
 }
+/** The page opens on Board on a computer; most checks read the List. */
+const toList = page => page.click('[data-act="layout"][data-k="list"]');
 const openTask = async (page, title) => { await page.click(`#view .w-title:has-text("${title}")`); await page.waitForSelector('#panel #p-title'); };
 
 // ---------- Sign in, the one page, adding and changing tasks (admin) ----------
@@ -55,12 +57,16 @@ async function onePage(browser, url) {
   await signIn(page, url, 'adham');
   ok(await page.locator('.appnav, .tabstrip').count() === 0, 'one page: no side menu and no Mine / Team tabs');
   ok((await page.$$eval('[data-act="layout"]', b => b.map(x => x.textContent))).join() === 'List,Board,Table', 'View: List · Board · Table (they only change the shape)');
+  ok(await page.isVisible('#view.is-board') && await page.isVisible('.w-col[data-col="To Do"]'), 'a computer opens on Board, in status columns');
+  ok((await tags(page)).join() === 'Person: Me' && await page.isVisible(`.w-card >> text=${T1}`) && !(await page.isVisible(`#view >> text=${T2}`)),
+    'an admin opens on his own tasks too (the tag “Person: Me”)');
+  await toList(page);
   ok((await page.$$eval('#v-group option', o => o.map(x => x.textContent))).join() === 'Project,Person,Team,Status,Week,No grouping', 'admin: group by project, person, team, status, week or nothing');
-  ok(await page.isVisible(`.w-row >> text=${T1}`) && await page.isVisible(`.w-row >> text=${T2}`), 'admin starts on everyone’s tasks');
+  await page.click('[data-act="short"][data-v="me"]');
+  ok((await tags(page)).length === 0 && await page.isVisible(`.w-row >> text=${T1}`) && await page.isVisible(`.w-row >> text=${T2}`), 'the My tasks shortcut is a filter: tap it off to see everyone’s tasks');
   ok((await groupNames(page)).join() === 'Alpha Plant,Tower BMS Retrofit,No project', 'projects are in name order, “No project” last');
   await page.click('[data-act="short"][data-v="me"]');
-  ok((await tags(page)).join() === 'Person: Me' && await page.isVisible(`.w-row >> text=${T1}`) && !(await page.isVisible(`#view >> text=${T2}`)),
-    'the My tasks shortcut is a filter: it shows as the tag “Person: Me”');
+  ok((await tags(page)).join() === 'Person: Me' && !(await page.isVisible(`#view >> text=${T2}`)), '...and on again: the tag “Person: Me”');
   await page.click('[data-act="short"][data-v="Done"]');
   ok(!(await page.isVisible(`.w-row >> text=${T1}`)) && (await tags(page)).indexOf('Status: Done') !== -1, 'the Done shortcut: only done tasks (none yet), as the tag “Status: Done”');
   await page.click('#clearFilters');
@@ -148,11 +154,13 @@ async function onePage(browser, url) {
   await sleep(600);
   t1 = await task(page, T1);
   ok(t1.subtasks.length === n + 1 && t1.subtasks[n].t === 'Check the earthing bars', 'add a sub-task, then change its text in place');
+  await page.click('#panel [data-act="close"]');   // the panel floats over the right side of the rows
   await page.click(`.w-row:has-text("${T1}") [data-act="subs"]`);
   ok(await page.inputValue(`#rs-${t1.id}-${n}`) === 'Check the earthing bars', 'the sub-tasks open in the row too');
   await page.check(`#rc-${t1.id}-${n}`);
   await sleep(300);
   ok((await task(page, T1)).subtasks[n].done === true, '...and can be ticked there');
+  await openTask(page, T1);
   await page.click('#panel [data-kind="addperson"]');
   await page.fill('#pop-q', 'mona');
   const opt = await page.$$eval('.w-pop-item', x => x.filter(e => !e.hidden).map(e => e.textContent).join('|'));
@@ -192,7 +200,6 @@ async function onePage(browser, url) {
   await page.evaluate(() => { const d = window.__db.get(); d.projects = d.projects.filter(p => p.id.indexOf('PRJ-9') !== 0); d.tasks[0].title = d.tasks[0].title.split(' and a very long')[0]; window.__db.save(); });
   await page.reload();
   await page.waitForSelector('.w-board');
-  await page.click('[data-act="short"][data-v="me"]');
   await page.selectOption('#v-group', 'status');
   await page.dragAndDrop('.w-card:has-text("Test the duty and standby")', '.w-col[data-col="In Progress"]');
   await sleep(400);
@@ -228,11 +235,107 @@ async function onePage(browser, url) {
   await ctx.close();
 }
 
+// ---------- Quick actions on a task, done tasks, ages, the floating panel ----------
+async function quickActions(browser, url) {
+  const ctx = await newApp(browser);
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(url);
+  await page.evaluate(t => {   // a task Adham finished two weeks ago, and T1 added 9 days ago
+    const d = window.__db.get(), [y, w] = d.W.split('-W').map(Number), mine = d.tasks.find(x => x.title === t);
+    d.tasks.push(Object.assign({}, mine, { id: 'old-done', title: 'Old finished task', status: 'Done', week: y + '-W' + String(w - 2).padStart(2, '0'), updated_at: new Date(Date.now() - 16 * 86400000).toISOString() }));
+    mine.created_at = new Date(Date.now() - 9 * 86400000).toISOString();
+    window.__db.save();
+  }, T1);
+  await signIn(page, url, 'adham');
+  await toList(page);
+  ok(await page.isVisible('.w-row.done >> text=Old finished task') && /done 16 days ago/.test(await page.textContent('.w-row:has-text("Old finished task")')),
+    'done tasks from earlier weeks show, with how long ago they were done');
+  ok(/9 days old/.test(await page.textContent(`.w-row:has-text("${T1}") .tag-age.warn`)), 'an open task says how old it is in days (amber after 7 days)');
+  await page.click('#hideDone');
+  ok(!(await page.isVisible('#view >> text=Old finished task')) && await page.isVisible(`#view >> text=${T1}`), 'Hide done takes the done tasks away');
+  await page.reload();
+  await page.waitForSelector('#view');
+  await toList(page);
+  ok(!(await page.isVisible('#view >> text=Old finished task')), '...and the device remembers it');
+  await page.click('#hideDone');
+  ok(await page.isVisible('#view >> text=Old finished task'), 'tap it again: done tasks are back');
+
+  const row = `.w-row:has-text("${T1}")`;
+  const id = (await task(page, T1)).id;
+  await page.hover(row);
+  ok(await page.isVisible(`${row} [data-act="qblock"]`) && await page.isVisible(`${row} [data-act="qdel"]`), 'pointing at a task shows its quick actions');
+  await page.click(`${row} [data-act="qblock"]`);
+  await page.click(`${row} .w-qblock [data-k="Material"]`);
+  await sleep(300);
+  const t = await task(page, T1);
+  ok(t.status === 'Blocked' && t.block_note === 'Material' && await page.isVisible(`${row} .tag-block >> text=Material`), 'Blocked in two taps, without opening the task');
+  await page.click('#undoBtn');
+  await sleep(300);
+  ok((await task(page, T1)).status === 'To Do', 'Undo puts it back');
+  await page.hover(row);
+  await page.click(`${row} [data-act="qblock"]`);
+  await page.fill(`#qb-${id}`, 'Waiting for the panel drawings');
+  await page.keyboard.press('Enter');
+  await sleep(300);
+  ok((await task(page, T1)).block_note === 'Waiting for the panel drawings', '...or type the reason and press Enter');
+  await page.hover(row);
+  await page.click(`${row} [data-act="qnext"]`);
+  await sleep(300);
+  const W = (await db(page)).W;
+  ok((await task(page, T1)).week > W && await page.isVisible(`${row} .w-pill >> text=next week`), 'Next week in one tap');
+  await page.hover(row);
+  await page.click(`${row} [data-act="qnext"]`);
+  await sleep(300);
+  ok((await task(page, T1)).week === W, '...and back to this week');
+  await page.hover(row);
+  await page.click(`${row} [data-act="qrename"]`);
+  await page.fill(`#rn-${id}`, 'Commission the pump station panels A and B');
+  await page.keyboard.press('Enter');
+  await sleep(300);
+  ok((await db(page)).tasks.find(x => x.id === id).title === 'Commission the pump station panels A and B' && await page.isVisible('.w-row .w-title >> text=Commission the pump station panels A and B'), 'Rename in place: type and press Enter');
+  const row2 = '.w-row:has-text("panels A and B")';
+  await page.hover(row2);
+  await page.click(`${row2} [data-act="qmore"]`);
+  ok((await page.$$eval('.w-qmenu .w-pop-item', x => x.map(e => e.textContent.trim()))).join() === 'Move to another project…,Add a person…,Duplicate,Open details', '⋯ has the rest: move to another project, add a person, duplicate, open');
+  await page.click('.w-qmenu [data-act="qpick"][data-kind="project"]');
+  await page.fill('#pop-q', 'tower');
+  await page.keyboard.press('Enter');
+  await sleep(300);
+  ok((await task(page, 'Commission the pump station panels A and B')).project_id === 'PRJ-0002', '⋯ › Move to another project');
+  await page.hover(row2);
+  await page.click(`${row2} [data-act="qmore"]`);
+  await page.click('.w-qmenu [data-act="qdup"]');
+  await sleep(400);
+  ok((await db(page)).tasks.filter(x => x.title === 'Commission the pump station panels A and B').length === 2, '⋯ › Duplicate');
+  await page.hover(`${row2} >> nth=0`);
+  await page.click(`${row2} >> nth=0 >> [data-act="qdel"]`);
+  ok(await page.locator(row2).count() === 1 && (await db(page)).tasks.filter(x => x.title === 'Commission the pump station panels A and B').length === 2, 'Delete: gone from the page at once (Undo still possible)');
+  await page.click('#undoBtn');
+  ok(await page.locator(row2).count() === 2, 'Undo brings it back');
+  await page.hover(`${row2} >> nth=1`);
+  await page.click(`${row2} >> nth=1 >> [data-act="qdel"]`);
+  await sleep(5600);
+  ok((await db(page)).tasks.filter(x => x.title === 'Commission the pump station panels A and B').length === 1, '...without Undo it is deleted after a few seconds');
+
+  // The panel floats over the page: nothing underneath moves
+  const before = await page.locator('#view').boundingBox();
+  await openTask(page, 'Old finished task');
+  const after = await page.locator('#view').boundingBox();
+  ok(before.width === after.width && before.x === after.x, 'the task panel opens over the page; the page does not move');
+  await page.mouse.click(after.x + 20, after.y + after.height - 20);
+  ok(await page.isHidden('#panel'), 'a click on the page outside the panel closes it');
+  ok(errors.length === 0, 'quick actions: no page errors (' + errors.join('; ') + ')');
+  await ctx.close();
+}
+
 // ---------- An employee: the same page, with less on it ----------
 async function employee(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
   await signIn(page, url, 'gina');
+  await toList(page);
   ok(await page.locator('#manageBtn, #newProject, #meetMenu, #moreMenu, [data-act="editproject"]').count() === 0, 'employee: no Manage, + Project, Meeting or Edit project');
   ok((await page.$$eval('#v-group option', o => o.map(x => x.textContent))).join() === 'Project,Status,Week,No grouping', 'employee: no grouping by person or team');
   ok(await page.isVisible('.w-fchip.locked >> text=Me') && await page.locator('[data-act="short"][data-k="who"], [data-act="short"][data-k="tfilter"], #quietBtn').count() === 0,
@@ -273,7 +376,10 @@ async function deptAdmin(browser, url) {
   const page = await ctx.newPage();
   await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
   await signIn(page, url, 'amira');
-  ok((await tags(page)).join() === 'Team: GUI', 'department admin starts on her department (a tag she can remove)');
+  await toList(page);
+  ok((await tags(page)).join() === 'Person: Me,Team: GUI', 'department admin opens on her own tasks, in her department');
+  await page.click('.w-fchip:has-text("Person") .w-x');
+  ok((await tags(page)).join() === 'Team: GUI', 'take “Person: Me” off: her department (a tag she can remove)');
   ok(await page.isVisible(`.w-row >> text=${GUI_T}`) && !(await page.isVisible(`#view >> text=${BMS_T}`)), 'GUI tasks on a BMS project show; the BMS team’s do not');
   await page.click('.w-fchip:has-text("Team") .w-x');
   ok(await page.isVisible(`.w-row >> text=${T2}`) && await page.isVisible(`.w-row >> text=${BMS_T}`), 'take the tag off: every team');
@@ -412,7 +518,7 @@ async function manage(browser, url) {
   await page.click('[data-tab="depts"]');
   ok(await page.isVisible('.dept-card >> text=AVEVA') && await page.isVisible('.dept-card >> text=Management'), 'Departments & teams lists every team');
   await page.click('#manageDlg [data-close]');
-  ok(await page.isVisible('#view .w-grp'), 'Done closes Manage: the tasks are still there underneath');
+  ok(await page.isVisible('#view .w-grp, #view .w-col'), 'Done closes Manage: the tasks are still there underneath');
   await page.click('#newProject');
   ok(await page.isVisible('#dialog input[name=name]'), '+ Project at the top opens the project form');
   await page.click('#dialog [data-cancel]');
@@ -439,6 +545,7 @@ async function projectPanel(browser, url) {
   const ctx = await newApp(browser);
   const page = await ctx.newPage();
   await signIn(page, url, 'hany');
+  await toList(page);
   await page.click('.w-gname:has-text("Tower BMS Retrofit")');
   await page.waitForSelector('#panel .sp-title');
   ok(/Tower BMS Retrofit/.test(await page.textContent('#panel .sp-title')), 'tap a project’s name: it opens in the panel');
@@ -467,7 +574,19 @@ async function phone(browser, url) {
   await signIn(page, url, 'adham');
   const fits = () => page.evaluate(() => { const v = document.querySelector('#view'); return document.documentElement.scrollWidth <= 390 && document.querySelector('.w-top').scrollWidth <= 390 && v.getBoundingClientRect().right <= 390 && (v.classList.contains('is-board') ? v.scrollWidth > v.clientWidth : v.scrollWidth <= v.clientWidth); });
   ok(await page.isVisible('#moreMenu') && await page.isHidden('#manageBtn') && await page.isVisible('#addTaskBtn'), 'phone: + Task stays; Meeting, + Project and Manage fold into More');
+  ok(await page.isVisible('#view.is-list'), 'a phone opens on List');
   ok(await fits(), 'phone: no sideways scrolling (list)');
+  const prow = `.w-row:has-text("${T1}")`;
+  ok(await page.isVisible(`${prow} [data-act="qmore"]`) && await page.isHidden(`${prow} [data-act="qdel"]`), 'phone: each task has ⋯ for its quick actions');
+  await page.click(`${prow} [data-act="qmore"]`);
+  const sheet = await page.locator('.w-qmenu').boundingBox();
+  ok(sheet.width === 390 && Math.round(sheet.y + sheet.height) === 844 && /Move to next week/.test(await page.textContent('.w-qmenu')) && /Delete/.test(await page.textContent('.w-qmenu')),
+    'phone: ⋯ opens every action in a sheet at the bottom');
+  await page.click('.w-qmenu [data-act="qnext"]');
+  await sleep(300);
+  ok((await task(page, T1)).week > (await db(page)).W && await page.isHidden('.w-qmenu'), 'phone: ⋯ › Move to next week');
+  await page.click('#undoBtn');
+  await sleep(300);
   const top = (await page.locator('.w-top').boundingBox()).y;
   await page.$eval('#view', v => { v.scrollTop = 400; });
   ok((await page.locator('.w-top').boundingBox()).y === top, 'phone: the top part stays put while the tasks scroll');
@@ -509,7 +628,7 @@ async function weekRollover(browser, url) {
   await page.waitForTimeout(500);
   const after = await weeks();
   ok(/This week · 44/.test(before) && /This week · 45/.test(after), 'the week moves on by itself while the app stays open');
-  ok(await page.locator('.tag-carry').count() >= 1, 'unfinished tasks roll over into the new week');
+  ok(await page.isVisible(`#view >> text=${T1}`) && await page.locator('#view .tag-age').count() >= 1, 'unfinished tasks roll over into the new week, with their age in days');
   await ctx.close();
 }
 
@@ -647,7 +766,7 @@ async function privateTracker(browser, url) {
   const { server, url } = await serve();
   const browser = await launch();
   try {
-    for (const t of [onePage, employee, deptAdmin, noUpdate, manage, projectPanel, phone, weekRollover, privateTracker]) {
+    for (const t of (process.env.ONLY ? [eval(process.env.ONLY)] : [onePage, quickActions, employee, deptAdmin, noUpdate, manage, projectPanel, phone, weekRollover, privateTracker])) {
       try { await t(browser, url); } catch (e) { ok(false, t.name + ' crashed: ' + e.message.split('\n').slice(0, 4).join(' | ')); }
     }
   } finally {
